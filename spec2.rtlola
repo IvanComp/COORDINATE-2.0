@@ -1,0 +1,129 @@
+// time,robotId,itemId,itemImportance,position,destination,event
+import math
+input time: Float
+input itemId: Int
+input event: String
+input destination: Int
+
+// Helper streams to simplify event checking
+output created: Bool    := event == "create"
+output delivered: Bool := event == "deliver"
+
+// --- Create Event Stream ---
+
+output create_item(id):Float
+    // Spawn a new instance whenever a 'created' event occurs
+    spawn with itemId
+    // This instance starts its monitoring using the time
+    eval when created with time
+
+// --- Deliver Event Stream ---
+
+output deliver_item(id)
+    // Spawn a new instance when an item is delivered.
+    // We only care about the *same* item ID that was used to spawn create_item(id).
+    // The key is that the 'spawn' clause here uses the itemID, and the 'eval when'
+    // condition filters for when that specific item is delivered.
+    spawn with itemId
+    eval when id = itemId and delivered with time
+    // We can also simplify this by defining a stream that only contains
+    // delivery events for the *current* spawned ID.
+    
+// --- Latency Stream ---
+
+// This stream measures the time difference between the creation and delivery of a specific item ID.
+output latency(id)
+    // Spawn an instance whenever an item is created.
+    // The spawned instance will track *this* item's lifecycle.
+    spawn with itemId
+    
+    // The `eval when` clause is triggered when a 'delivered' event occurs *for this item ID*.
+    // The value is the current time minus the creation time (which is the value of create_item(id)).
+    eval when id = itemId and delivered with time - create_item(id).hold(or: 0.0) 
+    
+    // Close the instance once the delivery latency is calculated
+    close when id = itemId and delivered
+
+output offset:Float := 
+if destination == 1 then 7.0
+else if destination == 2 then 12.0
+else if destination == 3 then 17.0
+else if destination == 4 then 22.0
+else if destination == 5 then 27.0
+else if destination == 6 then 32.0
+else if destination == 7 then 37.0
+else if destination == 8 then 42.0
+else if destination == 9 then 47.0
+else if destination == 10 then 52.0
+else if destination == 11 then 57.0
+else if destination == 12 then 62.0
+else if destination == 13 then 67.0
+else if destination == 14 then 72.0
+else if destination == 15 then 77.0
+else if destination == 16 then 82.0
+else if destination == 17 then 87.0
+else if destination == 18 then 47.0
+else if destination == 19 then 47.0
+else if destination == 20 then 52.0
+else if destination == 21 then 57.0
+else if destination == 22 then 62.0
+else if destination == 23 then 7.0
+else if destination == 24 then 12.0
+else if destination == 25 then 17.0
+else if destination == 26 then 22.0
+else if destination == 27 then 27.0
+else if destination == 28 then 32.0
+else if destination == 29 then 37.0
+else if destination == 30 then 42.0
+else if destination == 31 then 47.0
+else if destination == 32 then 52.0
+else if destination == 33 then 57.0
+else if destination == 34 then 62.0
+else if destination == 35 then 67.0
+else if destination == 36 then 72.0
+else if destination == 37 then 77.0
+else if destination == 38 then 82.0
+else if destination == 39 then 87.0
+else if destination == 40 then 92.0
+else if destination == 41 then 92.0
+else if destination == 42 then 7.0
+else if destination == 43 then 12.0
+else if destination == 44 then 12.0
+else if destination == 45 then 17.0
+else if destination == 46 then 17.0
+else if destination == 47 then 27.0
+else if destination == 48 then 32.0
+else if destination == 49 then 37.0
+else if destination == 50 then 32.0
+else if destination == 51 then 37.0
+else if destination == 52 then 42.0
+else if destination == 53 then 42.0
+else if destination == 54 then 37.0
+else if destination == 55 then 42.0
+else if destination == 56 then 52.0
+else if destination == 57 then 57.0
+else if destination == 58 then 62.0
+else if destination == 59 then 67.0
+else if destination == 60 then 72.0
+else if destination == 61 then 72.0
+else if destination == 62 then 77.0
+else if destination == 63 then 77.0
+else if destination == 64 then 82.0
+else if destination == 65 then 87.0
+else if destination == 66 then 92.0
+else if destination == 67 then 67.0
+else if destination == 68 then 67.0
+else if destination == 69 then 72.0
+else if destination == 70 then 57.0
+else if destination == 71 then 62.0
+else 67.0
+
+
+// Calculate latency when an item is delivered
+output global_latency eval when delivered with time - create_item(itemId).hold(or: 0.0)
+
+// Hold the latest latency value and emit it periodically
+output latest_latency eval @0.5Hz with global_latency.hold(or: 0.0)
+
+// Calculate mean latency over the last hour using the periodic latest_latency
+output mean_latency_1h eval @0.5Hz with latest_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0)
