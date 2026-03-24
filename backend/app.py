@@ -4,6 +4,7 @@ import sys
 import csv
 import time
 import tempfile
+from statistics import mean
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 
@@ -23,6 +24,93 @@ RESULTS_DIR = os.path.join(BASE_DIR, 'results')
 RTLOLA_SPECS_DIR = os.path.join(BASE_DIR, 'rtlola_specs')
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(RTLOLA_SPECS_DIR, exist_ok=True)
+
+
+def _summarize_log_csv(path):
+    created = 0
+    delivered = 0
+    expired = 0
+    failed = 0
+    recovered = 0
+    delivery_latencies = []
+    create_times = {}
+    last_sim_time = 0.0
+
+    with open(path, newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            sim_time = float(row.get('simTime', 0) or 0)
+            item_id = int(row.get('itemId', -1) or -1)
+            event = row.get('event', '')
+            last_sim_time = max(last_sim_time, sim_time)
+
+            if event == 'create':
+                created += 1
+                if item_id >= 0:
+                    create_times[item_id] = sim_time
+            elif event == 'deliver':
+                delivered += 1
+                if item_id in create_times:
+                    delivery_latencies.append(sim_time - create_times[item_id])
+            elif event == 'expire':
+                expired += 1
+            elif event == 'fail':
+                failed += 1
+            elif event in ('recover', 'recovery'):
+                recovered += 1
+
+    avg_latency = mean(delivery_latencies) if delivery_latencies else 0.0
+    success_rate = (delivered / created) if created > 0 else 0.0
+    return {
+        'created': created,
+        'delivered': delivered,
+        'expired': expired,
+        'failed': failed,
+        'recovered': recovered,
+        'avgDeliveryLatency': avg_latency,
+        'successRate': success_rate,
+        'lastSimTime': last_sim_time,
+    }
+
+
+def _write_aggregate_csv(run_rows, aggregate_filename):
+    path = os.path.join(RESULTS_DIR, aggregate_filename)
+    fieldnames = [
+        'run',
+        'created',
+        'delivered',
+        'expired',
+        'failed',
+        'recovered',
+        'avgDeliveryLatency',
+        'successRate',
+        'lastSimTime',
+        'wallTime',
+        'eventCount',
+    ]
+
+    avg_row = {
+        'run': 'AVG',
+        'created': mean([r['created'] for r in run_rows]) if run_rows else 0.0,
+        'delivered': mean([r['delivered'] for r in run_rows]) if run_rows else 0.0,
+        'expired': mean([r['expired'] for r in run_rows]) if run_rows else 0.0,
+        'failed': mean([r['failed'] for r in run_rows]) if run_rows else 0.0,
+        'recovered': mean([r['recovered'] for r in run_rows]) if run_rows else 0.0,
+        'avgDeliveryLatency': mean([r['avgDeliveryLatency'] for r in run_rows]) if run_rows else 0.0,
+        'successRate': mean([r['successRate'] for r in run_rows]) if run_rows else 0.0,
+        'lastSimTime': mean([r['lastSimTime'] for r in run_rows]) if run_rows else 0.0,
+        'wallTime': mean([r['wallTime'] for r in run_rows]) if run_rows else 0.0,
+        'eventCount': mean([r['eventCount'] for r in run_rows]) if run_rows else 0.0,
+    }
+
+    with open(path, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in run_rows:
+            writer.writerow(row)
+        writer.writerow(avg_row)
+
+    return path
 
 @app.route('/api/topologies', methods=['GET'])
 def get_topologies():
@@ -60,26 +148,60 @@ def get_topology(name):
 def run_simulation():
     config_path = None
     try:
-        config = request.json
+        config = dict(request.json or {})
+        repetitions = max(1, int(config.get('N_REPETITIONS', 1) or 1))
 
         # Save config to a temp file (unique per request to avoid races)
         os.makedirs('configuration', exist_ok=True)
+        timestamp = int(time.time() * 1000)
+        run_rows = []
+        last_logfile = None
 
-        with tempfile.NamedTemporaryFile(
-            mode='w',
-            suffix='.json',
-            prefix='run_',
-            dir='configuration',
-            delete=False
-        ) as f:
-            config_path = f.name
-            json.dump(config, f, indent=2)
-            
-        # Run simulator
-        # simulator.run() returns (logfile, wall_time, event_count)
-        logfile, wall_time, event_count = simulator.run(config_path)
-        
-        return jsonify({'success': True, 'logfile': os.path.basename(logfile), 'wallTime': wall_time, 'eventCount': event_count})
+        for run_idx in range(repetitions):
+            run_config = dict(config)
+            run_config['LOGFILE'] = os.path.join(
+                RESULTS_DIR,
+                f'run_{timestamp}_{run_idx + 1}.csv'
+            )
+
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.json',
+                prefix='run_',
+                dir='configuration',
+                delete=False
+            ) as f:
+                config_path = f.name
+                json.dump(run_config, f, indent=2)
+
+            logfile, wall_time, event_count = simulator.run(config_path)
+            last_logfile = logfile
+            summary = _summarize_log_csv(logfile)
+            run_rows.append({
+                'run': run_idx + 1,
+                **summary,
+                'wallTime': wall_time,
+                'eventCount': event_count,
+            })
+
+            if config_path and os.path.exists(config_path):
+                try:
+                    os.remove(config_path)
+                except OSError:
+                    pass
+                config_path = None
+
+        aggregate_filename = f'aggregate_{timestamp}.csv'
+        aggregate_path = _write_aggregate_csv(run_rows, aggregate_filename)
+
+        return jsonify({
+            'success': True,
+            'logfile': os.path.basename(last_logfile) if last_logfile else None,
+            'aggregateLogfile': os.path.basename(aggregate_path),
+            'wallTime': mean([r['wallTime'] for r in run_rows]) if run_rows else 0.0,
+            'eventCount': mean([r['eventCount'] for r in run_rows]) if run_rows else 0.0,
+            'repetitions': repetitions
+        })
     except Exception as e:
         print(e)
         return jsonify({'success': False, 'error': str(e)}), 500
