@@ -33,6 +33,7 @@ function App() {
 
   const [hasSimulation, setHasSimulation] = useState(false);
   const [currentLogfile, setCurrentLogfile] = useState(null);
+  const [currentDownloadFile, setCurrentDownloadFile] = useState(null);
   const [currentConfig, setCurrentConfig] = useState(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
@@ -65,6 +66,7 @@ function App() {
     setTopologyName(config.TOPOLOGY_NAME);
     setHasSimulation(false);
     setCurrentConfig(config);
+    setCurrentDownloadFile(null);
 
     try {
       const res = await axios.post(`${API_BASE}/run`, config);
@@ -80,8 +82,13 @@ function App() {
         setIsPlaying(false);
         setHasSimulation(true);
         setCurrentLogfile(res.data.logfile);
+        setCurrentDownloadFile(res.data.aggregateLogfile || res.data.logfile);
         // Show execution time and event count
-        setSnackbarMessage(`Simulation completed in ${res.data.wallTime.toFixed(4)}s (${res.data.eventCount} events processed)`);
+        setSnackbarMessage(
+          res.data.repetitions > 1
+            ? `Average over ${res.data.repetitions} runs ready (${Number(res.data.wallTime).toFixed(4)}s avg wall time, ${Number(res.data.eventCount).toFixed(1)} avg events)`
+            : `Simulation completed in ${Number(res.data.wallTime).toFixed(4)}s (${Number(res.data.eventCount).toFixed(0)} events processed)`
+        );
         setSnackbarOpen(true);
       } else {
         setError('Simulation failed: ' + (res.data.error || 'Unknown error'));
@@ -389,6 +396,7 @@ function App() {
                   setSimTime(0);
                   setMaxTime(100);
                   setCurrentLogfile(null);
+                  setCurrentDownloadFile(null);
                   setCurrentConfig(null);
                   setIsPlaying(false);
                   setError(null);
@@ -510,14 +518,17 @@ function App() {
               color="primary"
               size="small"
               onClick={() => {
-                if (currentLogfile) {
+                if (currentDownloadFile) {
                   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-                  const friendlyName = `simulation_results_${timestamp}.csv`;
-                  window.location.href = `${API_BASE}/download/${currentLogfile}?name=${friendlyName}`;
+                  const repetitions = currentConfig?.N_REPETITIONS ?? 1;
+                  const friendlyName = repetitions > 1
+                    ? `simulation_average_${timestamp}.csv`
+                    : `simulation_results_${timestamp}.csv`;
+                  window.location.href = `${API_BASE}/download/${currentDownloadFile}?name=${friendlyName}`;
                 }
               }}
             >
-              📋 Download Simulation Log
+              📋 {currentConfig?.N_REPETITIONS > 1 ? 'Download Average CSV' : 'Download Simulation Log'}
             </Button>
           </Box>
         </Paper>

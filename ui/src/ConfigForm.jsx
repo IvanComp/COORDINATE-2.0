@@ -877,15 +877,46 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
 
                     <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)' }} />
 
-                    <Button
-                        variant="contained"
-                        onClick={handleSubmit}
-                        disabled={loading}
-                        fullWidth
-                        size="large"
-                    >
-                        {loading ? 'Running...' : (hasSimulation ? 'Run New Simulation' : 'Run Simulation')}
-                    </Button>
+                    <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 1 }}>
+                        <TextField
+                            label="N° Repetitions"
+                            type="number"
+                            size="small"
+                            value={config.N_REPETITIONS}
+                            onChange={(e) => handleChange('N_REPETITIONS', Math.max(1, parseInt(e.target.value || '1', 10)))}
+                            inputProps={{ min: 1, step: 1 }}
+                            InputProps={{
+                                endAdornment: (
+                                    <InputAdornment position="end">
+                                        <Box component="span" title={FIELD_METADATA.N_REPETITIONS.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                            <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                        </Box>
+                                    </InputAdornment>
+                                )
+                            }}
+                            sx={{
+                                width: 132,
+                                '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                '& .MuiOutlinedInput-root': {
+                                    color: '#fff',
+                                    '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                    '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                    '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                }
+                            }}
+                        />
+
+                        <Button
+                            variant="contained"
+                            onClick={handleSubmit}
+                            disabled={loading}
+                            fullWidth
+                            size="large"
+                        >
+                            {loading ? 'Running...' : (hasSimulation ? 'Run New Simulation' : 'Run Simulation')}
+                        </Button>
+                    </Box>
                 </Box>
             </Collapse>
 
