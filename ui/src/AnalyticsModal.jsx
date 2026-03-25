@@ -51,7 +51,7 @@ function normalizeNum(v, fallback = 0) {
 }
 
 function FailedXDot(props) {
-    const { cx, cy, stroke = '#ef9a9a' } = props;
+    const { cx, cy, stroke = '#ff3b30' } = props;
     if (cx == null || cy == null) return null;
     const s = 4;
     return (
@@ -61,6 +61,12 @@ function FailedXDot(props) {
         </g>
     );
 }
+
+const EVENTS_TIMELINE_COLORS = {
+    created: 'hsl(225, 65%, 78%)',
+    delivered: '#93e6a1',
+    failed: '#ff3b30'
+};
 
 function ChartCard({
     title,
@@ -151,6 +157,9 @@ const CHART_IDS = [
     'chart-latency-by-importance',
     'chart-deliveries-by-agent'
 ];
+
+const HEATMAP_BASE_WIDTH = 760;
+const HEATMAP_BASE_HEIGHT = 460;
 
 function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyName = 'mesh25', nAgents = null }) {
     const [selectedAgent, setSelectedAgent] = useState('average');
@@ -415,8 +424,8 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
     const heatmapImageUrl = useMemo(() => {
         if (typeof document === 'undefined') return null;
         const visited = heatmapData.filter((n) => n.visits > 0);
-        const w = 760;
-        const h = 460;
+        const w = HEATMAP_BASE_WIDTH;
+        const h = HEATMAP_BASE_HEIGHT;
         const canvas = document.createElement('canvas');
         canvas.width = w;
         canvas.height = h;
@@ -496,7 +505,8 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
     const downloadChartPdf = async (chartId) => {
         const el = document.getElementById(chartId);
         if (!el) return;
-        const canvas = await html2canvas(el, { scale: 3, backgroundColor: '#ffffff', useCORS: true });
+        const exportScale = chartId === CHART_IDS[7] ? 5 : 3;
+        const canvas = await html2canvas(el, { scale: exportScale, backgroundColor: '#ffffff', useCORS: true });
         const imgData = canvas.toDataURL('image/png');
         const pdf = new jsPDF('landscape', 'pt', [canvas.width, canvas.height]);
         pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
@@ -578,12 +588,12 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                     <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
                                     <YAxis label={{ value: 'Events (#)', angle: -90, position: 'insideLeft' }} />
                                     <Tooltip />
-                                    <Line type="monotone" dataKey="created" stroke={pastelFromString('created')} strokeWidth={2} />
-                                    <Line type="monotone" dataKey="delivered" stroke={pastelFromString('delivered')} strokeWidth={2} />
+                                    <Line type="monotone" dataKey="created" stroke={EVENTS_TIMELINE_COLORS.created} strokeWidth={2} />
+                                    <Line type="monotone" dataKey="delivered" stroke={EVENTS_TIMELINE_COLORS.delivered} strokeWidth={2} />
                                     <Line
                                         type="monotone"
                                         dataKey="failed"
-                                        stroke={pastelFromString('failed')}
+                                        stroke={EVENTS_TIMELINE_COLORS.failed}
                                         strokeWidth={2}
                                         dot={<FailedXDot />}
                                         activeDot={<FailedXDot />}
@@ -601,8 +611,8 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                     <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
                                     <YAxis label={{ value: 'Cumulative items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
                                     <Tooltip />
-                                    <Line type="monotone" dataKey="created" stroke={pastelFromString('cum-created')} strokeWidth={2} />
-                                    <Line type="monotone" dataKey="delivered" stroke={pastelFromString('cum-delivered')} strokeWidth={2} />
+                                    <Line type="monotone" dataKey="created" stroke={EVENTS_TIMELINE_COLORS.created} strokeWidth={2} />
+                                    <Line type="monotone" dataKey="delivered" stroke={EVENTS_TIMELINE_COLORS.delivered} strokeWidth={2} />
                                 </LineChart>
                             </ResponsiveContainer>
                         </ChartCard>
@@ -731,22 +741,40 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                 </Box>
                             )}
                         >
-                            <Box sx={{ position: 'relative', width: '100%', height: '100%', bgcolor: '#d9dbf2', border: '1px solid #c7cbe5', borderRadius: 1.5, overflow: 'hidden' }}>
-                                {heatmapImageUrl && (
-                                    <Box
-                                        component="img"
-                                        src={heatmapImageUrl}
-                                        alt="Heatmap"
-                                        sx={{
-                                            position: 'absolute',
-                                            inset: 0,
-                                            width: '100%',
-                                            height: '100%',
-                                            objectFit: 'fill'
-                                        }}
-                                    />
-                                )}
-                                <svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%" style={{ position: 'absolute', inset: 0 }}>
+                            <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <Box
+                                    sx={{
+                                        position: 'relative',
+                                        width: '100%',
+                                        aspectRatio: `${HEATMAP_BASE_WIDTH} / ${HEATMAP_BASE_HEIGHT}`,
+                                        maxHeight: '100%',
+                                        bgcolor: '#d9dbf2',
+                                        border: '1px solid #c7cbe5',
+                                        borderRadius: 1.5,
+                                        overflow: 'hidden'
+                                    }}
+                                >
+                                    {heatmapImageUrl && (
+                                        <Box
+                                            component="img"
+                                            src={heatmapImageUrl}
+                                            alt="Heatmap"
+                                            sx={{
+                                                position: 'absolute',
+                                                inset: 0,
+                                                width: '100%',
+                                                height: '100%',
+                                                objectFit: 'fill'
+                                            }}
+                                        />
+                                    )}
+                                    <svg
+                                        viewBox={`0 0 ${HEATMAP_BASE_WIDTH} ${HEATMAP_BASE_HEIGHT}`}
+                                        preserveAspectRatio="none"
+                                        width="100%"
+                                        height="100%"
+                                        style={{ position: 'absolute', inset: 0, shapeRendering: 'geometricPrecision' }}
+                                    >
                                     {topology?.edges?.map((e, idx) => {
                                         // Backend topology edges are exposed as { source, target }.
                                         const from = heatmapData.find((n) => n.id === e.source);
@@ -755,30 +783,43 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                         return (
                                             <line
                                                 key={`${e.source}-${e.target}-${idx}`}
-                                                x1={from.nx}
-                                                y1={from.nz}
-                                                x2={to.nx}
-                                                y2={to.nz}
+                                                x1={(from.nx / 100) * HEATMAP_BASE_WIDTH}
+                                                y1={(from.nz / 100) * HEATMAP_BASE_HEIGHT}
+                                                x2={(to.nx / 100) * HEATMAP_BASE_WIDTH}
+                                                y2={(to.nz / 100) * HEATMAP_BASE_HEIGHT}
                                                 stroke="rgba(0,0,0,0.24)"
-                                                strokeWidth="0.6"
+                                                strokeWidth="0.62"
                                                 strokeLinecap="round"
+                                                vectorEffect="non-scaling-stroke"
                                             />
                                         );
                                     })}
                                     {heatmapData.map((n) => (
-                                        <circle
-                                            key={`node-${n.id}`}
-                                            cx={n.nx}
-                                            cy={n.nz}
-                                            r="1.8"
-                                            fill="rgba(139, 209, 124, 0.38)"
-                                            stroke="rgba(15, 23, 42, 0.30)"
-                                            strokeWidth="0.45"
-                                        >
-                                            <title>{`Room ${n.id} · visits ${n.visits}`}</title>
-                                        </circle>
+                                        <g key={`node-${n.id}`}>
+                                            <circle
+                                                cx={(n.nx / 100) * HEATMAP_BASE_WIDTH}
+                                                cy={(n.nz / 100) * HEATMAP_BASE_HEIGHT}
+                                                r="1.95"
+                                                fill="rgba(139, 209, 124, 0.16)"
+                                                stroke="rgba(15, 23, 42, 0.18)"
+                                                strokeWidth="0.5"
+                                                vectorEffect="non-scaling-stroke"
+                                            />
+                                            <circle
+                                                cx={(n.nx / 100) * HEATMAP_BASE_WIDTH}
+                                                cy={(n.nz / 100) * HEATMAP_BASE_HEIGHT}
+                                                r="1.18"
+                                                fill="rgba(166, 221, 143, 0.62)"
+                                                stroke="rgba(15, 23, 42, 0.34)"
+                                                strokeWidth="0.34"
+                                                vectorEffect="non-scaling-stroke"
+                                            >
+                                                <title>{`Room ${n.id} · visits ${n.visits}`}</title>
+                                            </circle>
+                                        </g>
                                     ))}
-                                </svg>
+                                    </svg>
+                                </Box>
                             </Box>
                         </ChartCard>
                     </Box>
