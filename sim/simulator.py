@@ -59,6 +59,8 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('IMPORTANCE_PROBABILITIES', [0.5, 0.1, 0.4])
     d.setdefault('EXPIRATION_TIME', [-1, -1, -1])
     d.setdefault('EXPIRATION_DISTR', ['exponential', 'exponential', 'exponential'])
+    d.setdefault('PRIVACY_COMM_TIME_BONUS', [0.0, 0.0, 0.0])
+    d.setdefault('PRIVACY_COMP_TIME_BONUS', [0.0, 0.0, 0.0])
     # booleans default
     for k in ['LOG_ITEM','LOG_DELIVERY','LOG_LOAD','LOG_DROP','LOG_EXPIRE','LOG_MOVE','LOG_FAIL','LOG_RECOVERY','LOG_HELP','LOG_FAKE','LOG_RESCUE']:
         d.setdefault(k, True if k in ['LOG_ITEM','LOG_DELIVERY','LOG_EXPIRE'] else False)

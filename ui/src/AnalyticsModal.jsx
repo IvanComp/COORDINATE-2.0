@@ -62,11 +62,78 @@ function FailedXDot(props) {
     );
 }
 
+function PackageIcon({ x, y, width, height, color }) {
+    const bodyH = height * 0.72;
+    const lidH = height * 0.28;
+    const stroke = 'rgba(81, 65, 32, 0.35)';
+    return (
+        <g>
+            <rect x={x} y={y + lidH} width={width} height={bodyH} rx={1.5} fill={color} stroke={stroke} strokeWidth={0.6} />
+            <rect x={x} y={y} width={width} height={lidH + 1} rx={1.5} fill="rgba(255,255,255,0.26)" stroke={stroke} strokeWidth={0.6} />
+            <line x1={x + width * 0.5} y1={y + 1} x2={x + width * 0.5} y2={y + height - 1} stroke={stroke} strokeWidth={0.55} />
+        </g>
+    );
+}
+
+function PackageStackShape(props) {
+    const { x, y, width, height, fill, payload, dataKey } = props;
+    const value = Number(payload?.[dataKey] || 0);
+    if (!value || width <= 0 || height <= 0) return null;
+
+    const iconW = Math.max(12, Math.min(22, width * 0.42));
+    const iconH = Math.max(10, Math.min(16, height / Math.max(value, 1)));
+    const gap = 1.5;
+    const maxIcons = Math.max(1, Math.floor((height + gap) / (iconH + gap)));
+    const visibleIcons = Math.min(value, maxIcons);
+    const startX = x + (width - iconW) / 2;
+    const baseY = y + height - iconH;
+
+    return (
+        <g>
+            {Array.from({ length: visibleIcons }).map((_, idx) => (
+                <PackageIcon
+                    key={`${dataKey}-${idx}`}
+                    x={startX}
+                    y={baseY - idx * (iconH + gap)}
+                    width={iconW}
+                    height={iconH}
+                    color={fill}
+                />
+            ))}
+        </g>
+    );
+}
+
 const EVENTS_TIMELINE_COLORS = {
-    created: 'hsl(225, 65%, 78%)',
-    delivered: '#93e6a1',
+    created: '#A5D6A7',
+    delivered: '#A7C7FF',
     failed: '#ff3b30'
 };
+
+const EVENT_DISTRIBUTION_COLORS = {
+    create: '#A5D6A7',
+    deliver: '#A7C7FF',
+    fail: '#ff3b30',
+    recover: pastelFromString('failures'),
+    recovery: pastelFromString('failures'),
+    expire: pastelFromString('backlog')
+};
+
+const LATENCY_HISTOGRAM_COLOR = '#B8E0D2';
+const AGENT_ACTIVITY_COLORS = [
+    '#B8E0D2',
+    '#AFCBFF',
+    '#FFF2B2',
+    '#CDECCF',
+    '#D6C5F0',
+    '#C7E9F1',
+    '#F9D8A7',
+    '#C4E7D0',
+    '#D4E4FF',
+    '#F7EDB2',
+    '#BFE3E0',
+    '#D8D0F5'
+];
 
 function ChartCard({
     title,
@@ -243,6 +310,8 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
             .slice(0, 10);
     }, [parsedLogs]);
 
+    const eventDistributionColor = (name) => EVENT_DISTRIBUTION_COLORS[name] || pastelFromString(name);
+
     const importanceDist = useMemo(() => {
         const dist = { Low: 0, Medium: 0, High: 0 };
         parsedLogs.forEach((r) => {
@@ -317,6 +386,44 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
             return { t: b.t, backlog: Math.max(0, backlog) };
         });
     }, [bins]);
+
+    const backlogByPriorityTrend = useMemo(() => {
+        if (!bins.length) return [];
+        const sortedLogs = [...parsedLogs].sort((a, b) => a.simTime - b.simTime);
+        const pending = new Map();
+        let logIdx = 0;
+
+        return bins.map((bin) => {
+            while (logIdx < sortedLogs.length && sortedLogs[logIdx].simTime <= bin.t) {
+                const event = sortedLogs[logIdx];
+                if (event.itemId >= 0) {
+                    if (event.event === 'create') {
+                        pending.set(event.itemId, event.itemImportance);
+                    } else if (event.event === 'deliver' || event.event === 'expire') {
+                        pending.delete(event.itemId);
+                    }
+                }
+                logIdx += 1;
+            }
+
+            let low = 0;
+            let medium = 0;
+            let high = 0;
+            pending.forEach((importance) => {
+                if (importance === 0) low += 1;
+                else if (importance === 1) medium += 1;
+                else if (importance === 2) high += 1;
+            });
+
+            return {
+                t: bin.t,
+                low,
+                medium,
+                high,
+                backlog: low + medium + high
+            };
+        });
+    }, [bins, parsedLogs]);
 
     const latencyByImportance = useMemo(() => {
         const createInfo = new Map();
@@ -621,9 +728,9 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                     <Box sx={{ minWidth: 0 }}>
                         <ChartCard title="Event Distribution" chartId={CHART_IDS[2]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={eventDistribution} dataFilename="event_distribution">
                             <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie data={eventDistribution} dataKey="value" nameKey="name" outerRadius={90} label>
-                                        {eventDistribution.map((e) => <Cell key={e.name} fill={pastelFromString(e.name)} />)}
+                                    <PieChart>
+                                        <Pie data={eventDistribution} dataKey="value" nameKey="name" outerRadius={90} label>
+                                        {eventDistribution.map((e) => <Cell key={e.name} fill={eventDistributionColor(e.name)} />)}
                                     </Pie>
                                     <Tooltip />
                                     <Legend verticalAlign="bottom" height={24} wrapperStyle={{ paddingTop: 4, marginBottom: 0 }} />
@@ -656,7 +763,7 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                     <XAxis dataKey="range" tickMargin={10} height={46} label={{ value: 'Latency range (s)', position: 'bottom', offset: 8 }} />
                                     <YAxis label={{ value: 'Delivered items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
                                     <Tooltip />
-                                    <Bar dataKey="count" fill={pastelFromString('latency')} />
+                                    <Bar dataKey="count" fill={LATENCY_HISTOGRAM_COLOR} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </ChartCard>
@@ -671,7 +778,7 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                     <YAxis label={{ value: 'Actions (#)', angle: -90, position: 'insideLeft' }} />
                                     <Tooltip />
                                     <Bar dataKey="actions">
-                                        {agentActivity.map((d) => <Cell key={d.agent} fill={pastelFromString(d.agent)} />)}
+                                        {agentActivity.map((d, idx) => <Cell key={d.agent} fill={AGENT_ACTIVITY_COLORS[idx % AGENT_ACTIVITY_COLORS.length]} />)}
                                     </Bar>
                                 </BarChart>
                             </ResponsiveContainer>
@@ -686,8 +793,8 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                     <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
                                     <YAxis label={{ value: 'Events (#)', angle: -90, position: 'insideLeft' }} />
                                     <Tooltip />
-                                    <Area type="monotone" dataKey="failures" stroke={pastelFromString('failures')} fill={pastelFromString('failures')} />
-                                    <Area type="monotone" dataKey="recoveries" stroke={pastelFromString('recoveries')} fill={pastelFromString('recoveries')} />
+                                    <Area type="monotone" dataKey="failures" stroke={pastelFromString('recoveries')} fill={pastelFromString('recoveries')} />
+                                    <Area type="monotone" dataKey="recoveries" stroke={pastelFromString('failures')} fill={pastelFromString('failures')} />
                                 </AreaChart>
                             </ResponsiveContainer>
                         </ChartCard>
@@ -832,22 +939,24 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                     <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
                                     <YAxis domain={[0, 100]} label={{ value: 'Success Rate (%)', angle: -90, position: 'insideLeft', dy: 45 }} />
                                     <Tooltip formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                                    <Line type="monotone" dataKey="successRate" stroke={pastelFromString('success-rate')} strokeWidth={2.5} dot={false} />
+                                    <Line type="monotone" dataKey="successRate" stroke="#A5D6A7" strokeWidth={2.5} dot={false} />
                                 </LineChart>
                             </ResponsiveContainer>
                         </ChartCard>
                     </Box>
 
                     <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Items Created - (Delivered - Expired)" chartId={CHART_IDS[9]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={backlogTrend} dataFilename="backlog_formula_over_time">
+                        <ChartCard title="Pending Items by Priority Over Time" chartId={CHART_IDS[9]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={backlogByPriorityTrend} dataFilename="backlog_formula_over_time">
                             <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={backlogTrend} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
+                                <BarChart data={backlogByPriorityTrend} margin={{ top: 12, right: 24, left: 10, bottom: 52 }} barGap={2}>
                                     <CartesianGrid strokeDasharray="3 3" />
                                     <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
                                     <YAxis label={{ value: 'Pending Items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
                                     <Tooltip />
-                                    <Area type="monotone" dataKey="backlog" stroke={pastelFromString('backlog')} fill={pastelFromString('backlog')} />
-                                </AreaChart>
+                                    <Bar dataKey="low" stackId="backlog" fill={itemImportanceColor('Low')} shape={<PackageStackShape />} />
+                                    <Bar dataKey="medium" stackId="backlog" fill={itemImportanceColor('Medium')} shape={<PackageStackShape />} />
+                                    <Bar dataKey="high" stackId="backlog" fill={itemImportanceColor('High')} shape={<PackageStackShape />} />
+                                </BarChart>
                             </ResponsiveContainer>
                         </ChartCard>
                     </Box>
@@ -877,7 +986,7 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                     <YAxis label={{ value: 'Delivered Items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
                                     <Tooltip />
                                     <Bar dataKey="delivered" name="Delivered Items">
-                                        {deliveriesByAgent.map((d) => <Cell key={d.agent} fill={pastelFromString(`del-${d.agent}`)} />)}
+                                        {deliveriesByAgent.map((d, idx) => <Cell key={d.agent} fill={AGENT_ACTIVITY_COLORS[idx % AGENT_ACTIVITY_COLORS.length]} />)}
                                     </Bar>
                                 </BarChart>
                             </ResponsiveContainer>

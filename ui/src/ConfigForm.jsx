@@ -914,7 +914,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             fullWidth
                             size="large"
                         >
-                            {loading ? 'Running...' : (hasSimulation ? 'Run New Simulation' : 'Run Simulation')}
+                            {loading ? 'Running...' : 'Run Simulation'}
                         </Button>
                     </Box>
                 </Box>

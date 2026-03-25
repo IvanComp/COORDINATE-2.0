@@ -198,6 +198,24 @@ class Robot:
     def setLocation(self, r): self.position = r; self.space.setRobotPosition(self, r)
     def setDestination(self, r): self.destination = r
 
+    def _privacy_bonus_by_importance(self, item: Optional[Item], bonus_cfg_name: str) -> float:
+        if item is None:
+            return 0.0
+        bonuses = getattr(self.cfg, bonus_cfg_name, [0.0] * len(self.cfg.IMPORTANCE_PROBABILITIES))
+        imp = item.getImportance()
+        if imp < 0 or imp >= len(bonuses):
+            return 0.0
+        try:
+            return float(bonuses[imp])
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _effective_comm_time(self, item: Optional[Item]) -> float:
+        return float(self.cfg.COMM_TIME) + self._privacy_bonus_by_importance(item, 'PRIVACY_COMM_TIME_BONUS')
+
+    def _effective_comp_time(self, item: Optional[Item]) -> float:
+        return float(self.cfg.COMP_TIME) + self._privacy_bonus_by_importance(item, 'PRIVACY_COMP_TIME_BONUS')
+
     def _log(self, simTime, event):
         os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
         new = not os.path.exists(self.logfile)
@@ -230,17 +248,19 @@ class Robot:
     def loadItem(self, item: Item, simTime):
         if self.item is not None:
             self.dropItem(simTime)
+        eff_comp_time = self._effective_comp_time(item)
+        eff_comm_time = self._effective_comm_time(item)
         # Pay computation/communication costs depending on mechanism
         if self.cfg.current_architecture == 'semi-decentralized':
-            avg = [self.cfg.LOAD_TIME, self.cfg.COMP_TIME, self.cfg.MOVEMENT_TIME, self.cfg.COMM_TIME, self.cfg.DROP_TIME]
+            avg = [self.cfg.LOAD_TIME, eff_comp_time, self.cfg.MOVEMENT_TIME, eff_comm_time, self.cfg.DROP_TIME]
             trc = [self.cfg.LOAD_TRACE, self.cfg.COMP_TRACE, self.cfg.MOVEMENT_TRACE, self.cfg.COMM_TRACE, self.cfg.DROP_TRACE]
             dst = [self.cfg.LOAD_DISTR, self.cfg.COMP_DISTR, self.cfg.MOVEMENT_DISTR, self.cfg.COMM_DISTR, self.cfg.DROP_DISTR]
         elif 'centralized-' in self.cfg.current_architecture:
-            avg = [self.cfg.LOAD_TIME, 0, self.cfg.MOVEMENT_TIME, self.cfg.COMM_TIME, self.cfg.DROP_TIME]
+            avg = [self.cfg.LOAD_TIME, 0, self.cfg.MOVEMENT_TIME, eff_comm_time, self.cfg.DROP_TIME]
             trc = [self.cfg.LOAD_TRACE, '_', self.cfg.MOVEMENT_TRACE, self.cfg.COMM_TRACE, self.cfg.DROP_TRACE]
             dst = [self.cfg.LOAD_DISTR, self.cfg.COMP_DISTR, self.cfg.MOVEMENT_DISTR, self.cfg.COMM_DISTR, self.cfg.DROP_DISTR]
         else:
-            avg = [self.cfg.LOAD_TIME, self.cfg.COMP_TIME, self.cfg.MOVEMENT_TIME, 0, self.cfg.DROP_TIME]
+            avg = [self.cfg.LOAD_TIME, eff_comp_time, self.cfg.MOVEMENT_TIME, 0, self.cfg.DROP_TIME]
             trc = [self.cfg.LOAD_TRACE, self.cfg.COMP_TRACE, self.cfg.MOVEMENT_TRACE, '_', self.cfg.DROP_TRACE]
             dst = [self.cfg.LOAD_DISTR, self.cfg.COMP_DISTR, self.cfg.MOVEMENT_DISTR, self.cfg.COMM_DISTR, self.cfg.DROP_DISTR]
         self.space.clock.scheduleEvent(f'move-{self.getIdx()}', avg, trc, dst)
