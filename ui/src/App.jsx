@@ -14,9 +14,9 @@ const API_BASE = '/api';
 const SIMULATION_MODES = [
     {
         id: 'batch-simulation',
-        title: 'Batch Simulation',
+        title: 'Batch Colony',
         subtitle: 'Finite analysis run',
-        description: 'Launch a classic simulation with a clear beginning and end, then inspect the full run after it completes.',
+        description: 'Launch a classic colony run with a clear beginning and end, then inspect the full history after it completes.',
         available: true,
     },
     {
@@ -203,6 +203,7 @@ function SimulationView({
     finalStats,
 }) {
     const [analyticsOpen, setAnalyticsOpen] = useState(false);
+    const [renderEnabled, setRenderEnabled] = useState(true);
 
     return (
         <Box sx={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', bgcolor: '#080b12' }}>
@@ -211,48 +212,66 @@ function SimulationView({
                 topologyName={topologyName}
                 ants={currentState.ants}
                 specialChambers={specialChambers}
+                renderEnabled={renderEnabled}
             />
 
             <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 8 }}>
-                <Button
-                    variant="outlined"
-                    onClick={onBack}
-                    sx={{
-                        color: 'white',
-                        borderColor: 'rgba(255,255,255,0.18)',
-                        bgcolor: 'rgba(0,0,0,0.4)',
-                        backdropFilter: 'blur(10px)',
-                    }}
-                >
-                    Back to home
-                </Button>
+                <Stack spacing={1.5}>
+                    <Button
+                        variant="outlined"
+                        onClick={onBack}
+                        sx={{
+                            color: 'white',
+                            borderColor: 'rgba(255,255,255,0.18)',
+                            bgcolor: 'rgba(0,0,0,0.4)',
+                            backdropFilter: 'blur(10px)',
+                        }}
+                    >
+                        Back to home
+                    </Button>
+                    <Button
+                        variant={renderEnabled ? 'contained' : 'outlined'}
+                        onClick={() => setRenderEnabled((value) => !value)}
+                        sx={{
+                            alignSelf: 'flex-start',
+                            color: renderEnabled ? '#1a130e' : 'white',
+                            borderColor: 'rgba(255,255,255,0.18)',
+                            bgcolor: renderEnabled ? '#d8a95f' : 'rgba(0,0,0,0.4)',
+                            backdropFilter: 'blur(10px)',
+                            '&:hover': {
+                                bgcolor: renderEnabled ? '#e4bb78' : 'rgba(255,255,255,0.08)',
+                            },
+                        }}
+                    >
+                        {renderEnabled ? 'Pause 3D view' : 'Resume 3D view'}
+                    </Button>
+                </Stack>
             </Box>
 
             <ConfigForm onRun={handleRun} loading={loading} hasSimulation={hasSimulation} />
-
-            <Box sx={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 5 }}>
-                <Paper sx={{ p: 1.3, bgcolor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
-                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', md: 'center' }}>
-                        <Box>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                                Final Dashboard
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.68)' }}>
-                                {hasSimulation ? 'Open the analytics popup for the completed run.' : 'Run a simulation to unlock the analytics popup.'}
-                            </Typography>
-                        </Box>
-                        <Button variant="contained" onClick={() => setAnalyticsOpen(true)} disabled={!hasSimulation}>
-                            Open dashboard
-                        </Button>
-                    </Stack>
-                </Paper>
-            </Box>
 
             <Stack spacing={2} sx={{ position: 'absolute', right: 16, top: 16, zIndex: 5 }}>
                 <Legend />
                 <AntSearchPanel lineageFile={lineageFile} />
                 <EventLog logs={logs} simTime={simTime} />
             </Stack>
+
+            <Box sx={{ position: 'absolute', right: 16, bottom: 120, zIndex: 7 }}>
+                <Button
+                    variant="contained"
+                    onClick={() => setAnalyticsOpen(true)}
+                    disabled={!hasSimulation}
+                    sx={{
+                        px: 2.4,
+                        py: 1.1,
+                        color: '#1a130e',
+                        bgcolor: '#d8a95f',
+                        '&:hover': { bgcolor: '#e4bb78' },
+                    }}
+                >
+                    Open dashboard
+                </Button>
+            </Box>
 
             <Paper
                 sx={{
@@ -341,7 +360,7 @@ function SimulationView({
                 onClose={() => setAnalyticsOpen(false)}
                 logs={logs}
                 summary={finalStats}
-                title="Batch Simulation Dashboard"
+                title="Batch Colony Dashboard"
                 subtitle={hasSimulation ? `Final snapshot at ${finalStats.finalTime} simulated minutes.` : ''}
             />
         </Box>

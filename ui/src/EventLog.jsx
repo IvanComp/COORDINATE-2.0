@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Box, Paper, Typography } from '@mui/material';
 
-function EventLog({ logs, simTime }) {
+function EventLog({ logs, simTime, width = 320, maxHeight = 280, title = 'Event Log' }) {
     const [expanded, setExpanded] = useState(true);
 
     const events = useMemo(() => {
@@ -40,13 +40,13 @@ function EventLog({ logs, simTime }) {
     };
 
     return (
-        <Paper sx={{ width: 320, bgcolor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)' }}>
+        <Paper sx={{ width, bgcolor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)' }}>
             <Box sx={{ p: 1.5, display: 'flex', justifyContent: 'space-between', cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
-                <Typography variant="subtitle2" sx={{ color: 'white', fontWeight: 'bold' }}>Event Log</Typography>
+                <Typography variant="subtitle2" sx={{ color: 'white', fontWeight: 'bold' }}>{title}</Typography>
                 <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.65)' }}>{expanded ? '▲' : '▼'}</Typography>
             </Box>
             {expanded && (
-                <Box sx={{ px: 1.5, pb: 1.5, maxHeight: 280, overflowY: 'auto' }}>
+                <Box sx={{ px: 1.5, pb: 1.5, maxHeight, overflowY: 'auto' }}>
                     {events.length === 0 ? (
                         <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>No events yet.</Typography>
                     ) : (

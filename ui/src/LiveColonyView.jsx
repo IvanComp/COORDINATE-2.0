@@ -25,6 +25,7 @@ function LiveColonyView({ onBack }) {
     const [error, setError] = useState(null);
     const [analyticsOpen, setAnalyticsOpen] = useState(false);
     const [historyLogs, setHistoryLogs] = useState([]);
+    const [renderEnabled, setRenderEnabled] = useState(true);
 
     const refreshState = async () => {
         const res = await axios.get(`${API_BASE}/live/state`);
@@ -90,6 +91,7 @@ function LiveColonyView({ onBack }) {
                     topologyName={liveState.topologyName}
                     ants={liveState.ants}
                     specialChambers={liveState.specialChambers}
+                    renderEnabled={renderEnabled}
                 />
             ) : (
                 <Box
@@ -119,6 +121,22 @@ function LiveColonyView({ onBack }) {
                         }}
                     >
                         Back to home
+                    </Button>
+                    <Button
+                        variant={renderEnabled ? 'contained' : 'outlined'}
+                        onClick={() => setRenderEnabled((value) => !value)}
+                        sx={{
+                            alignSelf: 'flex-start',
+                            color: renderEnabled ? '#1a130e' : 'white',
+                            borderColor: 'rgba(255,255,255,0.18)',
+                            bgcolor: renderEnabled ? '#d8a95f' : 'rgba(0,0,0,0.4)',
+                            backdropFilter: 'blur(10px)',
+                            '&:hover': {
+                                bgcolor: renderEnabled ? '#e4bb78' : 'rgba(255,255,255,0.08)',
+                            },
+                        }}
+                    >
+                        {renderEnabled ? 'Pause 3D view' : 'Resume 3D view'}
                     </Button>
 
                     <Paper
@@ -166,37 +184,37 @@ function LiveColonyView({ onBack }) {
 
             {liveState?.hasColony && (
                 <>
-                    <Box sx={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 5 }}>
-                        <Paper sx={{ p: 1.3, bgcolor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
-                            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', md: 'center' }}>
-                                <Box>
-                                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                                        Live Dashboard
-                                    </Typography>
-                                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.68)' }}>
-                                        Open the analytics popup to monitor charts while the colony keeps running.
-                                    </Typography>
-                                </Box>
-                                <Button variant="contained" onClick={() => setAnalyticsOpen(true)} disabled={!liveState?.hasColony}>
-                                    Open dashboard
-                                </Button>
-                            </Stack>
-                        </Paper>
-                    </Box>
-
                     <Stack spacing={2} sx={{ position: 'absolute', right: 16, top: 16, zIndex: 5 }}>
                         <Legend />
-                        <AntSearchPanel liveMode liveAvailable={liveState?.hasColony} />
-                        <EventLog logs={liveState?.recentEvents || []} simTime={liveState?.simTime || 0} />
                     </Stack>
+
+                    <Box sx={{ position: 'absolute', left: 16, bottom: 16, zIndex: 7 }}>
+                        <AntSearchPanel liveMode liveAvailable={liveState?.hasColony} width={340} />
+                    </Box>
+
+                    <Box sx={{ position: 'absolute', right: 16, bottom: 16, zIndex: 7 }}>
+                        <Button
+                            variant="contained"
+                            onClick={() => setAnalyticsOpen(true)}
+                            disabled={!liveState?.hasColony}
+                            sx={{
+                                px: 2.4,
+                                py: 1.1,
+                                color: '#1a130e',
+                                bgcolor: '#d8a95f',
+                                '&:hover': { bgcolor: '#e4bb78' },
+                            }}
+                        >
+                            Open dashboard
+                        </Button>
+                    </Box>
 
                     <Paper
                         sx={{
                             position: 'absolute',
-                            left: '50%',
+                            left: 372,
+                            right: 170,
                             bottom: 16,
-                            transform: 'translateX(-50%)',
-                            width: 'min(960px, calc(100vw - 32px))',
                             p: 2,
                             zIndex: 6,
                             bgcolor: 'rgba(0,0,0,0.62)',
@@ -204,7 +222,7 @@ function LiveColonyView({ onBack }) {
                             border: '1px solid rgba(255,255,255,0.12)',
                         }}
                     >
-                        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
+                        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems="stretch">
                             <Box>
                                 <Typography variant="subtitle2" sx={{ color: 'white', fontWeight: 'bold' }}>
                                     Persistent world clock
@@ -229,6 +247,13 @@ function LiveColonyView({ onBack }) {
                                     Snapshot saved every {liveState?.config?.SNAPSHOT_INTERVAL_SECONDS || 60} seconds
                                 </Typography>
                             </Box>
+                            <EventLog
+                                logs={liveState?.recentEvents || []}
+                                simTime={liveState?.simTime || 0}
+                                width="min(520px, 100%)"
+                                maxHeight={160}
+                                title="Live Events"
+                            />
                         </Stack>
                     </Paper>
                 </>
