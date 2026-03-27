@@ -26,7 +26,7 @@ function Legend() {
             {expanded && (
                 <Box sx={{ px: 1.5, pb: 1.5 }}>
                     <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)', display: 'block', mb: 1 }}>Ants</Typography>
-                    <Row color="#d8a95f" label="Active female" />
+                    <Row color="#f28bb3" label="Active female" />
                     <Row color="#7ca6ff" label="Active male" />
                     <Row color="#a7b4cf" label="Micro-nap" />
                     <Row color="#f08b7f" label="Dead ant" />

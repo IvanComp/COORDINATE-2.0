@@ -1,29 +1,30 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Box, Button, Chip, CircularProgress, Paper, Slider, Snackbar, Stack, Typography } from '@mui/material';
 import axios from 'axios';
+import AnalyticsModal from './AnalyticsModal';
 import AntSearchPanel from './AntSearchPanel';
 import ConfigForm from './ConfigForm';
 import EventLog from './EventLog';
 import Legend from './Legend';
-import StatsPanel from './StatsPanel';
+import LiveColonyView from './LiveColonyView';
 import Visualizer from './Visualizer';
 
 const API_BASE = '/api';
 
 const SIMULATION_MODES = [
     {
-        id: 'colony-life',
-        title: 'Colony Life',
-        subtitle: 'Current simulation',
-        description: 'Track vital needs, rest cycles, mating events, and genealogy across a living colony room by room.',
+        id: 'batch-simulation',
+        title: 'Batch Simulation',
+        subtitle: 'Finite analysis run',
+        description: 'Launch a classic simulation with a clear beginning and end, then inspect the full run after it completes.',
         available: true,
     },
     {
-        id: 'seasonal-pressure',
-        title: 'Seasonal Pressure',
-        subtitle: 'Coming soon',
-        description: 'A future mode with cyclical scarcity, environmental crises, and seasonal pressure on colony survival.',
-        available: false,
+        id: 'live-colony',
+        title: 'Live Colony',
+        subtitle: 'Persistent real-time monitoring',
+        description: 'Run a colony continuously with slow life rhythms, long lifespans, and a live dashboard you can watch over time.',
+        available: true,
     },
     {
         id: 'dynasty-mode',
@@ -98,7 +99,7 @@ function HomePage({ onEnter }) {
                             Choose which anthill simulation you want to open.
                         </Typography>
                         <Typography sx={{ maxWidth: 760, color: 'rgba(255,255,255,0.74)', fontSize: { xs: '1rem', md: '1.08rem' } }}>
-                            The app no longer drops you straight into the technical panel. You now enter through a dedicated launcher with multiple simulation families visible, and only one already available.
+                            The app no longer drops you straight into the technical panel. You now enter through a dedicated launcher with multiple simulation families visible, including both the classic finite run and a persistent live colony.
                         </Typography>
                     </Stack>
                 </Paper>
@@ -199,7 +200,10 @@ function SimulationView({
     setSnackbarOpen,
     snackbarMessage,
     onBack,
+    finalStats,
 }) {
+    const [analyticsOpen, setAnalyticsOpen] = useState(false);
+
     return (
         <Box sx={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', bgcolor: '#080b12' }}>
             <Visualizer
@@ -227,8 +231,20 @@ function SimulationView({
             <ConfigForm onRun={handleRun} loading={loading} hasSimulation={hasSimulation} />
 
             <Box sx={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 5 }}>
-                <Paper sx={{ p: 1.5, bgcolor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                    <StatsPanel logs={logs} simTime={simTime} currentAnts={currentState.ants} />
+                <Paper sx={{ p: 1.3, bgcolor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
+                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', md: 'center' }}>
+                        <Box>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                                Final Dashboard
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.68)' }}>
+                                {hasSimulation ? 'Open the analytics popup for the completed run.' : 'Run a simulation to unlock the analytics popup.'}
+                            </Typography>
+                        </Box>
+                        <Button variant="contained" onClick={() => setAnalyticsOpen(true)} disabled={!hasSimulation}>
+                            Open dashboard
+                        </Button>
+                    </Stack>
                 </Paper>
             </Box>
 
@@ -319,6 +335,15 @@ function SimulationView({
                 onClose={() => setSnackbarOpen(false)}
                 message={snackbarMessage}
             />
+
+            <AnalyticsModal
+                open={analyticsOpen}
+                onClose={() => setAnalyticsOpen(false)}
+                logs={logs}
+                summary={finalStats}
+                title="Batch Simulation Dashboard"
+                subtitle={hasSimulation ? `Final snapshot at ${finalStats.finalTime} simulated minutes.` : ''}
+            />
         </Box>
     );
 }
@@ -341,7 +366,7 @@ function App() {
     const [snackbarMessage, setSnackbarMessage] = useState('');
 
     useEffect(() => {
-        if (screen !== 'simulator') return undefined;
+        if (screen !== 'batch-simulation') return undefined;
         axios.get(`${API_BASE}/topology/${topologyName}`)
             .then((res) => setTopology(res.data))
             .catch((err) => console.error(err));
@@ -453,10 +478,47 @@ function App() {
         return { ants, events };
     }, [logs, simTime]);
 
+    const finalStats = useMemo(() => {
+        const relevant = logs || [];
+        const ants = {};
+        for (const rawLog of relevant) {
+            const antId = Number(rawLog.antId);
+            if (antId < 0) continue;
+            ants[antId] = {
+                sex: rawLog.sex,
+                state: rawLog.event === 'death' ? 'dead' : rawLog.event === 'nap_start' ? 'sleeping' : rawLog.event === 'nap_end' ? 'active' : ants[antId]?.state || 'active',
+                alive: rawLog.event !== 'death',
+            };
+            if (rawLog.event !== 'death' && ants[antId]?.alive === false) {
+                ants[antId].alive = false;
+            }
+        }
+        const living = Object.values(ants).filter((ant) => ant.alive !== false).length;
+        const sleeping = Object.values(ants).filter((ant) => ant.alive !== false && ant.state === 'sleeping').length;
+        const females = Object.values(ants).filter((ant) => ant.sex === 'F' && ant.alive !== false).length;
+        const awakeFemales = Object.values(ants).filter((ant) => ant.sex === 'F' && ant.alive !== false && ant.state !== 'sleeping').length;
+        return {
+            events: relevant.length,
+            births: relevant.filter((log) => log.event === 'birth').length,
+            deaths: relevant.filter((log) => log.event === 'death').length,
+            matings: relevant.filter((log) => log.event === 'mate').length,
+            meals: relevant.filter((log) => log.event === 'eat').length,
+            drinks: relevant.filter((log) => log.event === 'drink').length,
+            living,
+            sleeping,
+            awakeRatio: females ? Math.round((awakeFemales / females) * 100) : 100,
+            finalTime: relevant.length ? Number(relevant.at(-1)?.simTime || 0).toFixed(1) : '0.0',
+        };
+    }, [logs]);
+
     const specialChambers = useMemo(() => deriveSpecialChambers(topology), [topology]);
 
     if (screen === 'home') {
-        return <HomePage onEnter={() => setScreen('simulator')} />;
+        return <HomePage onEnter={(modeId) => setScreen(modeId)} />;
+    }
+
+    if (screen === 'live-colony') {
+        return <LiveColonyView onBack={() => setScreen('home')} />;
     }
 
     return (
@@ -483,6 +545,7 @@ function App() {
             setSnackbarOpen={setSnackbarOpen}
             snackbarMessage={snackbarMessage}
             onBack={() => setScreen('home')}
+            finalStats={finalStats}
         />
     );
 }

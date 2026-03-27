@@ -13,18 +13,22 @@ function DetailRow({ label, value }) {
     );
 }
 
-function AntSearchPanel({ lineageFile }) {
+function AntSearchPanel({ lineageFile, liveMode = false, liveAvailable = false }) {
     const [query, setQuery] = useState('');
     const [profile, setProfile] = useState(null);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
+    const isAvailable = liveMode ? liveAvailable : Boolean(lineageFile);
 
     const handleSearch = async () => {
-        if (!lineageFile || query === '') return;
+        if (!isAvailable || query === '') return;
         setLoading(true);
         setError(null);
         try {
-            const res = await axios.get(`${API_BASE}/ant/${lineageFile}/${Number(query)}`);
+            const endpoint = liveMode
+                ? `${API_BASE}/live/ant/${Number(query)}`
+                : `${API_BASE}/ant/${lineageFile}/${Number(query)}`;
+            const res = await axios.get(endpoint);
             setProfile(res.data.profile);
         } catch (err) {
             setProfile(null);
@@ -47,7 +51,7 @@ function AntSearchPanel({ lineageFile }) {
             }}
         >
             <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
-                Ant Search
+                {liveMode ? 'Live Ant Search' : 'Ant Search'}
             </Typography>
             <Stack direction="row" spacing={1} sx={{ mb: 1.5 }}>
                 <TextField
@@ -57,20 +61,22 @@ function AntSearchPanel({ lineageFile }) {
                     label="Ant ID"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    disabled={!lineageFile}
+                    disabled={!isAvailable}
                     slotProps={{
                         inputLabel: { sx: { color: 'rgba(255,255,255,0.75)' } },
                         input: { sx: { color: 'white' } }
                     }}
                 />
-                <Button variant="contained" onClick={handleSearch} disabled={!lineageFile || loading}>
+                <Button variant="contained" onClick={handleSearch} disabled={!isAvailable || loading}>
                     Search
                 </Button>
             </Stack>
 
-            {!lineageFile && (
+            {!isAvailable && (
                 <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                    Run a simulation first to inspect genealogy and life history.
+                    {liveMode
+                        ? 'Start the live colony first to inspect active ants and their current life history.'
+                        : 'Run a simulation first to inspect genealogy and life history.'}
                 </Typography>
             )}
 

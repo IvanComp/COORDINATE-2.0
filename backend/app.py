@@ -1,3 +1,4 @@
+import atexit
 import csv
 import importlib.util
 import json
@@ -7,6 +8,7 @@ from statistics import mean
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
+from backend.live_runner import LiveColonyRunner
 from sim.ant_simulator import run as run_ant_simulation
 from sim.env_maps import topologyName_dict
 
@@ -19,6 +21,8 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=STATIC_FOLDER)
 CORS(app)
+live_runner = LiveColonyRunner(RESULTS_DIR)
+atexit.register(live_runner.shutdown)
 
 
 def _summarize_log_csv(path):
@@ -214,6 +218,58 @@ def get_ant_profile(lineage_file, ant_id):
         if profile is None:
             return jsonify({"error": f"Ant {ant_id} not found"}), 404
         return jsonify({"profile": profile, "colony": data.get("colony", {})})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/live/state", methods=["GET"])
+def get_live_state():
+    try:
+        return jsonify(live_runner.get_state())
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/live/start", methods=["POST"])
+def start_live_colony():
+    try:
+        payload = dict(request.json or {})
+        return jsonify(live_runner.start(payload))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/live/pause", methods=["POST"])
+def pause_live_colony():
+    try:
+        return jsonify(live_runner.pause())
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/live/resume", methods=["POST"])
+def resume_live_colony():
+    try:
+        return jsonify(live_runner.resume())
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/live/stop", methods=["POST"])
+def stop_live_colony():
+    try:
+        return jsonify(live_runner.stop())
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/live/ant/<int:ant_id>", methods=["GET"])
+def get_live_ant_profile(ant_id):
+    try:
+        result = live_runner.get_ant_profile(ant_id)
+        if result is None:
+            return jsonify({"error": f"Ant {ant_id} not found in the live colony"}), 404
+        return jsonify(result)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 

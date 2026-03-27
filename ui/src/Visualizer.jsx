@@ -41,16 +41,21 @@ function Ant({ ant, positions }) {
     const ref = useRef();
     const current = useRef(null);
     const target = positions[ant.position];
+    const sleepMarkerRef = useRef(null);
 
     if (!target) return null;
     if (!current.current) current.current = { ...target };
 
-    useFrame((_, delta) => {
+    useFrame((state, delta) => {
         current.current.x += (target.x - current.current.x) * Math.min(1, delta * 4);
         current.current.y += (target.y - current.current.y) * Math.min(1, delta * 4);
         current.current.z += (target.z - current.current.z) * Math.min(1, delta * 4);
         if (ref.current) {
             ref.current.position.set(current.current.x, 1.2, current.current.z);
+        }
+        if (sleepMarkerRef.current && ant.state === 'sleeping') {
+            const bob = Math.sin(state.clock.elapsedTime * 2.2) * 0.18;
+            sleepMarkerRef.current.position.y = 1.45 + bob;
         }
     });
 
@@ -61,7 +66,7 @@ function Ant({ ant, positions }) {
             : ant.state === 'mating'
                 ? '#cf95e8'
                 : ant.sex === 'F'
-                    ? '#d8a95f'
+                    ? '#f28bb3'
                     : '#7ca6ff';
 
     return (
@@ -81,6 +86,18 @@ function Ant({ ant, positions }) {
             <Text position={[0, 0.9, 0]} fontSize={0.28} color="white" anchorX="center" anchorY="middle">
                 {ant.id}
             </Text>
+            {ant.state === 'sleeping' && (
+                <Text
+                    ref={sleepMarkerRef}
+                    position={[0.7, 1.45, 0]}
+                    fontSize={0.34}
+                    color="#f6f3ff"
+                    anchorX="center"
+                    anchorY="middle"
+                >
+                    ZzZ
+                </Text>
+            )}
         </group>
     );
 }
