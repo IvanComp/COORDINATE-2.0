@@ -23,13 +23,6 @@ const API_BASE = '/api';
 const FEMALE_NAMES = ['Amber', 'Willow', 'Poppy', 'Hazel', 'Maple', 'Clover', 'Ivy', 'Juniper', 'Nectar', 'Ember', 'Daisy', 'Mira'];
 const MALE_NAMES = ['Ash', 'Rowan', 'Flint', 'Moss', 'Cedar', 'Bramble', 'Orion', 'Atlas', 'Acorn', 'Rusty', 'Silas', 'Pico'];
 const TITLE_PARTS = ['Swift', 'Bold', 'Quiet', 'Golden', 'Dusky', 'Tiny', 'Clever', 'Sturdy', 'Lively', 'Gentle', 'Watchful', 'Wild'];
-const TRAIT_BANK = {
-    build: ['slender frame', 'compact body', 'broad thorax', 'nimble stance', 'lean runner', 'steady posture'],
-    pattern: ['amber stripe', 'dark shell', 'bright crest', 'soft sheen', 'dusty markings', 'glossy armor'],
-    vibe: ['curious explorer', 'restless scout', 'careful worker', 'calm forager', 'fierce defender', 'patient wanderer'],
-    quirk: ['quick antennae', 'heavy sleeper', 'sharp turner', 'long-route walker', 'food hoarder', 'water seeker'],
-};
-
 function mixHex(colorA, colorB, ratio = 0.5) {
     const a = colorA.replace('#', '');
     const b = colorB.replace('#', '');
@@ -77,62 +70,66 @@ function buildIdentity(profile) {
 function AntModel({ profile }) {
     const color = antTint(profile);
     const identity = buildIdentity(profile);
-    const shellColor = !profile?.alive ? '#503631' : mixHex(color, '#2a1f19', identity.appearance.shellMix);
-    const limbColor = profile?.state === 'sleeping' ? '#ddd4f4' : mixHex(shellColor, '#eadfc7', 0.18);
-    const accentColor = !profile?.alive ? '#7b5954' : mixHex(color, '#ffffff', identity.appearance.accentMix);
-    const eyeColor = profile?.state === 'sleeping' ? '#efe9ff' : '#0f0b09';
-    const stripeColor = !profile?.alive ? '#6b4f49' : color;
+    const shellColor = !profile?.alive ? '#4e3a36' : '#111111';
+    const limbColor = profile?.state === 'sleeping' ? '#7f76a5' : '#161616';
+    const accentColor = !profile?.alive ? '#7b5954' : mixHex(color, '#ffffff', 0.14 + (identity.appearance.accentMix * 0.15));
+    const eyeColor = profile?.state === 'sleeping' ? '#d9cff7' : '#080808';
 
     return (
         <group rotation={[0.2, -0.55, 0]}>
-            <mesh castShadow receiveShadow position={[-0.66, 0.06, 0]} scale={profile?.sex === 'F' ? [1.3, 1.04, 0.98] : [1.16, 0.98, 0.9]}>
+            <mesh castShadow receiveShadow position={[-0.5, 0.06, 0]} scale={profile?.sex === 'F' ? [1.14, 0.9, 0.74] : [1.02, 0.84, 0.66]}>
                 <sphereGeometry args={[0.58, 24, 24]} />
-                <meshStandardMaterial color={shellColor} roughness={0.58} metalness={0.08} emissive={shellColor} emissiveIntensity={0.04} />
+                <meshStandardMaterial color={shellColor} roughness={0.42} metalness={0.02} />
             </mesh>
-            <mesh castShadow position={[-0.7, 0.18, 0]} scale={[0.46 + (identity.appearance.stripeScale * 0.3), 0.2, 0.38 + (identity.appearance.stripeScale * 0.2)]}>
+            <mesh castShadow position={[0.08, 0.08, 0]} scale={[0.88, 0.68, 0.56]}>
                 <sphereGeometry args={[0.4, 20, 20]} />
-                <meshStandardMaterial color={stripeColor} roughness={0.7} emissive={stripeColor} emissiveIntensity={0.08} />
+                <meshStandardMaterial color={shellColor} roughness={0.42} metalness={0.02} />
             </mesh>
-            <mesh castShadow position={[0.0, 0.08, 0]} scale={[1.26, 1.04, 1.08]}>
-                <sphereGeometry args={[0.4, 20, 20]} />
-                <meshStandardMaterial color={shellColor} roughness={0.52} metalness={0.07} />
-            </mesh>
-            <mesh castShadow position={[0.64, 0.16, 0]} scale={[1.02, 0.94, 0.98]}>
+            <mesh castShadow position={[0.56, 0.16, 0]} scale={[0.64, 0.56, 0.48]}>
                 <sphereGeometry args={[0.3, 18, 18]} />
-                <meshStandardMaterial color={shellColor} roughness={0.46} metalness={0.06} />
+                <meshStandardMaterial color={shellColor} roughness={0.4} metalness={0.02} />
             </mesh>
-            <mesh castShadow position={[0.86, 0.1, 0]} scale={[0.44, 0.32, 0.58]}>
-                <sphereGeometry args={[0.24, 16, 16]} />
+            <mesh castShadow position={[0.2, 0.18, 0]} scale={[0.26, 0.14, 0.18]}>
+                <sphereGeometry args={[0.42, 14, 14]} />
                 <meshStandardMaterial color={accentColor} roughness={0.76} emissive={accentColor} emissiveIntensity={0.06} />
             </mesh>
-            {[-0.34, 0, 0.34].map((offset, index) => (
-                <group key={offset} position={[-0.08, -0.06, offset]}>
-                    <mesh rotation={[0, 0, Math.PI / (3.2 + (index * 0.24))]}>
-                        <cylinderGeometry args={[0.028, 0.032, 1.25, 8]} />
+            {[
+                { x: -0.14, z: -0.22, rot: 1.04 },
+                { x: -0.14, z: 0.22, rot: -1.04 },
+                { x: 0.18, z: -0.02, rot: 0.82 },
+                { x: 0.18, z: 0.02, rot: -0.82 },
+                { x: 0.46, z: -0.24, rot: 0.92 },
+                { x: 0.46, z: 0.24, rot: -0.92 },
+            ].map((leg, index) => (
+                <group key={index} position={[leg.x, -0.03, leg.z]} rotation={[0, 0, leg.rot]}>
+                    <mesh position={[0.22, -0.3, 0]}>
+                        <cylinderGeometry args={[0.016, 0.02, 0.72, 6]} />
                         <meshStandardMaterial color={limbColor} />
                     </mesh>
-                    <mesh rotation={[0, 0, -Math.PI / (3.2 + (index * 0.24))]}>
-                        <cylinderGeometry args={[0.028, 0.032, 1.25, 8]} />
+                    <mesh position={[0.5, -0.6, 0]} rotation={[0, 0, -0.3]}>
+                        <cylinderGeometry args={[0.014, 0.018, 0.58, 6]} />
                         <meshStandardMaterial color={limbColor} />
                     </mesh>
                 </group>
             ))}
-            <group position={[0.8, 0.34, 0]}>
+            <group position={[0.64, 0.3, 0.08]}>
                 <mesh rotation={[identity.appearance.antennaTilt, 0.12, Math.PI / 4.2]}>
-                    <cylinderGeometry args={[0.018, 0.02, 0.95, 8]} />
-                    <meshStandardMaterial color={limbColor} />
-                </mesh>
-                <mesh rotation={[-identity.appearance.antennaTilt, -0.12, -Math.PI / 4.2]}>
-                    <cylinderGeometry args={[0.018, 0.02, 0.95, 8]} />
+                    <cylinderGeometry args={[0.01, 0.012, 0.7, 6]} />
                     <meshStandardMaterial color={limbColor} />
                 </mesh>
             </group>
-            <mesh position={[0.77, 0.22, 0.14]}>
-                <sphereGeometry args={[0.04 + (0.02 * identity.appearance.eyeScale), 10, 10]} />
+            <group position={[0.64, 0.3, -0.08]}>
+                <mesh rotation={[-identity.appearance.antennaTilt, -0.12, -Math.PI / 4.2]}>
+                    <cylinderGeometry args={[0.01, 0.012, 0.7, 6]} />
+                    <meshStandardMaterial color={limbColor} />
+                </mesh>
+            </group>
+            <mesh position={[0.62, 0.16, 0.08]}>
+                <sphereGeometry args={[0.018 + (0.012 * identity.appearance.eyeScale), 8, 8]} />
                 <meshStandardMaterial color={eyeColor} emissive={eyeColor} emissiveIntensity={0.18} />
             </mesh>
-            <mesh position={[0.77, 0.22, -0.14]}>
-                <sphereGeometry args={[0.04 + (0.02 * identity.appearance.eyeScale), 10, 10]} />
+            <mesh position={[0.62, 0.16, -0.08]}>
+                <sphereGeometry args={[0.018 + (0.012 * identity.appearance.eyeScale), 8, 8]} />
                 <meshStandardMaterial color={eyeColor} emissive={eyeColor} emissiveIntensity={0.18} />
             </mesh>
         </group>

@@ -242,6 +242,8 @@ function Ant({ ant, positions, slotOffset }) {
     const ref = useRef();
     const current = useRef(null);
     const sleepMarkerRef = useRef(null);
+    const legRefs = useRef([]);
+    const antennaRefs = useRef([]);
     const appearance = useMemo(() => buildAppearance(ant), [ant]);
 
     const anchor = positions[ant.position];
@@ -272,89 +274,116 @@ function Ant({ ant, positions, slotOffset }) {
         if (sleepMarkerRef.current && ant.state === 'sleeping') {
             sleepMarkerRef.current.position.y = 1.5 + (Math.sin(state.clock.elapsedTime * 1.8) * 0.18);
         }
+
+        const gait = ant.state === 'dead' ? 0 : ant.state === 'sleeping' ? 0.08 : 1;
+        legRefs.current.forEach((legRef, index) => {
+            if (!legRef) return;
+            const direction = index % 2 === 0 ? 1 : -1;
+            const swing = Math.sin((state.clock.elapsedTime * 8) + (ant.id * 0.45) + index) * 0.34 * gait * direction;
+            legRef.rotation.z = legRef.userData.baseZ + swing;
+            legRef.rotation.x = legRef.userData.baseX + (Math.cos((state.clock.elapsedTime * 8) + index) * 0.08 * gait);
+        });
+        antennaRefs.current.forEach((antennaRef, index) => {
+            if (!antennaRef) return;
+            const sway = Math.sin((state.clock.elapsedTime * 4.2) + (ant.id * 0.2) + index) * 0.08;
+            antennaRef.rotation.z = antennaRef.userData.baseZ + sway;
+        });
     });
 
     const color = statusTint(ant);
-    const shellColor = ant.state === 'dead' ? '#503631' : mixHex(color, '#2a1f19', appearance.shellMix);
-    const limbColor = ant.state === 'sleeping' ? '#ddd4f4' : mixHex(shellColor, '#eadfc7', 0.18);
-    const accentColor = ant.state === 'dead' ? '#7b5954' : mixHex(color, '#ffffff', appearance.accentMix);
-    const eyeColor = ant.state === 'sleeping' ? '#efe9ff' : '#0f0b09';
-    const stripeColor = ant.state === 'dead' ? '#6b4f49' : color;
+    const shellColor = ant.state === 'dead' ? '#4e3a36' : '#111111';
+    const limbColor = ant.state === 'sleeping' ? '#7f76a5' : '#161616';
+    const accentColor = ant.state === 'dead' ? '#6e5550' : mixHex(color, '#ffffff', 0.14 + (appearance.accentMix * 0.15));
+    const eyeColor = ant.state === 'sleeping' ? '#d9cff7' : '#080808';
+    const badgeColor = ant.state === 'dead' ? '#7b5954' : color;
+    const legConfigs = [
+        { x: -0.08, z: -0.22, baseZ: 1.05, baseX: -0.1 },
+        { x: -0.08, z: 0.22, baseZ: -1.05, baseX: 0.1 },
+        { x: 0.18, z: -0.02, baseZ: 0.82, baseX: -0.05 },
+        { x: 0.18, z: 0.02, baseZ: -0.82, baseX: 0.05 },
+        { x: 0.45, z: -0.24, baseZ: 0.92, baseX: -0.08 },
+        { x: 0.45, z: 0.24, baseZ: -0.92, baseX: 0.08 },
+    ];
 
     return (
-        <group ref={ref} position={[anchor.x, 0.72, anchor.z]}>
-            <mesh castShadow position={[-0.45, 0.04, 0]} scale={ant.sex === 'F' ? [1.18, 1.0, 0.9] : [1.06, 0.94, 0.84]}>
-                <sphereGeometry args={[0.48, 18, 18]} />
-                <meshStandardMaterial color={shellColor} roughness={0.58} metalness={0.08} emissive={shellColor} emissiveIntensity={0.04} />
-            </mesh>
-            <mesh castShadow position={[-0.49, 0.13, 0]} scale={[0.48 + (appearance.stripeScale * 0.26), 0.2, 0.42 + (appearance.stripeScale * 0.18)]}>
-                <sphereGeometry args={[0.34, 16, 16]} />
-                <meshStandardMaterial color={stripeColor} roughness={0.7} emissive={stripeColor} emissiveIntensity={0.08} />
-            </mesh>
-            <mesh castShadow position={[0.02, 0.05, 0]} scale={[1.18, 0.98, 1.02]}>
-                <sphereGeometry args={[0.32, 16, 16]} />
-                <meshStandardMaterial color={shellColor} roughness={0.52} metalness={0.07} />
-            </mesh>
-            <mesh castShadow position={[0.5, 0.12, 0]} scale={[0.94, 0.88, 0.9]}>
-                <sphereGeometry args={[0.24, 14, 14]} />
-                <meshStandardMaterial color={shellColor} roughness={0.46} metalness={0.06} />
-            </mesh>
-            <mesh castShadow position={[0.66, 0.08, 0]} scale={[0.36, 0.28, 0.52]}>
-                <sphereGeometry args={[0.2, 12, 12]} />
-                <meshStandardMaterial color={accentColor} roughness={0.76} emissive={accentColor} emissiveIntensity={0.06} />
-            </mesh>
-            {[-0.28, 0, 0.28].map((offset, index) => (
-                <group key={offset} position={[-0.04, -0.04, offset]}>
-                    <mesh rotation={[0, 0, Math.PI / (appearance.legSpread + (index * 0.22))]}>
-                        <cylinderGeometry args={[0.022, 0.028, 1.08, 8]} />
+        <group ref={ref} position={[anchor.x, 0.72, anchor.z]} rotation={[0, 0, appearance.bodyLean]}>
+            {legConfigs.map((leg, index) => (
+                <group
+                    key={`${ant.id}-leg-${index}`}
+                    ref={(node) => {
+                        legRefs.current[index] = node;
+                        if (node) {
+                            node.userData.baseZ = leg.baseZ;
+                            node.userData.baseX = leg.baseX;
+                        }
+                    }}
+                    position={[leg.x, -0.03, leg.z]}
+                    rotation={[leg.baseX, 0, leg.baseZ]}
+                >
+                    <mesh castShadow position={[0.22, -0.3, 0]}>
+                        <cylinderGeometry args={[0.016, 0.02, 0.72, 6]} />
                         <meshStandardMaterial color={limbColor} />
                     </mesh>
-                    <mesh rotation={[0, 0, -Math.PI / (appearance.legSpread + (index * 0.22))]}>
-                        <cylinderGeometry args={[0.022, 0.028, 1.08, 8]} />
+                    <mesh castShadow position={[0.5, -0.6, 0]} rotation={[0, 0, -0.3]}>
+                        <cylinderGeometry args={[0.014, 0.018, 0.58, 6]} />
                         <meshStandardMaterial color={limbColor} />
                     </mesh>
                 </group>
             ))}
-            <group position={[0.56, 0.24, 0]}>
-                <mesh rotation={[appearance.antennaTilt, 0.12, Math.PI / 4.2]}>
-                    <cylinderGeometry args={[0.016, 0.018, 0.82, 8]} />
-                    <meshStandardMaterial color={limbColor} />
-                </mesh>
-                <mesh rotation={[-appearance.antennaTilt, -0.12, -Math.PI / 4.2]}>
-                    <cylinderGeometry args={[0.016, 0.018, 0.82, 8]} />
+            <mesh castShadow position={[-0.35, 0.06, 0]} scale={ant.sex === 'F' ? [1.08, 0.82, 0.72] : [0.98, 0.78, 0.64]}>
+                <sphereGeometry args={[0.46, 18, 18]} />
+                <meshStandardMaterial color={shellColor} roughness={0.44} metalness={0.02} />
+            </mesh>
+            <mesh castShadow position={[0.08, 0.05, 0]} scale={[0.82, 0.62, 0.54]}>
+                <sphereGeometry args={[0.36, 18, 18]} />
+                <meshStandardMaterial color={shellColor} roughness={0.42} metalness={0.02} />
+            </mesh>
+            <mesh castShadow position={[0.46, 0.12, 0]} scale={[0.62, 0.56, 0.5]}>
+                <sphereGeometry args={[0.3, 16, 16]} />
+                <meshStandardMaterial color={shellColor} roughness={0.4} metalness={0.02} />
+            </mesh>
+            <mesh castShadow position={[0.18, 0.18, 0]} scale={[0.26, 0.14, 0.18]}>
+                <sphereGeometry args={[0.42, 14, 14]} />
+                <meshStandardMaterial color={badgeColor} emissive={badgeColor} emissiveIntensity={0.12} roughness={0.7} />
+            </mesh>
+            <group
+                ref={(node) => {
+                    antennaRefs.current[0] = node;
+                    if (node) node.userData.baseZ = 0.72;
+                }}
+                position={[0.6, 0.28, 0.09]}
+                rotation={[0.3, 0.1, 0.72]}
+            >
+                <mesh position={[0.22, 0.18, 0]}>
+                    <cylinderGeometry args={[0.01, 0.012, 0.62, 6]} />
                     <meshStandardMaterial color={limbColor} />
                 </mesh>
             </group>
-            <mesh position={[0.57, 0.17, 0.12]}>
-                <sphereGeometry args={[0.04 + (0.02 * appearance.eyeScale), 10, 10]} />
-                <meshStandardMaterial color={eyeColor} emissive={eyeColor} emissiveIntensity={0.18} />
-            </mesh>
-            <mesh position={[0.57, 0.17, -0.12]}>
-                <sphereGeometry args={[0.04 + (0.02 * appearance.eyeScale), 10, 10]} />
-                <meshStandardMaterial color={eyeColor} emissive={eyeColor} emissiveIntensity={0.18} />
-            </mesh>
-            <group position={[0.7, 0.26, 0]}>
-                <mesh rotation={[0.75, 0, Math.PI / 4.5]}>
-                    <cylinderGeometry args={[0.012, 0.014, 0.7, 8]} />
-                    <meshStandardMaterial color={limbColor} />
-                </mesh>
-                <mesh rotation={[-0.75, 0, -Math.PI / 4.5]}>
-                    <cylinderGeometry args={[0.012, 0.014, 0.7, 8]} />
+            <group
+                ref={(node) => {
+                    antennaRefs.current[1] = node;
+                    if (node) node.userData.baseZ = -0.72;
+                }}
+                position={[0.6, 0.28, -0.09]}
+                rotation={[-0.3, -0.1, -0.72]}
+            >
+                <mesh position={[0.22, 0.18, 0]}>
+                    <cylinderGeometry args={[0.01, 0.012, 0.62, 6]} />
                     <meshStandardMaterial color={limbColor} />
                 </mesh>
             </group>
-            <mesh position={[0.8, 0.02, 0.08]} rotation={[0, 0.2, Math.PI / 5]}>
-                <capsuleGeometry args={[0.022, 0.18, 4, 8]} />
-                <meshStandardMaterial color={limbColor} />
+            <mesh position={[0.58, 0.14, 0.08]}>
+                <sphereGeometry args={[0.018 + (0.012 * appearance.eyeScale), 8, 8]} />
+                <meshStandardMaterial color={eyeColor} />
             </mesh>
-            <mesh position={[0.8, 0.02, -0.08]} rotation={[0, -0.2, -Math.PI / 5]}>
-                <capsuleGeometry args={[0.022, 0.18, 4, 8]} />
-                <meshStandardMaterial color={limbColor} />
+            <mesh position={[0.58, 0.14, -0.08]}>
+                <sphereGeometry args={[0.018 + (0.012 * appearance.eyeScale), 8, 8]} />
+                <meshStandardMaterial color={eyeColor} />
             </mesh>
             {ant.state === 'sleeping' && (
                 <Text
                     ref={sleepMarkerRef}
-                    position={[0.85, 1.5, 0]}
+                    position={[0.72, 1.18, 0]}
                     fontSize={0.42}
                     color="#fff7ff"
                     anchorX="center"
