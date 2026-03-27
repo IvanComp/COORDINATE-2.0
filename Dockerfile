@@ -1,4 +1,4 @@
-# Multi-stage build for COORDINATE-2.0
+# Multi-stage build for AgANT of Empire
 # Stage 1: Build React frontend
 FROM node:22-alpine AS frontend-builder
 

@@ -6,12 +6,12 @@ import { CssBaseline, ThemeProvider, createTheme } from '@mui/material'
 
 const theme = createTheme({
   palette: {
-    mode: 'light',
+    mode: 'dark',
     primary: {
-      main: '#1976d2',
+      main: '#d8a95f',
     },
     secondary: {
-      main: '#dc004e',
+      main: '#8dc16b',
     },
   },
 });

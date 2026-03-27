@@ -1,302 +1,345 @@
-# COORDINATE 2.0
+# AgANT of Empire
 
 <p align="center">
-<img src="img/readme/logo.png" width="340px" height="210px"/>
+  <img src="img/readme/logo.png" width="340" alt="AgANT of Empire logo"/>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/license/IvanComp/COORDINATE-2.0">
-  <img src="https://img.shields.io/badge/python-3.12+-yellow">
-  <a href="https://hub.docker.com/r/ivancompd/coordinate-2.0"><img src="https://img.shields.io/docker/pulls/ivancompd/coordinate-2.0?logo=docker"></a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Flask-97CAE1?logo=flask&logoColor=white">
-  <img src="https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB">
-  <img src="https://img.shields.io/badge/Three.js-white?logo=threedotjs&logoColor=000000">
+  <img src="https://img.shields.io/badge/python-3.12+-f2c14e">
+  <img src="https://img.shields.io/badge/Flask-backend-cb6d51?logo=flask&logoColor=white">
+  <img src="https://img.shields.io/badge/React-visualizer-284b63?logo=react&logoColor=61DAFB">
+  <img src="https://img.shields.io/badge/Simulation-Anthill%20Life-6a994e">
 </p>
 
 ## Overview
 
-**COORDINATE 2.0** is a highly customizable discrete event simulator for Fault-Tolerant Multi-Agent Systems.
+**AgANT of Empire** e un simulatore di colonia che mette in scena la vita di un formicaio come un piccolo ecosistema sociale.  
+Ogni formica nasce, cresce, si muove tra camere specializzate, beve, mangia, dorme, cerca partner, genera nuova prole e prima o poi muore.
 
-### Key Capabilities
+L'obiettivo non e solo osservare puntini che si spostano, ma vedere emergere una colonia viva:
 
-- **Multiple Coordination Architectures**: Compare decentralized, semi-decentralized, and centralized coordination strategies
-- **Realistic 3D Visualization**: Interactive environment with smooth animations and camera controls
-- **Flexible Topology Support**: Simulate different hospital floor plans (mesh, line, custom layouts including real-world GUH73)
-- **Comprehensive Analytics**: Real-time statistics, event logging, and CSV export for detailed analysis
-- **Research-Ready**: Command-line batch processing for reproducible experiments
+- bisogni individuali che cambiano nel tempo
+- strategie collettive con priorita diverse
+- genealogie complete tra madri, padri e nuove generazioni
+- equilibrio fragile tra espansione, sopravvivenza e stress ambientale
 
-<p align="center">
-<img src="img/readme/simulationAd.webp"/>
-</p>
+In breve: un formicaio simulato come se fosse un piccolo impero biologico.
 
 ---
 
-## Quick Start
+## Il Ciclo Di Vita Di Una Formica
 
-### Docker Deployment (Recommended)
+Ogni formica nel simulatore possiede una storia completa, tracciata dal primo minuto di vita fino alla morte.
 
-The fastest way to get started. Pull and run the pre-built image from Docker Hub:
+### 1. Nascita
+
+La colonia parte con una popolazione iniziale configurabile:
+
+- numero totale di formiche
+- numero iniziale di maschi
+- distribuzione nelle camere del nido
+
+Ogni individuo riceve fin dalla nascita:
+
+- `sex`: maschio o femmina
+- `birthTime`: istante di nascita
+- `generation`: generazione genealogica
+- `motherId` e `fatherId`: quando nasce da un accoppiamento
+- `maturityAge`: eta minima per riprodursi
+- `maxAge`: longevita massima
+- livelli iniziali di `hunger`, `thirst` ed `energy`
+
+Le formiche iniziali sono la generazione zero. Tutte quelle nate durante la simulazione espandono l'albero genealogico della colonia.
+
+### 2. Crescita E Maturita
+
+Durante ogni tick temporale, la formica consuma risorse vitali:
+
+- la fame scende
+- la sete scende
+- l'energia si riduce
+
+Quando raggiunge la maturita sessuale, puo partecipare alla riproduzione. Prima di quel momento e un membro giovane della colonia: si muove, sopravvive, ma non contribuisce ancora alla genealogia.
+
+### 3. Sopravvivenza Quotidiana
+
+La vita nel formicaio e guidata dai bisogni:
+
+- se la fame e bassa, la formica punta alle camere del cibo
+- se la sete cala, raggiunge le camere d'acqua
+- se l'energia scende, cerca una camera di riposo per un micro-sonnellino
+
+Questo crea un ritmo organico: non tutte le formiche fanno la stessa cosa nello stesso momento, e la colonia appare irregolare, credibile e viva.
+
+### 4. Riproduzione
+
+Quando una formica adulta incontra un partner compatibile, puo avvenire un evento di accoppiamento.
+
+Il simulatore evita accoppiamenti con legami parentali immediati e applica alcune regole:
+
+- i partner devono essere vivi e maturi
+- devono trovarsi nella stessa camera
+- devono essere di sesso opposto
+- devono rispettare un tempo di recupero dall'ultimo accoppiamento
+
+Quando l'evento va a buon fine:
+
+- viene registrato un `mate`
+- nasce una covata di dimensione variabile
+- i nuovi figli compaiono nella nursery
+- vengono assegnati madre, padre e nuova generazione
+
+Da qui il formicaio non e piu solo una simulazione di movimento: diventa una storia familiare.
+
+### 5. Riposo
+
+Le formiche non dormono a lungo: effettuano **micro-sonnellini**.
+
+Ogni pausa:
+
+- inizia con `nap_start`
+- dura un numero configurabile di minuti
+- termina con `nap_end`
+- ripristina parte dell'energia
+
+Questo dettaglio rende il modello piu interessante, perche introduce pause frequenti, distribuite e importanti per la tenuta dell'intera colonia.
+
+### 6. Morte
+
+La morte puo arrivare in modi diversi:
+
+- `starvation`: fame esaurita
+- `dehydration`: sete esaurita
+- `natural causes`: eta massima raggiunta
+- `colony hazard`: rischio ambientale casuale
+
+La morte non rimuove la storia della formica. Il suo profilo resta nel file genealogico, con:
+
+- tempo di morte
+- causa del decesso
+- stato finale
+- figli avuti
+- partner incontrati
+- camere visitate
+
+---
+
+## Caratteristiche Di Ogni Formica
+
+Ogni individuo e modellato come una piccola entita autonoma con attributi biologici e comportamentali.
+
+### Identita
+
+- ID univoco
+- sesso
+- generazione
+- madre e padre
+
+### Stato Vitale
+
+- fame
+- sete
+- energia
+- viva o morta
+- causa di morte
+
+### Memoria Di Vita
+
+- numero di pasti
+- numero di bevute
+- numero di movimenti
+- numero di micro-sonnellini
+- lista dei partner
+- lista dei figli
+- camere visitate
+
+### Stato Comportamentale
+
+- `active`
+- `sleeping`
+- `dead`
+
+---
+
+## Azioni Possibili
+
+Nel simulatore una formica puo compiere azioni concrete, tutte registrate nel log eventi.
+
+### Eventi Principali
+
+- `birth`: nascita iniziale o in nursery
+- `move`: spostamento verso una camera obiettivo
+- `eat`: recupero del livello di fame
+- `drink`: recupero del livello di sete
+- `nap_start`: inizio del riposo
+- `nap_end`: fine del riposo
+- `mate`: accoppiamento con un partner
+- `death`: termine della vita
+- `resource_spawn`: impulso periodico di risorse per la colonia
+
+Questi eventi alimentano sia la parte analitica sia la visualizzazione frontend.
+
+---
+
+## Il Formicaio Simulato
+
+Il formicaio non e un contenitore astratto. E organizzato in **camere specializzate** che definiscono il comportamento della colonia.
+
+### Camere Speciali
+
+- `nest`: cuore del formicaio, punto di origine
+- `nursery`: zona dedicata alla nuova prole
+- `food`: camere dove si ripristina la fame
+- `water`: camere dove si ripristina la sete
+- `rest`: camere dove si accumula energia
+
+### Topologie Disponibili
+
+La colonia puo vivere in diverse geometrie:
+
+- `mesh`
+- `ring`
+- `tree`
+- layout piu estesi fino a molte decine di camere
+
+Questo cambia il comportamento emergente:
+
+- in topologie dense la colonia si ridistribuisce rapidamente
+- in topologie lineari la distanza pesa di piu
+- in topologie ramificate la nursery o le camere vitali possono diventare colli di bottiglia
+
+Il risultato e che la stessa colonia, con gli stessi parametri, puo sembrare prudente, aggressiva o fragile solo cambiando la struttura del formicaio.
+
+---
+
+## Strategie Della Colonia
+
+Il simulatore permette di scegliere una linea comportamentale generale:
+
+- `balanced`
+- `brood-focus`
+- `forager`
+- `hydration-first`
+- `rest-guarded`
+- `expansion`
+- `adaptive-colony`
+
+Ogni strategia modifica i pesi con cui la colonia reagisce ai bisogni:
+
+- piu riproduzione
+- piu raccolta e alimentazione
+- piu attenzione all'idratazione
+- piu difesa dell'energia
+
+### Adaptive Colony
+
+`adaptive-colony` osserva lo stato complessivo dei viventi e adatta la priorita interna della colonia in corso d'opera.  
+Per esempio:
+
+- se molte formiche sono scariche, il riposo diventa piu importante
+- se la sete diffusa cresce, aumenta il peso dell'idratazione
+- se il bilanciamento tra maschi e femmine cambia, cambia anche la pressione riproduttiva
+
+Questa strategia rende il formicaio meno meccanico e piu simile a una societa che reagisce allo stress.
+
+---
+
+## Cosa Si Osserva Nella UI
+
+L'interfaccia mostra la colonia come sistema vivente, non solo come tabella.
+
+Puoi esplorare:
+
+- configurazione della simulazione
+- topologia del formicaio
+- movimento delle formiche tra camere
+- statistiche aggregate
+- log eventi in tempo reale
+- profilo individuale di una formica
+
+In pratica puoi passare dallo sguardo macro, "come sta andando la colonia?", allo sguardo micro, "che fine ha fatto la formica 17 e quanti figli ha avuto?".
+
+---
+
+## Output Della Simulazione
+
+Ogni esecuzione produce file utili sia per esplorazione visuale sia per analisi.
+
+### Log CSV
+
+Il log cronologico contiene eventi come:
+
+- nascite
+- morti
+- accoppiamenti
+- pasti
+- bevute
+- sonnellini
+- movimenti
+
+### File Genealogico JSON
+
+Il file di lineage conserva:
+
+- struttura della colonia
+- camere speciali
+- popolazione finale
+- numero totale di nascite
+- scheda completa di ogni formica
+
+Questo rende il progetto utile anche per storytelling computazionale, analisi emergente e visualizzazioni genealogiche.
+
+---
+
+## Avvio Rapido
+
+### Backend
 
 ```bash
-docker run -d -p 5002:5002 --name coordinate ivancompd/coordinate-2.0:latest
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python -m backend.app
 ```
 
-Then open **http://localhost:5002** in your browser.
-
-**Docker Hub Repository:** [ivancompd/coordinate-2.0](https://hub.docker.com/r/ivancompd/coordinate-2.0)
-
-### Local Development
-
-For development or customization:
+### Frontend
 
 ```bash
-# 1. Setup backend
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install flask flask-cors numpy
-
-# 2. Start backend (Terminal 1)
-python -m backend.app
-
-# 3. Start frontend (Terminal 2)
 cd ui
 npm install
 npm run dev
 ```
 
-Access the application at **http://localhost:5173**
+Poi apri:
 
-> **Note:** Backend runs on port 5002, frontend on port 5173
-
----
-
-## Features
-
-### 🎮 Interactive 3D Visualization
-
-- **Realistic Environment**: Rooms, corridors, and transparent glass walls rendered with React Three Fiber
-- **Animated Robots**: 3D robot models with smooth movement, pickup/delivery animations, and status indicators
-- **Camera Controls**: 
-  - Left-click + drag to rotate
-  - Right-click + drag to pan
-  - Scroll to zoom
-- **Playback Controls**: Variable speed (0.1x to 10x), pause, play, reset, and timeline scrubbing
-
-### 🤖 Coordination Architectures
-
-| Architecture | Description |
-|--------------|-------------|
-| **Decentralized** | Robots make independent decisions without communication |
-| **Semi-Decentralized** | Robots share information with nearby peers |
-| **Centralized-Proximity** | Central coordinator assigns tasks based on robot-item distance |
-| **Centralized-Importance** | Central coordinator prioritizes high-importance items |
-| **Centralized-ProxImp** | Proximity-first, then importance tiebreaker |
-| **Centralized-ImpProx** | Importance-first, then proximity tiebreaker |
-| **Dynamic-Adaptation** | 🆕 **Adaptive coordination that switches strategies at runtime based on latency metrics** |
-
-#### Dynamic-Adaptation Architecture
-
-The dynamic-adaptation architecture monitors delivery latency in real-time and automatically switches between coordination strategies to optimize performance:
-
-- **High Latency** (> threshold): Switches to `decentralized` to reduce coordination overhead
-- **Low Latency** (< threshold): Switches to `centralized-impprox` for optimal task allocation  
-- **Medium Latency**: Uses `semi-decentralized` for balanced performance
-
-**Configuration Parameters:**
-- `INITIAL_ARCHITECTURE`: Starting strategy (default: `semi-decentralized`)
-- `ADAPTATION_CHECK_INTERVAL`: How often to check metrics in seconds (default: 300)
-- `LATENCY_THRESHOLD_LOW`: Switch to centralized if below this (default: 100)
-- `LATENCY_THRESHOLD_HIGH`: Switch to decentralized if above this (default: 300)
-
-Architecture switches are logged in the CSV output with event type `switch_architecture_{new_arch}`.
-
-### 📊 Analytics & Export
-
-- **Real-time Statistics**: Track deliveries, failures, and system performance
-- **Event Log**: Detailed timeline of all robot actions and item states
-- **CSV Export**: Download complete simulation results for external analysis
-- **Item Importance Levels**: Low (L), Medium (M), High (H) priority classification
-
-### 🏥 Topology Support
-
-- **Mesh Layouts**: `mesh25`, `mesh16`, `mesh9` - Grid-based hospital floors
-- **Linear Layouts**: `line10`, `line5` - Corridor-style environments
-- **Custom Layouts**: `GUH73` - Real-world Gent University Hospital floor plan
-- **Configurable**: Define custom topologies in `env_maps.py`
+- `http://localhost:5002` per il backend in produzione locale
+- `http://localhost:5173` per lo sviluppo frontend
 
 ---
 
-## Installation & Deployment
+## Parametri Più Interessanti
 
-### Prerequisites
+Se vuoi "dare carattere" alla colonia, questi sono i controlli che cambiano di piu il suo stile di vita:
 
-- **Python** 3.12+
-- **Node.js** 14+ (for local frontend development)
-- **Docker** (optional, for containerized deployment)
-- **Rust & RTLola** (required for Dynamic Adaptation)
-
-### Installing RTLola
-
-To use the **Dynamic-Adaptation** architecture, you need the `rtlola-cli` binary.
-
-**Option 1: Install via Cargo (Recommended)**
-
-1. **Install Rust** (if not already installed):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-
-2. **Install RTLola CLI**:
-   ```bash
-   cargo install rtlola-cli
-   ```
-
-3. **Verify Installation**:
-   ```bash
-   rtlola-cli --version
-   ```
-
-**Option 2: Copy Binary (No Installation Required)**
-
-If you have `rtlola-cli` on another machine, simply copy it to the project directory:
-
-```bash
-# Copy the binary to the COORDINATE-2.0 folder
-cp /path/to/rtlola-cli /path/to/COORDINATE-2.0/
-
-# Make it executable (Linux/Mac)
-chmod +x rtlola-cli
-```
-
-The system will automatically detect the binary in the project directory.
-
-### Docker Options
-
-**Option 1: Pull from Docker Hub**
-```bash
-docker pull ivancompd/coordinate-2.0:latest
-docker run -p 5002:5002 ivancompd/coordinate-2.0:latest
-```
-
-**Option 2: Build Locally**
-```bash
-docker build -t coordinate-2.0 .
-docker run -p 5002:5002 coordinate-2.0
-```
-
-**Option 3: Docker Compose (with persistence)**
-```bash
-docker-compose up -d
-```
-
-**Option 4: Custom Volume Mounts**
-```bash
-docker run -d -p 5002:5002 \
-  -v $(pwd)/results:/app/results \
-  -v $(pwd)/configuration:/app/configuration \
-  --name coordinate \
-  ivancompd/coordinate-2.0:latest
-```
-
-> **Tip:** Use volume mounts to persist simulation results and configurations between container restarts.
+- `N_ANTS`: dimensione iniziale della societa
+- `INITIAL_MALES`: equilibrio iniziale tra sessi
+- `MATING_PROBABILITY`: intensita riproduttiva
+- `BROOD_MIN` e `BROOD_MAX`: dimensione delle covate
+- `MICRO_NAPS_PER_DAY`: ritmo del riposo
+- `MEAL_RESTORE` e `DRINK_RESTORE`: efficacia delle camere vitali
+- `FAIL_PROB`: durezza del mondo esterno
+- `RESOURCE_SPAWNING_TIME`: frequenza degli impulsi di risorse
+- `TOPOLOGY_NAME` e `N_ROOMS`: geografia dell'impero sotterraneo
 
 ---
 
-## Usage Guide
+## Una Lettura Narrativa Del Sistema
 
-### Web Interface
+Se vuoi immaginare cosa stai osservando, pensa al simulatore cosi:
 
-1. **Open Configuration**: Click the gear icon in the top-right corner
-2. **Select Architecture**: Choose from decentralized, semi-decentralized, or centralized variants
-3. **Choose Topology**: Select a hospital floor plan (mesh25, GUH73, etc.)
-4. **Configure Parameters**:
-   - Number of robots
-   - Simulation time
-   - Item spawning rate and distribution
-   - Failure probabilities
-   - Robot timing parameters
-5. **Run Simulation**: Click "Run Simulation" and wait for completion
-6. **Interact with Visualization**:
-   - Use playback controls to adjust speed
-   - Navigate the 3D view with mouse controls
-   - Monitor real-time statistics in the side panel
-   - View detailed event log
-7. **Export Results**: Click "Download CSV" to save simulation data
+> Nel sottosuolo non vive un insieme di agenti astratti. Vive una colonia.  
+> Alcune formiche sono giovani e irrequiete, altre sopravvivono abbastanza da lasciare discendenti.  
+> Alcune muoiono di sete prima di raggiungere la nursery, altre attraversano il formicaio decine di volte e fondano intere linee genealogiche.  
+> Ogni run e un piccolo impero che nasce, si organizza, prospera o collassa.
 
-### Command-Line Simulation
-
-#### Method 1: Benchmark Experiments
-
-Run the predefined experiments from the research paper:
-
-```bash
-python -m experiments.run_all_experiments
-```
-
-This executes multiple simulations with varying parameters for comparative analysis.
-
-#### Method 2: Custom Configuration File
-
-Create a JSON configuration file (e.g., `my_config.json`):
-
-```json
-{
-  "RESULTS_DIR": "results",
-  "SIM_TIME": 3600,
-  "ARCHITECTURE": "centralized-impprox",
-  "TOPOLOGY_NAME": "mesh25",
-  "N_ROOMS": 25,
-  "SOURCE": 0,
-  "TARGETS": -1,
-  "ITEM_SPAWNING_TIME": 120,
-  "ITEM_SPAWNING_DISTR": "exponential",
-  "IMPORTANCE_PROBABILITIES": [0.5, 0.1, 0.4],
-  "EXPIRATION_TIME": [-1, -1, -1],
-  "N_ROBOTS": 20,
-  "N_MALICIOUS": 0,
-  "FAIL_PROB": 0.05,
-  "COMM_FAIL_PROB": 0.003,
-  "LOAD_TIME": 1.0,
-  "MOVEMENT_TIME": 5.0,
-  "DROP_TIME": 1.0,
-  "COMP_TIME": 0.1,
-  "COMM_TIME": 0.03,
-  "RECOVERY_TIME": 1800.0
-}
-```
-
-Run the simulation:
-```bash
-python -m sim.simulator my_config.json
-```
-
-Results are saved as CSV in the `results/` directory.
-
----
-
-## Configuration Parameters
-
-| Parameter | Description | Example Values |
-|-----------|-------------|----------------|
-| `SIM_TIME` | Simulation duration (seconds) | `3600` |
-| `ARCHITECTURE` | Coordination strategy | `centralized-impprox` |
-| `TOPOLOGY_NAME` | Hospital floor plan | `mesh25`, `GUH73` |
-| `N_ROBOTS` | Number of robots | `20` |
-| `ITEM_SPAWNING_TIME` | Average time between item spawns | `120` |
-| `ITEM_SPAWNING_DISTR` | Spawning distribution | `exponential`, `uniform` |
-| `IMPORTANCE_PROBABILITIES` | [Low, Medium, High] probabilities | `[0.5, 0.1, 0.4]` |
-| `FAIL_PROB` | Robot failure probability | `0.05` |
-| `COMM_FAIL_PROB` | Communication failure probability | `0.003` |
-| `MOVEMENT_TIME` | Time to move between adjacent rooms | `5.0` |
-| `RECOVERY_TIME` | Time to rescue a failed robot | `1800.0` |
-
----
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
+Ed e proprio questa tensione tra bisogno individuale e destino collettivo a rendere **AgANT of Empire** interessante da osservare.
