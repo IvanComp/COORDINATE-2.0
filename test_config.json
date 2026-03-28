@@ -3,7 +3,7 @@
     "SIM_TIME": 3600,
     "ARCHITECTURE": "dynamic-adaptation",
     "INITIAL_ARCHITECTURE": "centralized-impprox",
-    "TOPOLOGY_NAME": "mesh25",
+    "TOPOLOGY_NAME": "GUH73",
     "N_ROOMS": 73,
     "SOURCE": 0,
     "TARGETS": -1,

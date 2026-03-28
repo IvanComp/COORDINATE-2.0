@@ -1,119 +1,199 @@
-function seededNoise(seed) {
-    const value = Math.sin(seed * 12.9898) * 43758.5453;
-    return value - Math.floor(value);
-}
-
-function organicOrbit(index, total, radiusBase = 16) {
-    if (index === 0) {
-        return { x: 0, y: 0, z: 0 };
-    }
-
-    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-    const ring = Math.floor(Math.sqrt(index));
-    const angle = (index * goldenAngle) + (seededNoise(index * 4.1) - 0.5) * 0.75;
-    const radius = radiusBase + (ring * 10) + (seededNoise(index * 7.3) - 0.5) * 6;
-
-    return {
-        x: Math.cos(angle) * radius,
-        y: 0,
-        z: Math.sin(angle) * radius,
-    };
-}
-
-function buildOrganicMesh(topology) {
-    const positions = {};
-
-    topology.nodes.forEach((node, idx) => {
-        const orbit = organicOrbit(idx, topology.nodes.length, 15);
-        positions[node.id] = {
-            x: orbit.x + ((idx % 2 === 0 ? 1 : -1) * seededNoise(idx + 1) * 4),
-            y: 0,
-            z: orbit.z + ((idx % 3 === 0 ? -1 : 1) * seededNoise(idx + 9) * 4),
-        };
-    });
-
-    return positions;
-}
-
-function buildOrganicRing(topology) {
-    const positions = {};
-    const count = topology.nodes.length;
-    const radius = Math.max(22, count * 3.6);
-
-    topology.nodes.forEach((node, idx) => {
-        const angle = (idx / count) * Math.PI * 2;
-        const wobble = (seededNoise(idx * 5.2) - 0.5) * 5;
-        positions[node.id] = {
-            x: Math.cos(angle) * (radius + wobble),
-            y: 0,
-            z: Math.sin(angle) * (radius - wobble),
-        };
-    });
-
-    return positions;
-}
-
-function buildOrganicTree(topology) {
-    const levels = buildTreeLevels(topology);
-    const positions = {};
-
-    levels.forEach((level, levelIdx) => {
-        const depthRadius = 10 + (levelIdx * 14);
-        level.forEach((nodeId, posIdx) => {
-            const spread = Math.max(1, level.length - 1);
-            const progress = spread === 0 ? 0.5 : posIdx / spread;
-            const angle = (-Math.PI / 2) + (progress * Math.PI) + ((seededNoise(nodeId + 3) - 0.5) * 0.24);
-            positions[nodeId] = {
-                x: Math.cos(angle) * depthRadius * 1.3,
-                y: 0,
-                z: Math.sin(angle) * depthRadius + (levelIdx * 6),
-            };
-        });
-    });
-
-    return positions;
-}
+// Utility to convert topology graph to 3D room positions
 
 export function calculateRoomPositions(topology, topologyName) {
     if (!topology || !topology.nodes) return {};
 
+    // Custom layout for GUH73
+    if (topologyName === 'GUH73') {
+        return calculateGUH73Positions(topology);
+    }
+
+    const positions = {};
+    const numRooms = topology.nodes.length;
+
+    // Determine layout strategy based on topology name
     if (topologyName.startsWith('mesh')) {
-        return buildOrganicMesh(topology);
+        // Grid layout for mesh topologies
+        const gridSize = Math.ceil(Math.sqrt(numRooms));
+        const spacing = 8; // Distance between rooms
+
+        topology.nodes.forEach((node, idx) => {
+            const row = Math.floor(idx / gridSize);
+            const col = idx % gridSize;
+            positions[node.id] = {
+                x: (col - gridSize / 2) * spacing,
+                y: 0,
+                z: (row - gridSize / 2) * spacing
+            };
+        });
+    } else if (topologyName.startsWith('ring')) {
+        // Circular layout for ring topologies
+        const radius = numRooms * 1.5;
+
+        topology.nodes.forEach((node, idx) => {
+            const angle = (idx / numRooms) * Math.PI * 2;
+            positions[node.id] = {
+                x: Math.cos(angle) * radius,
+                y: 0,
+                z: Math.sin(angle) * radius
+            };
+        });
+    } else if (topologyName.startsWith('tree')) {
+        // Hierarchical layout for tree topologies
+        const levels = buildTreeLevels(topology);
+        const spacing = 8;
+
+        levels.forEach((level, levelIdx) => {
+            const levelWidth = level.length;
+            level.forEach((nodeId, posIdx) => {
+                positions[nodeId] = {
+                    x: (posIdx - levelWidth / 2) * spacing,
+                    y: 0,
+                    z: levelIdx * spacing
+                };
+            });
+        });
+    } else {
+        // Default: force-directed-like layout (simplified)
+        // Just use a grid as fallback
+        const gridSize = Math.ceil(Math.sqrt(numRooms));
+        const spacing = 8;
+
+        topology.nodes.forEach((node, idx) => {
+            const row = Math.floor(idx / gridSize);
+            const col = idx % gridSize;
+            positions[node.id] = {
+                x: (col - gridSize / 2) * spacing,
+                y: 0,
+                z: (row - gridSize / 2) * spacing
+            };
+        });
     }
 
-    if (topologyName.startsWith('ring')) {
-        return buildOrganicRing(topology);
+    return positions;
+}
+
+function calculateGUH73Positions(topology) {
+    const positions = {};
+    const S = 6; // Spacing unit
+
+    // Helper to set position
+    const setPos = (id, x, z) => {
+        positions[id] = { x: x * S, y: 0, z: z * S };
+    };
+
+    // --- Main Spine (0-17) ---
+    for (let i = 0; i <= 17; i++) {
+        setPos(i, i, 0);
     }
 
-    if (topologyName.startsWith('tree')) {
-        return buildOrganicTree(topology);
+    // --- Upper Row (23-38) ---
+    // 23 is above 0, 38 is above 15
+    for (let i = 23; i <= 38; i++) {
+        setPos(i, i - 23, -1);
     }
 
-    return buildOrganicMesh(topology);
+    // --- Right Section (Elevators/Stairs) ---
+    // 39 connects to 16, 17. Placed between them but up.
+    setPos(39, 16.5, -1.5);
+    setPos(40, 16, -2.5);
+    setPos(41, 17, -2.5);
+
+    // --- Lower Section ---
+
+    // Leftmost (below 0-2)
+    setPos(42, 0, 1);
+    setPos(43, 0, 2);
+    setPos(44, 1, 1);
+    setPos(45, 2, 1);
+    setPos(46, 2.5, 2);
+
+    // Cluster below 4-6
+    setPos(47, 4, 1);
+    setPos(48, 4, 2);
+    setPos(49, 3, 2);
+    setPos(50, 5, 1.5);
+    setPos(51, 6, 2);
+    setPos(53, 6, 3); // 53 below 51
+    setPos(52, 7, 2); // 52 connects to 51 and 19
+
+    setPos(54, 6, 1); // Below 6
+    setPos(55, 7, 1); // Below 7
+
+    // Vertical Spine (8 -> 18 -> 19 -> 20 -> 21 -> 22)
+    setPos(18, 8, 1);
+    setPos(19, 8, 2);
+    setPos(20, 8, 3);
+    setPos(21, 8, 4);
+    setPos(22, 8, 5.5); // Gap for 21-22 corridor
+
+    // Bottom Cluster (67-69 below 22)
+    setPos(67, 7, 6.5);
+    setPos(68, 8, 6.5);
+    setPos(69, 9, 6.5);
+
+    // Horizontal offshoot from 20 (70-72)
+    setPos(70, 9, 3);
+    setPos(71, 10, 3);
+    setPos(72, 11, 3);
+
+    // Middle Right (below 9-12)
+    setPos(56, 9, 1);
+    setPos(57, 10, 2);
+    setPos(58, 11, 1);
+    setPos(59, 12, 2);
+    setPos(60, 11, 2);
+
+    // Below 13-14
+    setPos(61, 13, 2);
+    setPos(62, 14, 1);
+    setPos(63, 15, 1.5);
+    setPos(64, 14.5, 2.5);
+
+    // Source Area (below 16-17)
+    setPos(65, 16, 1);
+    setPos(66, 17, 1); // Source Room
+
+    // Fill in any missing nodes with a default fallback (just in case)
+    topology.nodes.forEach(node => {
+        if (!positions[node.id]) {
+            positions[node.id] = { x: 0, y: 0, z: 0 };
+        }
+    });
+
+    return positions;
 }
 
 function buildTreeLevels(topology) {
+    // BFS to build tree levels
     const levels = [];
     const visited = new Set();
-    const queue = [0];
+    const queue = [0]; // Start from root (node 0)
     visited.add(0);
 
     while (queue.length > 0) {
         const levelSize = queue.length;
         const currentLevel = [];
 
-        for (let i = 0; i < levelSize; i += 1) {
+        for (let i = 0; i < levelSize; i++) {
             const nodeId = queue.shift();
             currentLevel.push(nodeId);
 
-            const edges = topology.edges.filter((edge) => edge.source === nodeId || edge.target === nodeId);
-            edges.forEach((edge) => {
-                const neighbor = edge.source === nodeId ? edge.target : edge.source;
-                if (!visited.has(neighbor)) {
-                    visited.add(neighbor);
-                    queue.push(neighbor);
-                }
-            });
+            // Find neighbors
+            const node = topology.nodes.find(n => n.id === nodeId);
+            if (node) {
+                const edges = topology.edges.filter(e =>
+                    e.source === nodeId || e.target === nodeId
+                );
+
+                edges.forEach(edge => {
+                    const neighbor = edge.source === nodeId ? edge.target : edge.source;
+                    if (!visited.has(neighbor)) {
+                        visited.add(neighbor);
+                        queue.push(neighbor);
+                    }
+                });
+            }
         }
 
         levels.push(currentLevel);
@@ -123,26 +203,24 @@ function buildTreeLevels(topology) {
 }
 
 export function calculateCorridors(topology, positions) {
+    // Generate corridor data for rendering connections between rooms
     if (!topology || !topology.edges) return [];
 
-    return topology.edges.flatMap((edge, index) => {
+    const corridors = [];
+
+    topology.edges.forEach(edge => {
         const sourcePos = positions[edge.source];
         const targetPos = positions[edge.target];
 
-        if (!sourcePos || !targetPos) return [];
-
-        const midpoint = {
-            x: (sourcePos.x + targetPos.x) / 2 + ((seededNoise(index + 20) - 0.5) * 6),
-            y: 0,
-            z: (sourcePos.z + targetPos.z) / 2 + ((seededNoise(index + 40) - 0.5) * 6),
-        };
-
-        return [{
-            start: sourcePos,
-            control: midpoint,
-            end: targetPos,
-            source: edge.source,
-            target: edge.target,
-        }];
+        if (sourcePos && targetPos) {
+            corridors.push({
+                start: sourcePos,
+                end: targetPos,
+                source: edge.source,
+                target: edge.target
+            });
+        }
     });
+
+    return corridors;
 }

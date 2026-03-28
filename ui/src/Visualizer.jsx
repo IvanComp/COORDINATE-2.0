@@ -1,534 +1,723 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera, Text } from '@react-three/drei';
+import { OrbitControls, Grid, PerspectiveCamera, Text, Billboard } from '@react-three/drei';
+import { Box } from '@mui/material';
 import * as THREE from 'three';
-import { Box, Stack, Typography } from '@mui/material';
-import { calculateRoomPositions } from './layoutUtils';
+import { calculateRoomPositions, calculateCorridors } from './layoutUtils';
 
-function seededNoise(seed) {
-    const value = Math.sin(seed * 91.173) * 43758.5453123;
-    return value - Math.floor(value);
-}
-
-function statusTint(ant) {
-    if (ant.state === 'dead') return '#7b5954';
-    if (ant.state === 'sleeping') return '#9a8bc9';
-    if (ant.state === 'mating') return '#cf95e8';
-    return ant.sex === 'F' ? '#f28bb3' : '#7ca6ff';
-}
-
-function mixHex(colorA, colorB, ratio = 0.5) {
-    const a = colorA.replace('#', '');
-    const b = colorB.replace('#', '');
-    const clamp = Math.max(0, Math.min(1, ratio));
-    const mix = [0, 2, 4].map((index) => {
-        const av = Number.parseInt(a.slice(index, index + 2), 16);
-        const bv = Number.parseInt(b.slice(index, index + 2), 16);
-        return Math.round((av * (1 - clamp)) + (bv * clamp)).toString(16).padStart(2, '0');
-    });
-    return `#${mix.join('')}`;
-}
-
-function buildAppearance(ant) {
-    const seed = Number(ant.id || 0) + (Number(ant.generation || 0) * 17);
-    return {
-        shellMix: 0.64 + (seededNoise(seed + 1) * 0.18),
-        accentMix: 0.12 + (seededNoise(seed + 2) * 0.28),
-        stripeScale: 0.6 + (seededNoise(seed + 3) * 0.35),
-        antennaTilt: 0.32 + (seededNoise(seed + 4) * 0.4),
-        legSpread: 3.15 + (seededNoise(seed + 5) * 0.7),
-        eyeScale: 0.85 + (seededNoise(seed + 6) * 0.4),
-        bodyLean: (seededNoise(seed + 7) - 0.5) * 0.14,
-    };
-}
-
-function GroundDecor({ positions }) {
-    const props = useMemo(() => {
-        const center = Object.values(positions || {});
-        const tufts = [];
-        center.forEach((position, index) => {
-            for (let tuft = 0; tuft < 5; tuft += 1) {
-                const seed = (index * 11) + tuft;
-                tufts.push({
-                    id: `grass-${index}-${tuft}`,
-                    x: position.x + ((seededNoise(seed + 3) - 0.5) * 18),
-                    z: position.z + ((seededNoise(seed + 30) - 0.5) * 18),
-                    scale: 0.55 + (seededNoise(seed + 50) * 0.95),
-                    hue: seed % 4,
-                });
-            }
-        });
-        for (let ambient = 0; ambient < 48; ambient += 1) {
-            tufts.push({
-                id: `ambient-${ambient}`,
-                x: (seededNoise(ambient + 100) - 0.5) * 120,
-                z: (seededNoise(ambient + 180) - 0.5) * 120,
-                scale: 0.45 + (seededNoise(ambient + 220) * 0.75),
-                hue: ambient % 4,
-            });
-        }
-        return tufts;
-    }, [positions]);
-
-    return (
-        <>
-            {props.map((prop) => (
-                <group key={prop.id} position={[prop.x, -0.46, prop.z]} scale={prop.scale}>
-                    <mesh rotation={[0, 0, 0.16]}>
-                        <coneGeometry args={[0.34, 1.2, 5]} />
-                        <meshStandardMaterial color={prop.hue === 0 ? '#77ab59' : prop.hue === 1 ? '#8fbe6a' : '#5f914d'} roughness={1} />
-                    </mesh>
-                    <mesh rotation={[0, 0, -0.12]}>
-                        <coneGeometry args={[0.28, 0.94, 5]} />
-                        <meshStandardMaterial color={prop.hue === 2 ? '#96c46d' : '#6f9f51'} roughness={1} />
-                    </mesh>
-                </group>
-            ))}
-        </>
-    );
-}
-
-function NestLandmark({ position, label, glow }) {
-    return (
-        <group position={[position.x, 0, position.z]}>
-            <mesh receiveShadow position={[0, -0.1, 0]}>
-                <cylinderGeometry args={[4.6, 5.2, 0.8, 24]} />
-                <meshStandardMaterial color="#8a5a33" roughness={1} />
-            </mesh>
-            <mesh receiveShadow position={[0, 1.2, 0]}>
-                <sphereGeometry args={[2.9, 24, 20]} />
-                <meshStandardMaterial color="#9f6938" roughness={1} />
-            </mesh>
-            <mesh position={[0.55, 1.05, 0]}>
-                <cylinderGeometry args={[0.56, 0.82, 1.2, 16]} />
-                <meshStandardMaterial color="#352115" roughness={1} />
-            </mesh>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-                <ringGeometry args={[4.8, 5.8, 36]} />
-                <meshStandardMaterial color={glow} emissive={glow} emissiveIntensity={0.18} transparent opacity={0.55} />
-            </mesh>
-            <Text position={[0, 4.6, 0]} fontSize={0.95} color="#fff5e1" anchorX="center" anchorY="middle">
-                {label}
-            </Text>
-        </group>
-    );
-}
-
-function PondLandmark({ position, label, glow }) {
-    return (
-        <group position={[position.x, 0, position.z]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.08, 0]}>
-                <circleGeometry args={[4.1, 32]} />
-                <meshStandardMaterial color="#567a42" roughness={1} />
-            </mesh>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-                <circleGeometry args={[3.2, 32]} />
-                <meshStandardMaterial color="#7ad8ea" emissive="#77d8ea" emissiveIntensity={0.2} roughness={0.35} metalness={0.08} />
-            </mesh>
-            <mesh position={[-1.1, 0.2, 1.3]}>
-                <sphereGeometry args={[0.4, 12, 12]} />
-                <meshStandardMaterial color="#f1dba3" roughness={1} />
-            </mesh>
-            <Text position={[0, 2.2, 0]} fontSize={0.82} color="#eefcff" anchorX="center" anchorY="middle">
-                {label}
-            </Text>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-                <ringGeometry args={[3.35, 4.1, 36]} />
-                <meshStandardMaterial color={glow} emissive={glow} emissiveIntensity={0.18} transparent opacity={0.55} />
-            </mesh>
-        </group>
-    );
-}
-
-function FoodLandmark({ position, label, glow }) {
-    return (
-        <group position={[position.x, 0, position.z]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.06, 0]}>
-                <circleGeometry args={[3.8, 30]} />
-                <meshStandardMaterial color="#6d8a43" roughness={1} />
-            </mesh>
-            {[
-                [-0.8, 0.3, -0.3, '#8fbe4e'],
-                [0.7, 0.42, 0.2, '#6ea937'],
-                [0.15, 0.35, 1.0, '#aacd6f'],
-            ].map(([x, y, z, color], index) => (
-                <mesh key={index} position={[x, y, z]} rotation={[0, index * 0.6, 0]} castShadow>
-                    <coneGeometry args={[0.9, 1.6, 5]} />
-                    <meshStandardMaterial color={color} roughness={1} />
-                </mesh>
-            ))}
-            <Text position={[0, 2.45, 0]} fontSize={0.82} color="#f3ffe8" anchorX="center" anchorY="middle">
-                {label}
-            </Text>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-                <ringGeometry args={[3.15, 3.95, 36]} />
-                <meshStandardMaterial color={glow} emissive={glow} emissiveIntensity={0.18} transparent opacity={0.52} />
-            </mesh>
-        </group>
-    );
-}
-
-function NurseryLandmark({ position, label, glow }) {
-    return (
-        <group position={[position.x, 0, position.z]}>
-            <mesh receiveShadow position={[0, 0.2, 0]}>
-                <cylinderGeometry args={[3.8, 4.3, 0.5, 24]} />
-                <meshStandardMaterial color="#b38759" roughness={1} />
-            </mesh>
-            {[
-                [-1.1, 0.75, 0.2],
-                [0.2, 0.65, -0.4],
-                [1.0, 0.78, 0.8],
-                [-0.1, 0.7, 1.0],
-            ].map(([x, y, z], index) => (
-                <mesh key={index} position={[x, y, z]} castShadow>
-                    <sphereGeometry args={[0.48, 14, 14]} />
-                    <meshStandardMaterial color="#f7e7c1" roughness={0.92} />
-                </mesh>
-            ))}
-            <Text position={[0, 2.55, 0]} fontSize={0.82} color="#fff4de" anchorX="center" anchorY="middle">
-                {label}
-            </Text>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-                <ringGeometry args={[3.2, 4.05, 36]} />
-                <meshStandardMaterial color={glow} emissive={glow} emissiveIntensity={0.16} transparent opacity={0.52} />
-            </mesh>
-        </group>
-    );
-}
-
-function RestLandmark({ position, label, glow }) {
-    return (
-        <group position={[position.x, 0, position.z]}>
-            <mesh receiveShadow position={[0, 0, 0]}>
-                <cylinderGeometry args={[3.7, 3.9, 0.35, 24]} />
-                <meshStandardMaterial color="#78956d" roughness={1} />
-            </mesh>
-            <mesh receiveShadow position={[0.2, 0.55, 0]}>
-                <boxGeometry args={[2.6, 0.45, 1.5]} />
-                <meshStandardMaterial color="#6d7f58" roughness={1} />
-            </mesh>
-            <mesh receiveShadow position={[-1.2, 0.42, 0.8]}>
-                <sphereGeometry args={[0.5, 12, 12]} />
-                <meshStandardMaterial color="#8e9c7e" roughness={1} />
-            </mesh>
-            <Text position={[0, 2.25, 0]} fontSize={0.78} color="#f0fff0" anchorX="center" anchorY="middle">
-                {label}
-            </Text>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-                <ringGeometry args={[3.0, 3.8, 36]} />
-                <meshStandardMaterial color={glow} emissive={glow} emissiveIntensity={0.15} transparent opacity={0.48} />
-            </mesh>
-        </group>
-    );
-}
-
-function GenericLandmark({ position }) {
-    return (
-        <group position={[position.x, 0, position.z]}>
-            <mesh receiveShadow position={[0, 0.1, 0]}>
-                <cylinderGeometry args={[2.4, 2.8, 0.3, 18]} />
-                <meshStandardMaterial color="#9a6739" roughness={1} />
-            </mesh>
-            <mesh receiveShadow position={[0, 0.6, 0]}>
-                <sphereGeometry args={[1.4, 16, 14]} />
-                <meshStandardMaterial color="#af7843" roughness={1} />
-            </mesh>
-        </group>
-    );
-}
-
-function Ant({ ant, positions, slotOffset }) {
-    const ref = useRef();
-    const current = useRef(null);
-    const sleepMarkerRef = useRef(null);
-    const legRefs = useRef([]);
-    const antennaRefs = useRef([]);
-    const appearance = useMemo(() => buildAppearance(ant), [ant]);
-
-    const anchor = positions[ant.position];
-    if (!anchor) return null;
-    if (!current.current) current.current = { x: anchor.x, y: 0, z: anchor.z };
+// Delivery Stamp Animation Component
+function DeliveryStamp({ position, timestamp }) {
+    const groupRef = useRef();
+    const [opacity, setOpacity] = useState(1);
+    const [yOffset, setYOffset] = useState(0);
 
     useFrame((state, delta) => {
-        const phase = (state.clock.elapsedTime * 0.24) + (ant.id * 0.17);
-        const wanderRadius = ant.state === 'sleeping' ? 0.08 : ant.state === 'mating' ? 0.42 : 0.24;
-        const livelyFactor = ant.state === 'dead' ? 0 : ant.state === 'sleeping' ? 0.25 : 1;
-        const targetX = anchor.x + (slotOffset?.x || 0) + (Math.cos(phase) * wanderRadius * livelyFactor);
-        const targetZ = anchor.z + (slotOffset?.z || 0) + (Math.sin((phase * 1.15) + appearance.bodyLean) * wanderRadius * livelyFactor);
-        const smoothing = ant.state === 'sleeping' ? 0.55 : 0.72;
-
-        current.current.x += (targetX - current.current.x) * Math.min(1, delta * smoothing);
-        current.current.z += (targetZ - current.current.z) * Math.min(1, delta * smoothing);
-
-        if (ref.current) {
-            const bob = ant.state === 'dead' ? -0.12 : Math.sin((state.clock.elapsedTime * 3.4) + ant.id) * 0.035;
-            ref.current.position.set(current.current.x, 0.72 + bob, current.current.z);
-            if (ant.state !== 'dead') {
-                ref.current.rotation.y = Math.atan2(targetZ - current.current.z, targetX - current.current.x);
-            } else {
-                ref.current.rotation.z = Math.PI / 2.8;
-            }
+        // Animate upward and fade out over 2 seconds
+        const elapsed = (state.clock.getElapsedTime() * 1000 - timestamp) / 1000;
+        if (elapsed < 2) {
+            setYOffset(elapsed * 2); // Move up 4 units over 2 seconds
+            setOpacity(1 - elapsed / 2); // Fade out over 2 seconds
         }
-
-        if (sleepMarkerRef.current && ant.state === 'sleeping') {
-            sleepMarkerRef.current.position.y = 1.5 + (Math.sin(state.clock.elapsedTime * 1.8) * 0.18);
-        }
-
-        const gait = ant.state === 'dead' ? 0 : ant.state === 'sleeping' ? 0.08 : 1;
-        legRefs.current.forEach((legRef, index) => {
-            if (!legRef) return;
-            const direction = index % 2 === 0 ? 1 : -1;
-            const swing = Math.sin((state.clock.elapsedTime * 8) + (ant.id * 0.45) + index) * 0.34 * gait * direction;
-            legRef.rotation.z = legRef.userData.baseZ + swing;
-            legRef.rotation.x = legRef.userData.baseX + (Math.cos((state.clock.elapsedTime * 8) + index) * 0.08 * gait);
-        });
-        antennaRefs.current.forEach((antennaRef, index) => {
-            if (!antennaRef) return;
-            const sway = Math.sin((state.clock.elapsedTime * 4.2) + (ant.id * 0.2) + index) * 0.08;
-            antennaRef.rotation.z = antennaRef.userData.baseZ + sway;
-        });
     });
 
-    const color = statusTint(ant);
-    const shellColor = ant.state === 'dead' ? '#4e3a36' : '#111111';
-    const limbColor = ant.state === 'sleeping' ? '#7f76a5' : '#161616';
-    const accentColor = ant.state === 'dead' ? '#6e5550' : mixHex(color, '#ffffff', 0.14 + (appearance.accentMix * 0.15));
-    const eyeColor = ant.state === 'sleeping' ? '#d9cff7' : '#080808';
-    const badgeColor = ant.state === 'dead' ? '#7b5954' : color;
-    const legConfigs = [
-        { x: -0.08, z: -0.22, baseZ: 1.05, baseX: -0.1 },
-        { x: -0.08, z: 0.22, baseZ: -1.05, baseX: 0.1 },
-        { x: 0.18, z: -0.02, baseZ: 0.82, baseX: -0.05 },
-        { x: 0.18, z: 0.02, baseZ: -0.82, baseX: 0.05 },
-        { x: 0.45, z: -0.24, baseZ: 0.92, baseX: -0.08 },
-        { x: 0.45, z: 0.24, baseZ: -0.92, baseX: 0.08 },
-    ];
+    if (opacity <= 0) return null;
 
     return (
-        <group ref={ref} position={[anchor.x, 0.72, anchor.z]} rotation={[0, 0, appearance.bodyLean]}>
-            {legConfigs.map((leg, index) => (
-                <group
-                    key={`${ant.id}-leg-${index}`}
-                    ref={(node) => {
-                        legRefs.current[index] = node;
-                        if (node) {
-                            node.userData.baseZ = leg.baseZ;
-                            node.userData.baseX = leg.baseX;
-                        }
-                    }}
-                    position={[leg.x, -0.03, leg.z]}
-                    rotation={[leg.baseX, 0, leg.baseZ]}
-                >
-                    <mesh castShadow position={[0.22, -0.3, 0]}>
-                        <cylinderGeometry args={[0.016, 0.02, 0.72, 6]} />
-                        <meshStandardMaterial color={limbColor} />
-                    </mesh>
-                    <mesh castShadow position={[0.5, -0.6, 0]} rotation={[0, 0, -0.3]}>
-                        <cylinderGeometry args={[0.014, 0.018, 0.58, 6]} />
-                        <meshStandardMaterial color={limbColor} />
-                    </mesh>
-                </group>
-            ))}
-            <mesh castShadow position={[-0.35, 0.06, 0]} scale={ant.sex === 'F' ? [1.08, 0.82, 0.72] : [0.98, 0.78, 0.64]}>
-                <sphereGeometry args={[0.46, 18, 18]} />
-                <meshStandardMaterial color={shellColor} roughness={0.44} metalness={0.02} />
-            </mesh>
-            <mesh castShadow position={[0.08, 0.05, 0]} scale={[0.82, 0.62, 0.54]}>
-                <sphereGeometry args={[0.36, 18, 18]} />
-                <meshStandardMaterial color={shellColor} roughness={0.42} metalness={0.02} />
-            </mesh>
-            <mesh castShadow position={[0.46, 0.12, 0]} scale={[0.62, 0.56, 0.5]}>
-                <sphereGeometry args={[0.3, 16, 16]} />
-                <meshStandardMaterial color={shellColor} roughness={0.4} metalness={0.02} />
-            </mesh>
-            <mesh castShadow position={[0.18, 0.18, 0]} scale={[0.26, 0.14, 0.18]}>
-                <sphereGeometry args={[0.42, 14, 14]} />
-                <meshStandardMaterial color={badgeColor} emissive={badgeColor} emissiveIntensity={0.12} roughness={0.7} />
-            </mesh>
-            <group
-                ref={(node) => {
-                    antennaRefs.current[0] = node;
-                    if (node) node.userData.baseZ = 0.72;
-                }}
-                position={[0.6, 0.28, 0.09]}
-                rotation={[0.3, 0.1, 0.72]}
+        <group ref={groupRef} position={[position.x, position.y + 2 + yOffset, position.z]}>
+            <Text
+                fontSize={1.2}
+                color="#4CAF50"
+                anchorX="center"
+                anchorY="middle"
+                outlineWidth={0.1}
+                outlineColor="#000000"
+                fillOpacity={opacity}
+                outlineOpacity={opacity}
             >
-                <mesh position={[0.22, 0.18, 0]}>
-                    <cylinderGeometry args={[0.01, 0.012, 0.62, 6]} />
-                    <meshStandardMaterial color={limbColor} />
-                </mesh>
-            </group>
-            <group
-                ref={(node) => {
-                    antennaRefs.current[1] = node;
-                    if (node) node.userData.baseZ = -0.72;
-                }}
-                position={[0.6, 0.28, -0.09]}
-                rotation={[-0.3, -0.1, -0.72]}
+                Delivered!
+            </Text>
+        </group>
+    );
+}
+
+// 3D Room Component with realistic walls
+function Room({ position, isSource, hasItems, itemCount, roomId }) {
+    const meshRef = useRef();
+
+    const floorColor = isSource ? '#2d5016' : '#1a3a52';
+    const wallColor = isSource ? '#4CAF50' : '#2196F3';
+    const emissive = isSource ? '#2E7D32' : '#1565C0';
+
+    // Memoize text components to prevent flickering on camera movement
+    const sourceRoomLabel = useMemo(() => {
+        if (!isSource) return null;
+        return (
+            <Text
+                position={[0, 2.5, -2.85]}
+                fontSize={0.4}
+                color="white"
+                anchorX="center"
+                anchorY="middle"
+                outlineWidth={0.02}
+                outlineColor="#000000"
             >
-                <mesh position={[0.22, 0.18, 0]}>
-                    <cylinderGeometry args={[0.01, 0.012, 0.62, 6]} />
-                    <meshStandardMaterial color={limbColor} />
-                </mesh>
-            </group>
-            <mesh position={[0.58, 0.14, 0.08]}>
-                <sphereGeometry args={[0.018 + (0.012 * appearance.eyeScale), 8, 8]} />
-                <meshStandardMaterial color={eyeColor} />
+                SOURCE ROOM
+            </Text>
+        );
+    }, [isSource]);
+
+    const roomNumberLabel = useMemo(() => {
+        return (
+            <Text
+                position={[2.2, 0.1, -2.2]}
+                rotation={[-Math.PI / 2, 0, 0]}
+                fontSize={0.8}
+                color="white"
+                fillOpacity={0.6}
+                anchorX="center"
+                anchorY="middle"
+            >
+                {roomId}
+            </Text>
+        );
+    }, [roomId]);
+
+    return (
+        <group position={[position.x, position.y, position.z]}>
+            {/* Floor with grid pattern */}
+            <mesh position={[0, 0.05, 0]} receiveShadow>
+                <boxGeometry args={[5.8, 0.1, 5.8]} />
+                <meshStandardMaterial
+                    color={floorColor}
+                    roughness={0.8}
+                    metalness={0.2}
+                />
             </mesh>
-            <mesh position={[0.58, 0.14, -0.08]}>
-                <sphereGeometry args={[0.018 + (0.012 * appearance.eyeScale), 8, 8]} />
-                <meshStandardMaterial color={eyeColor} />
+
+            {/* Wall frames - only corner posts and top beams for open view */}
+            {/* Corner posts */}
+            <mesh position={[-2.9, 1.5, -2.9]} castShadow>
+                <boxGeometry args={[0.2, 3, 0.2]} />
+                <meshStandardMaterial color={wallColor} metalness={0.3} roughness={0.7} />
             </mesh>
-            {ant.state === 'sleeping' && (
+            <mesh position={[2.9, 1.5, -2.9]} castShadow>
+                <boxGeometry args={[0.2, 3, 0.2]} />
+                <meshStandardMaterial color={wallColor} metalness={0.3} roughness={0.7} />
+            </mesh>
+            <mesh position={[-2.9, 1.5, 2.9]} castShadow>
+                <boxGeometry args={[0.2, 3, 0.2]} />
+                <meshStandardMaterial color={wallColor} metalness={0.3} roughness={0.7} />
+            </mesh>
+            <mesh position={[2.9, 1.5, 2.9]} castShadow>
+                <boxGeometry args={[0.2, 3, 0.2]} />
+                <meshStandardMaterial color={wallColor} metalness={0.3} roughness={0.7} />
+            </mesh>
+
+            {/* Top beams connecting corners */}
+            <mesh position={[0, 3, -2.9]} castShadow>
+                <boxGeometry args={[5.8, 0.2, 0.2]} />
+                <meshStandardMaterial color={wallColor} metalness={0.3} roughness={0.7} />
+            </mesh>
+            <mesh position={[0, 3, 2.9]} castShadow>
+                <boxGeometry args={[5.8, 0.2, 0.2]} />
+                <meshStandardMaterial color={wallColor} metalness={0.3} roughness={0.7} />
+            </mesh>
+            <mesh position={[-2.9, 3, 0]} castShadow>
+                <boxGeometry args={[0.2, 0.2, 5.8]} />
+                <meshStandardMaterial color={wallColor} metalness={0.3} roughness={0.7} />
+            </mesh>
+            <mesh position={[2.9, 3, 0]} castShadow>
+                <boxGeometry args={[0.2, 0.2, 5.8]} />
+                <meshStandardMaterial color={wallColor} metalness={0.3} roughness={0.7} />
+            </mesh>
+
+            {/* Glass/transparent wall panels */}
+            <mesh position={[0, 1.5, -2.9]} castShadow>
+                <boxGeometry args={[5.6, 2.8, 0.1]} />
+                <meshStandardMaterial
+                    color={wallColor}
+                    transparent
+                    opacity={0.15}
+                    emissive={emissive}
+                    emissiveIntensity={0.3}
+                    roughness={0.1}
+                    metalness={0.9}
+                />
+            </mesh>
+            <mesh position={[0, 1.5, 2.9]} castShadow>
+                <boxGeometry args={[5.6, 2.8, 0.1]} />
+                <meshStandardMaterial
+                    color={wallColor}
+                    transparent
+                    opacity={0.15}
+                    emissive={emissive}
+                    emissiveIntensity={0.3}
+                    roughness={0.1}
+                    metalness={0.9}
+                />
+            </mesh>
+            <mesh position={[-2.9, 1.5, 0]} castShadow>
+                <boxGeometry args={[0.1, 2.8, 5.6]} />
+                <meshStandardMaterial
+                    color={wallColor}
+                    transparent
+                    opacity={0.15}
+                    emissive={emissive}
+                    emissiveIntensity={0.3}
+                    roughness={0.1}
+                    metalness={0.9}
+                />
+            </mesh>
+            <mesh position={[2.9, 1.5, 0]} castShadow>
+                <boxGeometry args={[0.1, 2.8, 5.6]} />
+                <meshStandardMaterial
+                    color={wallColor}
+                    transparent
+                    opacity={0.15}
+                    emissive={emissive}
+                    emissiveIntensity={0.3}
+                    roughness={0.1}
+                    metalness={0.9}
+                />
+            </mesh>
+
+            {/* Source Room Label - attached to back wall */}
+            {sourceRoomLabel}
+
+            {/* Room Number on Floor (Visible) */}
+            {roomNumberLabel}
+        </group>
+    );
+}
+
+// 3D Robot Component with smooth movement
+function Robot({ id, position, hasItem, itemImportance, isFailed, isRescuing, lastDeliveryTime, lastFailTime, lastRescueTime }) {
+    const groupRef = useRef();
+    const itemRef = useRef();
+    const currentPosRef = useRef({ ...position });
+    const itemScaleRef = useRef(hasItem ? 1 : 0);
+
+    // Smooth movement animation
+    useFrame((_, delta) => {
+        if (!groupRef.current) return;
+
+        // Interpolate position for smooth movement
+        const lerpFactor = Math.min(delta * 3, 1); // Smooth interpolation
+        currentPosRef.current.x += (position.x - currentPosRef.current.x) * lerpFactor;
+        currentPosRef.current.y += (position.y - currentPosRef.current.y) * lerpFactor;
+        currentPosRef.current.z += (position.z - currentPosRef.current.z) * lerpFactor;
+
+        // Animate item pickup/drop
+        const targetScale = hasItem ? 1 : 0;
+        const scaleDelta = (targetScale - itemScaleRef.current) * delta * 5;
+        itemScaleRef.current = Math.abs(targetScale - itemScaleRef.current) < 0.01
+            ? targetScale
+            : itemScaleRef.current + scaleDelta;
+
+        // Update group position - Lift up by 0.5 to sit on floor
+        groupRef.current.position.set(
+            currentPosRef.current.x,
+            currentPosRef.current.y + 0.5,
+            currentPosRef.current.z
+        );
+
+        if (itemRef.current) {
+            itemRef.current.scale.set(itemScaleRef.current, itemScaleRef.current, itemScaleRef.current);
+        }
+    });
+
+    const now = Date.now();
+    const deliveryElapsed = lastDeliveryTime ? (now - lastDeliveryTime) / 1000 : Infinity;
+    const failElapsed = lastFailTime ? (now - lastFailTime) / 1000 : Infinity;
+    const rescueElapsed = lastRescueTime ? (now - lastRescueTime) / 1000 : Infinity;
+    const deliveryTextOpacity = deliveryElapsed < 2 ? (1 - deliveryElapsed / 2) : 0;
+    const deliveryTextOffset = deliveryElapsed < 2 ? deliveryElapsed * 1.5 : 0;
+    const failTextOpacity = failElapsed < 2 ? (1 - failElapsed / 2) : 0;
+    const failTextOffset = failElapsed < 2 ? failElapsed * 1.5 : 0;
+    const rescueTextOpacity = rescueElapsed < 2 ? (1 - rescueElapsed / 2) : 0;
+    const rescueTextOffset = rescueElapsed < 2 ? rescueElapsed * 1.5 : 0;
+
+    // Robot colors: Blue (rescuing), Red (failed), Green (carrying), Gray (idle)
+    const bodyColor = isFailed ? '#F44336' : (isRescuing ? '#2196F3' : (hasItem ? '#4CAF50' : '#9E9E9E'));
+
+    return (
+        <group ref={groupRef} position={[position.x, 0.5, position.z]}>
+            {/* Robot ID Label */}
+            <Billboard
+                position={[0, 1.8, 0]}
+                follow={true}
+                lockX={false}
+                lockY={false}
+                lockZ={false}
+            >
                 <Text
-                    ref={sleepMarkerRef}
-                    position={[0.72, 1.18, 0]}
-                    fontSize={0.42}
-                    color="#fff7ff"
+                    fontSize={0.4}
+                    color="white"
                     anchorX="center"
                     anchorY="middle"
+                    outlineWidth={0.04}
+                    outlineColor="#000000"
+                    renderOrder={9999}
+                    depthTest={false}
+                    material-depthTest={false}
+                    material-toneMapped={false}
                 >
-                    ZzZ
+                    {id}
                 </Text>
+            </Billboard>
+
+            {/* Delivery Text Animation */}
+            {deliveryTextOpacity > 0 && (
+                <Billboard
+                    position={[0, 2.5 + deliveryTextOffset, 0]}
+                    follow={true}
+                    lockX={false}
+                    lockY={false}
+                    lockZ={false}
+                >
+                    <Text
+                        fontSize={1.3}
+                        color="#4CAF50"
+                        anchorX="center"
+                        anchorY="middle"
+                        outlineWidth={0.08}
+                        outlineColor="#000000"
+                        fillOpacity={deliveryTextOpacity}
+                        outlineOpacity={deliveryTextOpacity}
+                        fontWeight="bold"
+                    >
+                        Delivered!
+                    </Text>
+                </Billboard>
+            )}
+
+            {/* Fail Text Animation */}
+            {failTextOpacity > 0 && (
+                <Billboard
+                    position={[0, 2.5 + failTextOffset, 0]}
+                    follow={true}
+                    lockX={false}
+                    lockY={false}
+                    lockZ={false}
+                >
+                    <Text
+                        fontSize={1.3}
+                        color="#F44336"
+                        anchorX="center"
+                        anchorY="middle"
+                        outlineWidth={0.08}
+                        outlineColor="#000000"
+                        fillOpacity={failTextOpacity}
+                        outlineOpacity={failTextOpacity}
+                        fontWeight="bold"
+                    >
+                        Fail!
+                    </Text>
+                </Billboard>
+            )}
+
+            {/* Rescue Text Animation */}
+            {rescueTextOpacity > 0 && (
+                <Billboard
+                    position={[0, 2.5 + rescueTextOffset, 0]}
+                    follow={true}
+                    lockX={false}
+                    lockY={false}
+                    lockZ={false}
+                >
+                    <Text
+                        fontSize={1.3}
+                        color="#2196F3"
+                        anchorX="center"
+                        anchorY="middle"
+                        outlineWidth={0.08}
+                        outlineColor="#000000"
+                        fillOpacity={rescueTextOpacity}
+                        outlineOpacity={rescueTextOpacity}
+                        fontWeight="bold"
+                    >
+                        Recovered
+                    </Text>
+                </Billboard>
+            )}
+
+            {/* Robot body (box) */}
+            <mesh castShadow>
+                <boxGeometry args={[0.8, 1.0, 0.8]} />
+                <meshStandardMaterial color={bodyColor} metalness={0.3} roughness={0.7} />
+            </mesh>
+
+            {/* Robot head (sphere) */}
+            <mesh position={[0, 0.7, 0]} castShadow>
+                <sphereGeometry args={[0.4, 16, 16]} />
+                <meshStandardMaterial color={bodyColor} metalness={0.5} roughness={0.5} />
+            </mesh>
+
+            {/* Eyes */}
+            <mesh position={[0.18, 0.75, 0.32]} castShadow>
+                <sphereGeometry args={[0.07, 8, 8]} />
+                <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.5} />
+            </mesh>
+            <mesh position={[-0.18, 0.75, 0.32]} castShadow>
+                <sphereGeometry args={[0.07, 8, 8]} />
+                <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.5} />
+            </mesh>
+
+            {/* Item indicator with scale animation */}
+            {!isFailed && (() => {
+                const colors = ['#4CAF50', '#FFC107', '#FF5722'];
+                const itemColor = colors[itemImportance] || '#9E9E9E';
+                return (
+                    <mesh ref={itemRef} position={[0, 1.4, 0]} scale={[itemScaleRef.current, itemScaleRef.current, itemScaleRef.current]} castShadow>
+                        <boxGeometry args={[0.5, 0.5, 0.5]} />
+                        <meshStandardMaterial color={itemColor} />
+                    </mesh>
+                );
+            })()}
+
+            {/* Failure indicator */}
+            {isFailed && (
+                <mesh position={[0, 1.4, 0]} castShadow>
+                    <coneGeometry args={[0.4, 0.7, 3]} />
+                    <meshStandardMaterial color="#FF5722" emissive="#FF5722" emissiveIntensity={0.5} />
+                </mesh>
             )}
         </group>
     );
 }
 
-function Scene({ topology, topologyName, ants, specialChambers }) {
-    const positions = useMemo(() => calculateRoomPositions(topology, topologyName), [topology, topologyName]);
-    const livingAnts = useMemo(
-        () => Object.values(ants || {}).filter((ant) => ant.alive !== false).sort((a, b) => a.id - b.id),
-        [ants]
-    );
-    const slotOffsets = useMemo(() => {
-        const byRoom = new Map();
-        livingAnts.forEach((ant) => {
-            const room = ant.position;
-            const current = byRoom.get(room) || [];
-            current.push(ant.id);
-            byRoom.set(room, current);
-        });
+// 3D Item Component with smooth appear/disappear
+function Item({ position, importance, isNew }) {
+    const meshRef = useRef();
+    const scaleRef = useRef(isNew ? 0 : 1);
+    const colors = ['#4CAF50', '#FFC107', '#FF5722'];
+    const color = colors[importance] || '#9E9E9E';
 
-        const offsets = {};
-        byRoom.forEach((ids) => {
-            ids.forEach((antId, index) => {
-                if (index === 0) {
-                    offsets[antId] = { x: 0, z: 0 };
-                    return;
-                }
-                const ring = Math.floor((Math.sqrt(index * 1.9) + 1) / 1.45);
-                const radius = 1.45 + (ring * 0.95);
-                const angle = (index * 2.399963229728653) + (seededNoise(antId) * 0.4);
-                offsets[antId] = {
-                    x: Math.cos(angle) * radius,
-                    z: Math.sin(angle) * radius,
-                };
-            });
-        });
-        return offsets;
-    }, [livingAnts]);
+    // Smooth scale animation for appearing
+    useFrame((_, delta) => {
+        if (!meshRef.current) return;
+        if (scaleRef.current < 1) {
+            scaleRef.current = Math.min(scaleRef.current + delta * 3, 1);
+            meshRef.current.scale.set(scaleRef.current, scaleRef.current, scaleRef.current);
+        }
+    });
 
     return (
-        <>
-            <color attach="background" args={['#8fc16b']} />
-            <PerspectiveCamera makeDefault position={[0, 52, 46]} fov={36} />
-            <ambientLight intensity={1.35} />
-            <directionalLight position={[24, 38, 18]} intensity={1.6} castShadow />
-            <pointLight position={[-30, 14, -22]} intensity={0.65} color="#ffefc9" />
-
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.65, 0]}>
-                <planeGeometry args={[280, 280]} />
-                <meshStandardMaterial color="#89be63" roughness={1} />
-            </mesh>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.56, 0]}>
-                <circleGeometry args={[58, 48]} />
-                <meshStandardMaterial color="#bc8650" roughness={1} />
-            </mesh>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.53, 0]}>
-                <circleGeometry args={[50, 48]} />
-                <meshStandardMaterial color="#9f6939" roughness={1} />
-            </mesh>
-
-            <GroundDecor positions={positions} />
-
-            {topology?.nodes?.map((node) => {
-                if (node.id === specialChambers.nest) {
-                    return <NestLandmark key={node.id} position={positions[node.id]} label="Nest" glow="#ffd26b" />;
-                }
-                if (node.id === specialChambers.nursery) {
-                    return <NurseryLandmark key={node.id} position={positions[node.id]} label="Nursery" glow="#ffe0b8" />;
-                }
-                if (specialChambers.food.includes(node.id)) {
-                    return <FoodLandmark key={node.id} position={positions[node.id]} label="Food" glow="#b8ef7b" />;
-                }
-                if (specialChambers.water.includes(node.id)) {
-                    return <PondLandmark key={node.id} position={positions[node.id]} label="Water" glow="#93e7ff" />;
-                }
-                if (specialChambers.rest.includes(node.id)) {
-                    return <RestLandmark key={node.id} position={positions[node.id]} label="Rest" glow="#d3c9ff" />;
-                }
-                return <GenericLandmark key={node.id} position={positions[node.id]} />;
-            })}
-
-            {livingAnts.map((ant) => (
-                <Ant key={ant.id} ant={ant} positions={positions} slotOffset={slotOffsets[ant.id]} />
-            ))}
-
-            <OrbitControls enablePan enableZoom enableRotate minPolarAngle={0.72} maxPolarAngle={1.08} />
-        </>
-    );
-}
-
-function RenderPausedOverlay() {
-    return (
-        <Box
-            sx={{
-                position: 'absolute',
-                inset: 0,
-                display: 'grid',
-                placeItems: 'center',
-                background: `
-                    radial-gradient(circle at 20% 18%, rgba(255,244,200,0.26), transparent 24%),
-                    radial-gradient(circle at 80% 24%, rgba(146,207,117,0.20), transparent 20%),
-                    linear-gradient(180deg, #8cbfe5 0%, #78b06b 35%, #533722 100%)
-                `,
-            }}
+        <mesh
+            ref={meshRef}
+            position={[position.x, 0.3, position.z]}
+            scale={[scaleRef.current, scaleRef.current, scaleRef.current]}
+            castShadow
         >
-            <Stack
-                spacing={1}
-                sx={{
-                    px: 3,
-                    py: 2.5,
-                    borderRadius: 3,
-                    color: '#fff8ed',
-                    bgcolor: 'rgba(18,16,11,0.4)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    backdropFilter: 'blur(10px)',
-                    textAlign: 'center',
-                }}
-            >
-                <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    3D view paused
-                </Typography>
-                <Typography variant="body2" sx={{ maxWidth: 420, color: 'rgba(255,248,237,0.8)' }}>
-                    The colony keeps running in the background. Only the visual scene is paused to save resources.
-                </Typography>
-            </Stack>
-        </Box>
+            <boxGeometry args={[0.5, 0.5, 0.5]} />
+            <meshStandardMaterial color={color} metalness={0.2} roughness={0.8} />
+        </mesh>
     );
 }
 
-function Visualizer({ topology, topologyName, ants, specialChambers, renderEnabled = true }) {
-    if (!renderEnabled) {
-        return <RenderPausedOverlay />;
+// Corridor Component - realistic walkway between rooms
+function Corridor({ start, end }) {
+    const midpoint = {
+        x: (start.x + end.x) / 2,
+        y: 0.15,
+        z: (start.z + end.z) / 2
+    };
+
+    const length = Math.sqrt(
+        Math.pow(end.x - start.x, 2) +
+        Math.pow(end.z - start.z, 2)
+    );
+
+    const angle = Math.atan2(end.z - start.z, end.x - start.x);
+
+    return (
+        <group position={[midpoint.x, 0, midpoint.z]} rotation={[0, angle, 0]}>
+            {/* Corridor floor */}
+            <mesh position={[0, 0.1, 0]} receiveShadow>
+                <boxGeometry args={[length, 0.1, 2]} />
+                <meshStandardMaterial
+                    color="#3a3a3a"
+                    roughness={0.7}
+                    metalness={0.3}
+                />
+            </mesh>
+
+            {/* Side rails/guides */}
+            <mesh position={[0, 0.3, -0.95]} castShadow>
+                <boxGeometry args={[length, 0.1, 0.1]} />
+                <meshStandardMaterial color="#666666" metalness={0.5} roughness={0.5} />
+            </mesh>
+            <mesh position={[0, 0.3, 0.95]} castShadow>
+                <boxGeometry args={[length, 0.1, 0.1]} />
+                <meshStandardMaterial color="#666666" metalness={0.5} roughness={0.5} />
+            </mesh>
+
+            {/* Support posts every few units */}
+            {Array.from({ length: Math.floor(length / 3) }).map((_, i) => {
+                const offset = (i - Math.floor(length / 6)) * 3;
+                return (
+                    <React.Fragment key={i}>
+                        <mesh position={[offset, 0.5, -0.95]} castShadow>
+                            <boxGeometry args={[0.1, 1, 0.1]} />
+                            <meshStandardMaterial color="#555555" metalness={0.4} roughness={0.6} />
+                        </mesh>
+                        <mesh position={[offset, 0.5, 0.95]} castShadow>
+                            <boxGeometry args={[0.1, 1, 0.1]} />
+                            <meshStandardMaterial color="#555555" metalness={0.4} roughness={0.6} />
+                        </mesh>
+                    </React.Fragment>
+                );
+            })}
+        </group>
+    );
+}
+
+function Visualizer({ topology, robots, items, topologyName = 'mesh25', logs = [], simTime = 0 }) {
+    const [deliveredStamps, setDeliveredStamps] = useState([]);
+    const [robotDeliveryTimes, setRobotDeliveryTimes] = useState({});
+    const [robotFailTimes, setRobotFailTimes] = useState({});
+    const [robotRescueTimes, setRobotRescueTimes] = useState({});
+    const prevItemsRef = useRef({});
+    const prevRobotsRef = useRef({});
+    const prevSimTimeRef = useRef(0);
+
+    const roomPositions = useMemo(() => {
+        return calculateRoomPositions(topology, topologyName);
+    }, [topology, topologyName]);
+
+    const corridors = useMemo(() => {
+        return calculateCorridors(topology, roomPositions);
+    }, [topology, roomPositions]);
+
+    // Track delivered items and robot failures from logs
+    useEffect(() => {
+        // Only run if topology is loaded and roomPositions are available
+        if (!topology || !roomPositions || Object.keys(roomPositions).length === 0) {
+            return;
+        }
+
+        const prevItems = prevItemsRef.current;
+        const prevRobots = prevRobotsRef.current;
+        const prevSimTime = prevSimTimeRef.current;
+        const currentTime = Date.now();
+
+        // Track deliveries
+        Object.values(items).forEach(item => {
+            const prevItem = prevItems[item.id];
+            // Check if item was just delivered
+            if (prevItem && prevItem.status !== 'delivered' && item.status === 'delivered') {
+                // Get the source room position (room 0)
+                const sourcePos = roomPositions[0];
+                if (sourcePos) {
+                    setDeliveredStamps(prev => [...prev, {
+                        id: `${item.id}-${currentTime}`,
+                        position: sourcePos,
+                        timestamp: currentTime
+                    }]);
+
+                    // Find which robot delivered it
+                    const deliveringRobot = Object.values(prevRobots).find(r => r.item === item.id);
+                    if (deliveringRobot) {
+                        setRobotDeliveryTimes(prev => ({
+                            ...prev,
+                            [deliveringRobot.id]: currentTime
+                        }));
+                    }
+                }
+            }
+        });
+
+        // Track robot failures and rescues from logs
+        // Look for events that just happened (between prevSimTime and current simTime)
+        if (logs && logs.length > 0) {
+            logs.forEach(event => {
+                if (event.simTime > prevSimTime && event.simTime <= simTime) {
+                    const robotId = event.robotId;
+                    if (robotId !== -1) {
+                        if (event.event === 'fail') {
+                            setRobotFailTimes(prev => ({
+                                ...prev,
+                                [robotId]: currentTime
+                            }));
+                        } else if (event.event === 'recover' || event.event === 'recovery' || event.event === 'rescue') {
+                            setRobotRescueTimes(prev => ({
+                                ...prev,
+                                [robotId]: currentTime
+                            }));
+                        }
+                    }
+                }
+            });
+        }
+        // Also handle persistent failure state from robots object
+        Object.values(robots).forEach(robot => {
+            if (robot.failed) {
+                // If we don't already have a fail timestamp for this robot, set it now
+                setRobotFailTimes(prev => {
+                    if (prev[robot.id] !== undefined) return prev;
+                    return { ...prev, [robot.id]: currentTime };
+                });
+            }
+        });
+
+        // Clean up old stamps (older than 3 seconds)
+        setDeliveredStamps(prev => prev.filter(stamp => currentTime - stamp.timestamp < 3000));
+
+        prevItemsRef.current = { ...items };
+        prevRobotsRef.current = { ...robots };
+        prevSimTimeRef.current = simTime;
+    }, [items, robots, roomPositions, topology, logs, simTime]);
+
+    if (!topology) {
+        return (
+            <Box sx={{
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center'
+            }}>
+                Loading topology...
+            </Box>
+        );
     }
 
     return (
-        <Box sx={{ position: 'absolute', inset: 0 }}>
-            <Canvas shadows gl={{ antialias: true }}>
-                <Scene topology={topology} topologyName={topologyName} ants={ants} specialChambers={specialChambers} />
+        <Box sx={{ width: '100%', height: '100%' }}>
+            <Canvas shadows>
+                <PerspectiveCamera makeDefault position={[20, 20, 20]} fov={60} />
+                <OrbitControls
+                    enablePan={true}
+                    enableZoom={true}
+                    enableRotate={true}
+                    minDistance={5}
+                    maxDistance={100}
+                />
+
+                {/* Lighting */}
+                <ambientLight intensity={0.4} />
+                <directionalLight
+                    position={[10, 20, 10]}
+                    intensity={1}
+                    castShadow
+                    shadow-mapSize-width={2048}
+                    shadow-mapSize-height={2048}
+                />
+                <pointLight position={[-10, 10, -10]} intensity={0.5} />
+
+                {/* Ground Grid */}
+                <Grid
+                    args={[100, 100]}
+                    cellSize={2}
+                    cellThickness={0.5}
+                    cellColor="#6f6f6f"
+                    sectionSize={10}
+                    sectionThickness={1}
+                    sectionColor="#9d4b4b"
+                    fadeDistance={100}
+                    fadeStrength={1}
+                    followCamera={false}
+                    infiniteGrid={true}
+                />
+
+                {/* Corridors */}
+                {corridors.map((corridor, idx) => (
+                    <Corridor key={`corridor-${idx}`} start={corridor.start} end={corridor.end} />
+                ))}
+
+                {/* Rooms */}
+                {topology.nodes.map(node => {
+                    const pos = roomPositions[node.id];
+                    if (!pos) return null;
+
+                    const roomItems = Object.values(items).filter(
+                        item => item.position === node.id && item.status === 'available'
+                    );
+
+                    return (
+                        <Room
+                            key={`room-${node.id}`}
+                            position={pos}
+                            isSource={node.id === 0}
+                            hasItems={roomItems.length > 0}
+                            itemCount={roomItems.length}
+                            roomId={node.id}
+                        />
+                    );
+                })}
+
+                {/* Items */}
+                {Object.values(items).map(item => {
+                    if (item.status !== 'available' || item.position === -1) return null;
+
+                    const roomPos = roomPositions[item.position];
+                    if (!roomPos) return null;
+
+                    const offset = (item.id % 5) * 0.6 - 1.2;
+
+                    return (
+                        <Item
+                            key={`item-${item.id}`}
+                            position={{ x: roomPos.x + offset, y: roomPos.y, z: roomPos.z }}
+                            importance={item.importance}
+                        />
+                    );
+                })}
+
+                {/* Robots */}
+                {Object.values(robots).map(robot => {
+                    if (robot.position === -1) return null;
+
+                    const roomPos = roomPositions[robot.position];
+                    if (!roomPos) return null;
+
+                    // Calculate index of this robot in its room
+                    const roomRobots = Object.values(robots)
+                        .filter(r => r.position === robot.position)
+                        .sort((a, b) => a.id - b.id);
+                    const index = roomRobots.findIndex(r => r.id === robot.id);
+
+                    // Calculate offset based on room type
+                    let offsetX = 0;
+                    let offsetZ = 0;
+
+                    if (robot.position === 0) {
+                        // Source room: Grid layout
+                        const cols = 4;
+                        const row = Math.floor(index / cols);
+                        const col = index % cols;
+                        offsetX = (col - 1.5) * 0.8;
+                        offsetZ = (row - 1.5) * 0.8;
+                    } else {
+                        // Other rooms: Simple line or smaller grid
+                        offsetX = (index % 3) * 0.6 - 0.6;
+                        offsetZ = Math.floor(index / 3) * 0.6 - 0.6;
+                    }
+
+                    return (
+                        <Robot
+                            key={`robot-${robot.id}`}
+                            id={robot.id}
+                            position={{ x: roomPos.x + offsetX, y: roomPos.y, z: roomPos.z + offsetZ }}
+                            hasItem={robot.item !== null}
+                            itemImportance={robot.itemImportance}
+                            isFailed={robot.failed || false}
+                            isRescuing={robot.rescuing || false}
+                            lastDeliveryTime={robotDeliveryTimes[robot.id]}
+                            lastFailTime={robotFailTimes[robot.id]}
+                            lastRescueTime={robotRescueTimes[robot.id]}
+                        />
+                    );
+                })}
+
+                {/* Delivery Stamps */}
+                {deliveredStamps.map(stamp => (
+                    <DeliveryStamp
+                        key={stamp.id}
+                        position={stamp.position}
+                        timestamp={stamp.timestamp}
+                    />
+                ))}
             </Canvas>
         </Box>
     );

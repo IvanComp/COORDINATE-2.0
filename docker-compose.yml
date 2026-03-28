@@ -1,8 +1,8 @@
 version: '3.8'
 
 services:
-  agant-of-empire:
-    image: agant-of-empire:latest
+  coordinate:
+    image: ivancompd/coordinate-2.0:latest
     build:
       context: .
       dockerfile: Dockerfile
