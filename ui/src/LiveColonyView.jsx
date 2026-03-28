@@ -108,12 +108,12 @@ function LiveColonyView({ onBack }) {
             )}
 
             <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 8 }}>
-                <Stack spacing={1.5}>
+                <Stack spacing={1.5} sx={{ width: 'min(380px, calc(100vw - 32px))' }}>
                     <Button
                         variant="outlined"
                         onClick={onBack}
                         sx={{
-                            alignSelf: 'flex-start',
+                            width: '100%',
                             color: 'white',
                             borderColor: 'rgba(255,255,255,0.18)',
                             bgcolor: 'rgba(0,0,0,0.4)',
@@ -126,7 +126,7 @@ function LiveColonyView({ onBack }) {
                         variant={renderEnabled ? 'contained' : 'outlined'}
                         onClick={() => setRenderEnabled((value) => !value)}
                         sx={{
-                            alignSelf: 'flex-start',
+                            width: '100%',
                             color: renderEnabled ? '#1a130e' : 'white',
                             borderColor: 'rgba(255,255,255,0.18)',
                             bgcolor: renderEnabled ? '#d8a95f' : 'rgba(0,0,0,0.4)',
@@ -141,7 +141,7 @@ function LiveColonyView({ onBack }) {
 
                     <Paper
                         sx={{
-                            width: 'min(380px, calc(100vw - 32px))',
+                            width: '100%',
                             p: 2,
                             color: 'white',
                             bgcolor: 'rgba(0,0,0,0.62)',

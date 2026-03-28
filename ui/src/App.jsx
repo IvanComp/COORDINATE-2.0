@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Box, Button, Chip, CircularProgress, Paper, Slider, Snackbar, Stack, Typography } from '@mui/material';
+import GitHubIcon from '@mui/icons-material/GitHub';
 import axios from 'axios';
 import AnalyticsModal from './AnalyticsModal';
 import AntSearchPanel from './AntSearchPanel';
@@ -25,13 +26,6 @@ const SIMULATION_MODES = [
         subtitle: 'Persistent real-time monitoring',
         description: 'Run a colony continuously with slow life rhythms, long lifespans, and a live dashboard you can watch over time.',
         available: true,
-    },
-    {
-        id: 'dynasty-mode',
-        title: 'Dynasty Mode',
-        subtitle: 'Coming soon',
-        description: 'A more narrative mode focused on dominant bloodlines, inheritance, and the long history of the nest.',
-        available: false,
     },
 ];
 
@@ -85,30 +79,96 @@ function HomePage({ onEnter }) {
                             pointerEvents: 'none',
                         }}
                     />
-                    <Stack spacing={2} sx={{ position: 'relative' }}>
-                        <Chip
-                            label="AgANT of Empire"
+                    <Box
+                        sx={{
+                            position: 'relative',
+                            display: 'grid',
+                            gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.45fr) minmax(300px, 0.75fr)' },
+                            gap: 2.5,
+                            alignItems: 'stretch',
+                        }}
+                    >
+                        <Stack spacing={2}>
+                            <Typography
+                                variant="h2"
+                                sx={{
+                                    fontSize: { xs: '2.05rem', md: '3.85rem' },
+                                    lineHeight: 0.95,
+                                    fontWeight: 800,
+                                    maxWidth: 980,
+                                }}
+                            >
+                                <Box component="span" sx={{ display: 'block' }}>
+                                    Choose which anthill simulation
+                                </Box>
+                                <Box component="span" sx={{ display: 'block', whiteSpace: 'nowrap' }}>
+                                    you want to open.
+                                </Box>
+                            </Typography>
+                            <Typography sx={{ maxWidth: 760, color: 'rgba(255,255,255,0.74)', fontSize: { xs: '1rem', md: '1.08rem' } }}>
+                                The app no longer drops you straight into the technical panel. You now enter through a dedicated launcher with multiple simulation families visible, including both the classic finite run and a persistent live colony.
+                            </Typography>
+                        </Stack>
+
+                        <Paper
+                            component="a"
+                            href="https://github.com/IvanComp/AgANT-of-Empire"
+                            target="_blank"
+                            rel="noreferrer"
                             sx={{
-                                alignSelf: 'flex-start',
-                                bgcolor: 'rgba(216,169,95,0.14)',
-                                color: '#f1d4a3',
-                                border: '1px solid rgba(216,169,95,0.36)',
+                                p: 3,
+                                minHeight: { xs: 180, xl: '100%' },
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'space-between',
+                                textDecoration: 'none',
+                                color: 'white',
+                                bgcolor: 'rgba(18, 21, 25, 0.78)',
+                                border: '1px solid rgba(216,169,95,0.24)',
+                                borderRadius: 3,
+                                boxShadow: '0 20px 80px rgba(0,0,0,0.22)',
+                                transition: 'transform 160ms ease, border-color 160ms ease, background-color 160ms ease',
+                                '&:hover': {
+                                    transform: 'translateY(-2px)',
+                                    borderColor: 'rgba(216,169,95,0.45)',
+                                    bgcolor: 'rgba(22, 26, 31, 0.9)',
+                                },
                             }}
-                        />
-                        <Typography variant="h2" sx={{ fontSize: { xs: '2.4rem', md: '4.4rem' }, lineHeight: 0.95, fontWeight: 800, maxWidth: 760 }}>
-                            Choose which anthill simulation you want to open.
-                        </Typography>
-                        <Typography sx={{ maxWidth: 760, color: 'rgba(255,255,255,0.74)', fontSize: { xs: '1rem', md: '1.08rem' } }}>
-                            The app no longer drops you straight into the technical panel. You now enter through a dedicated launcher with multiple simulation families visible, including both the classic finite run and a persistent live colony.
-                        </Typography>
-                    </Stack>
+                        >
+                            <Stack spacing={1.5}>
+                                <Stack direction="row" spacing={1.2} alignItems="center">
+                                    <GitHubIcon sx={{ color: '#f1d4a3' }} />
+                                    <Typography variant="overline" sx={{ letterSpacing: '0.16em', color: '#f1d4a3' }}>
+                                        Repository
+                                    </Typography>
+                                </Stack>
+                                <Typography variant="h5" sx={{ fontWeight: 800 }}>
+                                    GitHub
+                                </Typography>
+                                <Typography sx={{ color: 'rgba(255,255,255,0.72)', lineHeight: 1.65 }}>
+                                    Open the official source repository and browse the current release.
+                                </Typography>
+                            </Stack>
+
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2 }}>
+                                <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.65)' }}>
+                                    v1.0.0
+                                </Typography>
+                                <Typography variant="body2" sx={{ color: '#f1d4a3', fontWeight: 700 }}>
+                                    github.com/IvanComp/AgANT-of-Empire
+                                </Typography>
+                            </Stack>
+                        </Paper>
+                    </Box>
                 </Paper>
 
                 <Box
                     sx={{
                         display: 'grid',
-                        gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' },
+                        gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
                         gap: 3,
+                        maxWidth: 980,
+                        mx: 'auto',
                     }}
                 >
                     {SIMULATION_MODES.map((mode) => (
@@ -137,15 +197,6 @@ function HomePage({ onEnter }) {
                                             {mode.subtitle}
                                         </Typography>
                                     </Box>
-                                    <Chip
-                                        label={mode.available ? 'Available' : 'Locked'}
-                                        size="small"
-                                        sx={{
-                                            bgcolor: mode.available ? 'rgba(141,193,107,0.16)' : 'rgba(255,255,255,0.08)',
-                                            color: mode.available ? '#b9e29b' : 'rgba(255,255,255,0.62)',
-                                            border: '1px solid rgba(255,255,255,0.08)',
-                                        }}
-                                    />
                                 </Stack>
                                 <Typography sx={{ color: 'rgba(255,255,255,0.74)', lineHeight: 1.65 }}>
                                     {mode.description}
