@@ -109,6 +109,61 @@ def _resolve_topology_name(cfg: Cfg) -> str:
     print('Unsupported topology:', name)
     sys.exit(-1)
 
+def _build_custom_topology(cfg: Cfg):
+    custom = getattr(cfg, 'CUSTOM_TOPOLOGY', None)
+    if not isinstance(custom, dict):
+        print('Missing CUSTOM_TOPOLOGY for custom room layout')
+        sys.exit(-1)
+
+    nodes = custom.get('nodes', [])
+    edges = custom.get('edges', [])
+    try:
+        node_ids = sorted(int(node['id']) for node in nodes)
+    except Exception:
+        print('Invalid CUSTOM_TOPOLOGY nodes')
+        sys.exit(-1)
+
+    expected_ids = list(range(len(node_ids)))
+    if node_ids != expected_ids:
+        print('CUSTOM_TOPOLOGY nodes must be sequential room IDs starting at 0')
+        sys.exit(-1)
+
+    topology = {idx: [] for idx in node_ids}
+    for edge in edges:
+        try:
+            source = int(edge['source'])
+            target = int(edge['target'])
+        except Exception:
+            print('Invalid CUSTOM_TOPOLOGY edge')
+            sys.exit(-1)
+
+        if source == target or source not in topology or target not in topology:
+            print('CUSTOM_TOPOLOGY contains an invalid edge')
+            sys.exit(-1)
+        if target not in topology[source]:
+            topology[source].append(target)
+        if source not in topology[target]:
+            topology[target].append(source)
+
+    if not edges:
+        print('CUSTOM_TOPOLOGY needs at least one edge')
+        sys.exit(-1)
+
+    visited = {0}
+    queue = [0]
+    while queue:
+        room = queue.pop(0)
+        for neighbor in topology[room]:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+
+    if len(visited) != len(topology):
+        print('CUSTOM_TOPOLOGY must be connected')
+        sys.exit(-1)
+
+    return {idx: sorted(adjacents) for idx, adjacents in topology.items()}
+
 def run(config_path='config.json'):
     cfg = _build_cfg(config_path)
     # print("DEBUG: Loaded Config:", json.dumps(cfg.__dict__, indent=2))
@@ -145,9 +200,14 @@ def run(config_path='config.json'):
             print(f"[ERROR] Ensure 'rtlola-cli' is installed and in your PATH, or configured in config.json.")
             sys.exit(-1)
     
-    resolved_topology_name = _resolve_topology_name(cfg)
-    cfg.TOPOLOGY_NAME = resolved_topology_name
-    topo = topologyName_dict[resolved_topology_name]
+    if cfg.TOPOLOGY_NAME == 'custom':
+        topo = _build_custom_topology(cfg)
+        resolved_topology_name = getattr(cfg, 'CUSTOM_TOPOLOGY_NAME', 'custom')
+        cfg.TOPOLOGY_NAME = resolved_topology_name
+    else:
+        resolved_topology_name = _resolve_topology_name(cfg)
+        cfg.TOPOLOGY_NAME = resolved_topology_name
+        topo = topologyName_dict[resolved_topology_name]
     if cfg.N_ROOMS != len(topo.keys()):
         print('N_ROOMS mismatch with selected TOPOLOGY_NAME'); sys.exit(-1)
 

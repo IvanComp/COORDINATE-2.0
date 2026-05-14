@@ -3,6 +3,14 @@
 export function calculateRoomPositions(topology, topologyName) {
     if (!topology || !topology.nodes) return {};
 
+    if (topologyName === 'custom' && topology.layoutPreset === 'GUH73') {
+        return calculateGUH73Positions(topology);
+    }
+
+    if (topologyName === 'custom') {
+        return calculateCustomPositions(topology);
+    }
+
     // Custom layout for GUH73
     if (topologyName === 'GUH73') {
         return calculateGUH73Positions(topology);
@@ -139,6 +147,40 @@ export function calculateRoomPositions(topology, topologyName) {
             };
         });
     }
+
+    return positions;
+}
+
+function calculateCustomPositions(topology) {
+    const positions = {};
+    const nodesWithCoordinates = topology.nodes.filter(node =>
+        Number.isFinite(Number(node.x)) && Number.isFinite(Number(node.z))
+    );
+
+    nodesWithCoordinates.forEach(node => {
+        positions[node.id] = {
+            x: Number(node.x),
+            y: 0,
+            z: Number(node.z),
+        };
+    });
+
+    if (Object.keys(positions).length === topology.nodes.length) {
+        return positions;
+    }
+
+    const gridSize = Math.ceil(Math.sqrt(topology.nodes.length));
+    const spacing = 8;
+    topology.nodes.forEach((node, idx) => {
+        if (positions[node.id]) return;
+        const row = Math.floor(idx / gridSize);
+        const col = idx % gridSize;
+        positions[node.id] = {
+            x: (col - gridSize / 2) * spacing,
+            y: 0,
+            z: (row - gridSize / 2) * spacing
+        };
+    });
 
     return positions;
 }

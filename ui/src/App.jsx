@@ -23,6 +23,7 @@ function App() {
 
   const [topologyName, setTopologyName] = useState('mesh25');
   const [topology, setTopology] = useState(null);
+  const [customTopology, setCustomTopology] = useState(null);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -54,15 +55,26 @@ function App() {
 
   // Fetch topology when name changes
   useEffect(() => {
+    if (topologyName === 'custom') {
+      if (customTopology) {
+        setTopology(customTopology);
+      }
+      return;
+    }
+
     axios.get(`${API_BASE}/topology/${topologyName}`)
       .then(res => setTopology(res.data))
       .catch(err => console.error(err));
-  }, [topologyName]);
+  }, [topologyName, customTopology]);
 
   // Run simulation
   const handleRun = async (config) => {
     setLoading(true);
     setError(null);
+    setCustomTopology(config.CUSTOM_TOPOLOGY || null);
+    if (config.CUSTOM_TOPOLOGY) {
+      setTopology(config.CUSTOM_TOPOLOGY);
+    }
     setTopologyName(config.TOPOLOGY_NAME);
     setHasSimulation(false);
     setCurrentConfig(config);

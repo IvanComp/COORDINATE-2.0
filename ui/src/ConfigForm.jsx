@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     TextField,
     Button,
@@ -13,7 +13,12 @@ import {
     IconButton,
     Collapse,
     Tabs,
-    Tab
+    Tab,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Alert
 } from '@mui/material';
 import { Settings, ExpandMore, ExpandLess, HelpOutline, Tune, Add, DeleteOutline, Bolt } from '@mui/icons-material';
 import { InputAdornment, Tooltip } from '@mui/material';
@@ -98,6 +103,10 @@ const DISTRIBUTION_OPTIONS = [
     { value: 'deterministic', label: 'Deterministic' },
 ];
 
+const CUSTOM_ROOM_VALUE = 'custom';
+const DEFAULT_CUSTOM_ROOM_TEXT = '0-1, 1-2, 2-3, 3-0';
+const DEFAULT_CUSTOM_COORDS_TEXT = '0:0,0\n1:8,0\n2:8,8\n3:0,8';
+
 // Map N_ROOMS to appropriate topology
 const TOPOLOGY_MAP = {
     4: ['mesh4', 'ring4', 'tree4', 'line4', 'star4', 'fully_connected4', 'bus4'],
@@ -121,6 +130,7 @@ function AgentTabIcon() {
 }
 
 function topologyLabel(topologyName) {
+    if (topologyName === CUSTOM_ROOM_VALUE) return 'custom';
     if (topologyName.startsWith('mesh')) return 'mesh';
     if (topologyName.startsWith('ring')) return 'ring';
     if (topologyName.startsWith('tree')) return 'tree';
@@ -131,12 +141,93 @@ function topologyLabel(topologyName) {
     return topologyName;
 }
 
+function parseCustomEdges(rawEdges, roomCount) {
+    const edges = rawEdges
+        .split(/[\n,;]+/)
+        .map(part => part.trim())
+        .filter(Boolean)
+        .map(part => {
+            const match = part.match(/^(\d+)\s*(?:-|->|:)\s*(\d+)$/);
+            if (!match) {
+                throw new Error(`Invalid corridor "${part}". Use pairs like 0-1.`);
+            }
+            const source = Number(match[1]);
+            const target = Number(match[2]);
+            if (source === target) {
+                throw new Error(`Room ${source} cannot connect to itself.`);
+            }
+            if (source < 0 || target < 0 || source >= roomCount || target >= roomCount) {
+                throw new Error(`Corridor ${source}-${target} is outside the 0-${roomCount - 1} range.`);
+            }
+            return { source, target };
+        });
+
+    const seen = new Set();
+    return edges.filter(edge => {
+        const key = [edge.source, edge.target].sort((a, b) => a - b).join('-');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function parseCustomCoordinates(rawCoordinates, roomCount) {
+    const coordinates = new Map();
+    rawCoordinates
+        .split(/\n+/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .forEach(line => {
+            const match = line.match(/^(\d+)\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+            if (!match) {
+                throw new Error(`Invalid coordinate "${line}". Use id:x,z, for example 0:0,0.`);
+            }
+            const id = Number(match[1]);
+            if (id < 0 || id >= roomCount) {
+                throw new Error(`Coordinate room ${id} is outside the 0-${roomCount - 1} range.`);
+            }
+            coordinates.set(id, { x: Number(match[2]), z: Number(match[3]) });
+        });
+    return coordinates;
+}
+
+function assertConnected(roomCount, edges) {
+    if (roomCount <= 1) return;
+    const adjacency = Array.from({ length: roomCount }, () => []);
+    edges.forEach(({ source, target }) => {
+        adjacency[source].push(target);
+        adjacency[target].push(source);
+    });
+
+    const visited = new Set([0]);
+    const queue = [0];
+    while (queue.length > 0) {
+        const room = queue.shift();
+        adjacency[room].forEach(next => {
+            if (!visited.has(next)) {
+                visited.add(next);
+                queue.push(next);
+            }
+        });
+    }
+
+    if (visited.size !== roomCount) {
+        throw new Error(`The custom room graph must be connected. ${roomCount - visited.size} room(s) are isolated.`);
+    }
+}
+
 function ConfigForm({ onRun, loading, hasSimulation = false }) {
     const [config, setConfig] = useState(DEFAULTS);
     const [topologies, setTopologies] = useState([]);
     const [expanded, setExpanded] = useState(true);
     const [rtlolaEditorOpen, setRtlolaEditorOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('configuration');
+    const [customBuilderOpen, setCustomBuilderOpen] = useState(false);
+    const [customRoomCount, setCustomRoomCount] = useState(4);
+    const [customEdgesText, setCustomEdgesText] = useState(DEFAULT_CUSTOM_ROOM_TEXT);
+    const [customCoordinatesText, setCustomCoordinatesText] = useState(DEFAULT_CUSTOM_COORDS_TEXT);
+    const [customBuilderError, setCustomBuilderError] = useState('');
+    const [customLayoutPreset, setCustomLayoutPreset] = useState('');
 
     useEffect(() => {
         axios.get(`${API_BASE}/topologies`)
@@ -149,6 +240,11 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     }, [hasSimulation]);
 
     const handleChange = (field, value) => {
+        if (field === 'N_ROOMS' && value === CUSTOM_ROOM_VALUE) {
+            setCustomBuilderOpen(true);
+            return;
+        }
+
         const newConfig = { ...config, [field]: value };
 
         // Auto-update topology when N_ROOMS changes
@@ -158,10 +254,51 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                 // Pick the first mesh topology if available
                 const meshTopo = validTopologies.find(t => t.startsWith('mesh'));
                 newConfig.TOPOLOGY_NAME = meshTopo || validTopologies[0];
+                delete newConfig.CUSTOM_TOPOLOGY;
+                delete newConfig.CUSTOM_TOPOLOGY_NAME;
             }
         }
 
         setConfig(newConfig);
+    };
+
+    const saveCustomTopology = () => {
+        try {
+            const roomCount = Number(customRoomCount);
+            if (!Number.isInteger(roomCount) || roomCount < 2) {
+                throw new Error('Use at least 2 rooms for a custom topology.');
+            }
+
+            const edges = parseCustomEdges(customEdgesText, roomCount);
+            if (edges.length === 0) {
+                throw new Error('Add at least one corridor.');
+            }
+            assertConnected(roomCount, edges);
+
+            const coordinates = customLayoutPreset ? new Map() : parseCustomCoordinates(customCoordinatesText, roomCount);
+            const nodes = Array.from({ length: roomCount }, (_, id) => {
+                const coordinate = coordinates.get(id);
+                return coordinate
+                    ? { id, label: `Room ${id}`, x: coordinate.x, z: coordinate.z }
+                    : { id, label: `Room ${id}` };
+            });
+
+            setConfig(prev => ({
+                ...prev,
+                N_ROOMS: roomCount,
+                TOPOLOGY_NAME: CUSTOM_ROOM_VALUE,
+                CUSTOM_TOPOLOGY_NAME: customLayoutPreset === 'GUH73' ? 'Custom Ghent' : `Custom ${roomCount}`,
+                CUSTOM_TOPOLOGY: {
+                    nodes,
+                    edges,
+                    layoutPreset: customLayoutPreset || undefined,
+                },
+            }));
+            setCustomBuilderOpen(false);
+            setCustomBuilderError('');
+        } catch (err) {
+            setCustomBuilderError(err.message);
+        }
     };
 
     const handlePhaseChange = (index, field, value) => {
@@ -220,6 +357,11 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
             ...config,
             PHASES: sanitizePhases(config.PHASES),
         };
+        if (configToRun.TOPOLOGY_NAME === CUSTOM_ROOM_VALUE && !configToRun.CUSTOM_TOPOLOGY) {
+            setCustomBuilderOpen(true);
+            setCustomBuilderError('Create the custom topology before running the simulation.');
+            return;
+        }
         // If dynamic-adaptation is selected, open RTLola editor first
         if (configToRun.ARCHITECTURE === 'dynamic-adaptation') {
             setRtlolaEditorOpen(true);
@@ -245,14 +387,17 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     };
 
     // Get valid topologies for current N_ROOMS
-    const validTopologies = TOPOLOGY_MAP[config.N_ROOMS] || [];
-    const availableTopologies =
-        topologies.length > 0
+    const validTopologies = useMemo(() => TOPOLOGY_MAP[config.N_ROOMS] || [], [config.N_ROOMS]);
+    const availableTopologies = useMemo(() => (
+        config.TOPOLOGY_NAME === CUSTOM_ROOM_VALUE
+            ? [CUSTOM_ROOM_VALUE]
+            : topologies.length > 0
             ? topologies.filter(t => validTopologies.includes(t))
-            : validTopologies;
+            : validTopologies
+    ), [config.TOPOLOGY_NAME, topologies, validTopologies]);
 
     useEffect(() => {
-        if (availableTopologies.length > 0 && !availableTopologies.includes(config.TOPOLOGY_NAME)) {
+        if (config.TOPOLOGY_NAME !== CUSTOM_ROOM_VALUE && availableTopologies.length > 0 && !availableTopologies.includes(config.TOPOLOGY_NAME)) {
             setConfig(prev => ({ ...prev, TOPOLOGY_NAME: availableTopologies[0] }));
         }
     }, [availableTopologies, config.TOPOLOGY_NAME]);
@@ -337,13 +482,19 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             </Box>
                         </InputLabel>
                         <Select
-                            value={config.N_ROOMS}
+                            value={config.TOPOLOGY_NAME === CUSTOM_ROOM_VALUE ? CUSTOM_ROOM_VALUE : config.N_ROOMS}
                             label="Number of Rooms"
-                            onChange={(e) => handleChange('N_ROOMS', parseInt(e.target.value))}
+                            onChange={(e) => {
+                                const value = e.target.value;
+                                handleChange('N_ROOMS', value === CUSTOM_ROOM_VALUE ? value : parseInt(value, 10));
+                            }}
                         >
                             {Object.keys(TOPOLOGY_MAP).map(n => (
                                 <MenuItem key={n} value={parseInt(n)}>{n} rooms</MenuItem>
                             ))}
+                            <MenuItem value={CUSTOM_ROOM_VALUE}>
+                                Custom...
+                            </MenuItem>
                         </Select>
                     </FormControl>
 
@@ -372,10 +523,29 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             onChange={(e) => handleChange('TOPOLOGY_NAME', e.target.value)}
                         >
                             {availableTopologies.map(t => (
-                                <MenuItem key={t} value={t}>{topologyLabel(t)}</MenuItem>
+                                <MenuItem key={t} value={t}>
+                                    {t === CUSTOM_ROOM_VALUE
+                                        ? (config.CUSTOM_TOPOLOGY_NAME || `Custom (${config.N_ROOMS} rooms)`)
+                                        : topologyLabel(t)}
+                                </MenuItem>
                             ))}
                         </Select>
                     </FormControl>
+
+                    {config.TOPOLOGY_NAME === CUSTOM_ROOM_VALUE && (
+                        <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={() => setCustomBuilderOpen(true)}
+                            sx={{
+                                color: '#fff',
+                                borderColor: 'rgba(255,255,255,0.25)',
+                                '&:hover': { borderColor: 'rgba(255,255,255,0.45)' }
+                            }}
+                        >
+                            Edit Custom Rooms
+                        </Button>
+                    )}
 
                     <FormControl fullWidth size="small" sx={{
                         '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
@@ -923,6 +1093,67 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                     </Box>
                 </Box>
             </Collapse>
+
+            <Dialog
+                open={customBuilderOpen}
+                onClose={() => setCustomBuilderOpen(false)}
+                fullWidth
+                maxWidth="md"
+            >
+                <DialogTitle>Create Custom Room Topology</DialogTitle>
+                <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+                    <Typography variant="body2" color="text.secondary">
+                        Define rooms as a connected graph. Corridors use room pairs such as 0-1, 1-2. Optional coordinates control the visual shape.
+                    </Typography>
+
+                    {customBuilderError && (
+                        <Alert severity="error">{customBuilderError}</Alert>
+                    )}
+
+                    <TextField
+                        label="Rooms"
+                        type="number"
+                        size="small"
+                        value={customRoomCount}
+                        onChange={(e) => {
+                            setCustomRoomCount(parseInt(e.target.value || '0', 10));
+                            setCustomLayoutPreset('');
+                        }}
+                        inputProps={{ min: 2, step: 1 }}
+                    />
+
+                    <TextField
+                        label="Corridors"
+                        value={customEdgesText}
+                        onChange={(e) => {
+                            setCustomEdgesText(e.target.value);
+                            setCustomLayoutPreset('');
+                        }}
+                        multiline
+                        minRows={4}
+                        helperText="Accepted separators: comma, semicolon, or new line. Example: 0-1, 1-2, 2-3."
+                    />
+
+                    <TextField
+                        label="Visual coordinates (optional)"
+                        value={customCoordinatesText}
+                        onChange={(e) => {
+                            setCustomCoordinatesText(e.target.value);
+                            setCustomLayoutPreset('');
+                        }}
+                        multiline
+                        minRows={4}
+                        disabled={customLayoutPreset === 'GUH73'}
+                        helperText={customLayoutPreset === 'GUH73'
+                            ? 'The Ghent template uses the existing GUH73 visual layout.'
+                            : 'One room per line as id:x,z. Rooms without coordinates fall back to automatic placement.'}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setCustomBuilderOpen(false)}>Cancel</Button>
+                    <Button variant="contained" onClick={saveCustomTopology}>Use Custom Rooms</Button>
+                </DialogActions>
+            </Dialog>
 
             {/* RTLola Editor Modal */}
             <RTLolaEditor
