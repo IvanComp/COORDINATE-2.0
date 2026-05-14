@@ -53,6 +53,76 @@ export function calculateRoomPositions(topology, topologyName) {
                 };
             });
         });
+    } else if (topologyName.startsWith('line')) {
+        // Single corridor layout for line topologies
+        const spacing = 7;
+        const midpoint = (numRooms - 1) / 2;
+
+        topology.nodes.forEach((node, idx) => {
+            positions[node.id] = {
+                x: (idx - midpoint) * spacing,
+                y: 0,
+                z: 0
+            };
+        });
+    } else if (topologyName.startsWith('star')) {
+        // Central room with all other rooms around it
+        const radius = Math.max(10, numRooms * 1.1);
+
+        topology.nodes.forEach((node, idx) => {
+            if (idx === 0) {
+                positions[node.id] = { x: 0, y: 0, z: 0 };
+                return;
+            }
+
+            const angle = ((idx - 1) / (numRooms - 1)) * Math.PI * 2;
+            positions[node.id] = {
+                x: Math.cos(angle) * radius,
+                y: 0,
+                z: Math.sin(angle) * radius
+            };
+        });
+    } else if (topologyName.startsWith('fully_connected')) {
+        // Circular layout keeps the dense complete graph readable
+        const radius = Math.max(10, numRooms * 1.2);
+
+        topology.nodes.forEach((node, idx) => {
+            const angle = (idx / numRooms) * Math.PI * 2;
+            positions[node.id] = {
+                x: Math.cos(angle) * radius,
+                y: 0,
+                z: Math.sin(angle) * radius
+            };
+        });
+    } else if (topologyName.startsWith('bus')) {
+        // Central corridor with rooms branching on both sides
+        const corridorLength = Math.max(2, Math.floor(Math.sqrt(numRooms)));
+        const corridorSpacing = 8;
+        const sideSpacing = 7;
+        const midpoint = (corridorLength - 1) / 2;
+
+        topology.nodes.forEach((node, idx) => {
+            if (idx < corridorLength) {
+                positions[node.id] = {
+                    x: (idx - midpoint) * corridorSpacing,
+                    y: 0,
+                    z: 0
+                };
+                return;
+            }
+
+            const offset = idx - corridorLength;
+            const corridorIdx = offset % corridorLength;
+            const branchIdx = Math.floor(offset / corridorLength);
+            const side = branchIdx % 2 === 0 ? -1 : 1;
+            const depth = Math.floor(branchIdx / 2) + 1;
+
+            positions[node.id] = {
+                x: (corridorIdx - midpoint) * corridorSpacing,
+                y: 0,
+                z: side * depth * sideSpacing
+            };
+        });
     } else {
         // Default: force-directed-like layout (simplified)
         // Just use a grid as fallback

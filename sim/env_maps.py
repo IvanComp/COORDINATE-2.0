@@ -1,7 +1,59 @@
 
 # env_maps.py
-# Topology templates aligned with COORDINATE (mesh/ring/tree for 4..49 rooms) + GUH73 real layout.
+# Topology templates aligned with COORDINATE (mesh/ring/tree/line/star/fully_connected/bus for 4..49 rooms) + GUH73 real layout.
 # This file exposes: topologyName_dict = {...}
+
+TOPOLOGY_SIZES = (4, 9, 16, 25, 36, 49)
+
+
+def _empty_topology(n_rooms):
+    return {idx: [] for idx in range(n_rooms)}
+
+
+def _add_edge(topology, src, dst):
+    if dst not in topology[src]:
+        topology[src].append(dst)
+    if src not in topology[dst]:
+        topology[dst].append(src)
+
+
+def _sorted_topology(topology):
+    return {idx: sorted(adjacents) for idx, adjacents in topology.items()}
+
+
+def _build_line_topology(n_rooms):
+    topology = _empty_topology(n_rooms)
+    for idx in range(n_rooms - 1):
+        _add_edge(topology, idx, idx + 1)
+    return _sorted_topology(topology)
+
+
+def _build_star_topology(n_rooms):
+    topology = _empty_topology(n_rooms)
+    for idx in range(1, n_rooms):
+        _add_edge(topology, 0, idx)
+    return _sorted_topology(topology)
+
+
+def _build_fully_connected_topology(n_rooms):
+    return {
+        idx: [other for other in range(n_rooms) if other != idx]
+        for idx in range(n_rooms)
+    }
+
+
+def _build_bus_topology(n_rooms):
+    topology = _empty_topology(n_rooms)
+    corridor_len = max(2, int(n_rooms ** 0.5))
+
+    for idx in range(corridor_len - 1):
+        _add_edge(topology, idx, idx + 1)
+
+    for room_idx in range(corridor_len, n_rooms):
+        corridor_idx = (room_idx - corridor_len) % corridor_len
+        _add_edge(topology, corridor_idx, room_idx)
+
+    return _sorted_topology(topology)
 
 ###############
 ### 4 rooms ###
@@ -578,12 +630,43 @@ ghent73 = {
     72: [71],
 }
 
+_generated_topologies = {}
+for _size in TOPOLOGY_SIZES:
+    _generated_topologies[f'line{_size}'] = _build_line_topology(_size)
+    _generated_topologies[f'star{_size}'] = _build_star_topology(_size)
+    _generated_topologies[f'fully_connected{_size}'] = _build_fully_connected_topology(_size)
+    _generated_topologies[f'bus{_size}'] = _build_bus_topology(_size)
+
 topologyName_dict = {
     'mesh4': mesh4, 'ring4': ring4, 'tree4': tree4,
+    'line4': _generated_topologies['line4'],
+    'star4': _generated_topologies['star4'],
+    'fully_connected4': _generated_topologies['fully_connected4'],
+    'bus4': _generated_topologies['bus4'],
     'mesh9': mesh9, 'ring9': ring9, 'tree9': tree9,
+    'line9': _generated_topologies['line9'],
+    'star9': _generated_topologies['star9'],
+    'fully_connected9': _generated_topologies['fully_connected9'],
+    'bus9': _generated_topologies['bus9'],
     'mesh16': mesh16, 'ring16': ring16, 'tree16': tree16,
+    'line16': _generated_topologies['line16'],
+    'star16': _generated_topologies['star16'],
+    'fully_connected16': _generated_topologies['fully_connected16'],
+    'bus16': _generated_topologies['bus16'],
     'mesh25': mesh25, 'ring25': ring25, 'tree25': tree25,
+    'line25': _generated_topologies['line25'],
+    'star25': _generated_topologies['star25'],
+    'fully_connected25': _generated_topologies['fully_connected25'],
+    'bus25': _generated_topologies['bus25'],
     'mesh36': mesh36, 'ring36': ring36, 'tree36': tree36,
+    'line36': _generated_topologies['line36'],
+    'star36': _generated_topologies['star36'],
+    'fully_connected36': _generated_topologies['fully_connected36'],
+    'bus36': _generated_topologies['bus36'],
     'mesh49': mesh49, 'ring49': ring49, 'tree49': tree49,
+    'line49': _generated_topologies['line49'],
+    'star49': _generated_topologies['star49'],
+    'fully_connected49': _generated_topologies['fully_connected49'],
+    'bus49': _generated_topologies['bus49'],
     'GUH73': ghent73,
 }

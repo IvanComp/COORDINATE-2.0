@@ -96,11 +96,13 @@ def getTargetRoom(cfg: Cfg, rooms):
     return rooms[idx]
 
 def _resolve_topology_name(cfg: Cfg) -> str:
-    """Support both full topology names (mesh25) and shorthand (mesh/ring/tree)."""
+    """Support both full topology names (mesh25) and shorthand (mesh/ring/tree/etc.)."""
     name = cfg.TOPOLOGY_NAME
     if name in topologyName_dict:
         return name
-    if name in ['mesh', 'ring', 'tree']:
+    if name in ['mesh', 'ring', 'tree', 'line', 'star', 'fully_connected', 'fullyconnected', 'bus']:
+        if name == 'fullyconnected':
+            name = 'fully_connected'
         candidate = f'{name}{cfg.N_ROOMS}'
         if candidate in topologyName_dict:
             return candidate

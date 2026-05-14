@@ -118,7 +118,9 @@ def get_topologies():
 
 @app.route('/api/topology/<name>', methods=['GET'])
 def get_topology(name):
-    if name not in topologyName_dict and name in ['mesh', 'ring', 'tree']:
+    if name not in topologyName_dict and name in ['mesh', 'ring', 'tree', 'line', 'star', 'fully_connected', 'fullyconnected', 'bus']:
+        if name == 'fullyconnected':
+            name = 'fully_connected'
         n_rooms = request.args.get('n_rooms', type=int)
         if n_rooms is not None:
             candidate = f'{name}{n_rooms}'

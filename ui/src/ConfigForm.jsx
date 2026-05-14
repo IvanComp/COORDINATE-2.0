@@ -100,12 +100,12 @@ const DISTRIBUTION_OPTIONS = [
 
 // Map N_ROOMS to appropriate topology
 const TOPOLOGY_MAP = {
-    4: ['mesh4', 'ring4', 'tree4'],
-    9: ['mesh9', 'ring9', 'tree9'],
-    16: ['mesh16', 'ring16', 'tree16'],
-    25: ['mesh25', 'ring25', 'tree25'],
-    36: ['mesh36', 'ring36', 'tree36'],
-    49: ['mesh49', 'ring49', 'tree49'],
+    4: ['mesh4', 'ring4', 'tree4', 'line4', 'star4', 'fully_connected4', 'bus4'],
+    9: ['mesh9', 'ring9', 'tree9', 'line9', 'star9', 'fully_connected9', 'bus9'],
+    16: ['mesh16', 'ring16', 'tree16', 'line16', 'star16', 'fully_connected16', 'bus16'],
+    25: ['mesh25', 'ring25', 'tree25', 'line25', 'star25', 'fully_connected25', 'bus25'],
+    36: ['mesh36', 'ring36', 'tree36', 'line36', 'star36', 'fully_connected36', 'bus36'],
+    49: ['mesh49', 'ring49', 'tree49', 'line49', 'star49', 'fully_connected49', 'bus49'],
     73: ['GUH73']
 };
 
@@ -124,6 +124,10 @@ function topologyLabel(topologyName) {
     if (topologyName.startsWith('mesh')) return 'mesh';
     if (topologyName.startsWith('ring')) return 'ring';
     if (topologyName.startsWith('tree')) return 'tree';
+    if (topologyName.startsWith('line')) return 'line';
+    if (topologyName.startsWith('star')) return 'star';
+    if (topologyName.startsWith('fully_connected')) return 'fully connected';
+    if (topologyName.startsWith('bus')) return 'bus';
     return topologyName;
 }
 
