@@ -6,9 +6,19 @@ derived from the "Self-Adaptive Coordination of Robot Teams via Dynamic Architec
 applied to the Ghent University Hospital topology.
 """
 
+def _cfg_float(cfg, name: str, default: float) -> float:
+    try:
+        return float(getattr(cfg, name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 def select_best_architecture(cfg, latency: float = None) -> tuple:
-    GREEN_THRESHOLD = 10.0
-    YELLOW_THRESHOLD = 40.0
+    green_threshold = _cfg_float(cfg, 'LATENCY_THRESHOLD_LOW', 10.0)
+    yellow_threshold = _cfg_float(cfg, 'LATENCY_THRESHOLD_HIGH', 40.0)
+
+    if yellow_threshold < green_threshold:
+        yellow_threshold = green_threshold
     
     scores = {
         'decentralized': 0.0,
@@ -22,12 +32,12 @@ def select_best_architecture(cfg, latency: float = None) -> tuple:
         return best_arch, scores
 
     # Determine zone
-    if latency < GREEN_THRESHOLD:
+    if latency < green_threshold:
         # Green Zone
         scores['centralized-impprox'] = 100.0
         scores['semi-decentralized'] = 60.0
         scores['decentralized'] = 20.0
-    elif latency < YELLOW_THRESHOLD:
+    elif latency < yellow_threshold:
         # Yellow Zone
         scores['centralized-impprox'] = 40.0
         scores['semi-decentralized'] = 100.0

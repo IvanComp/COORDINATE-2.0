@@ -210,10 +210,8 @@ class RTLolaMonitor:
         
         try:
             self.proc.stdin.write(line)
-            
+            self.proc.stdin.flush()
             self.event_counter += 1
-            if self.event_counter % 1000 == 0:
-                self.proc.stdin.flush()
                 
         except Exception as e:
             print(f"[RTLola] Error sending event: {e}")
@@ -224,26 +222,36 @@ class RTLolaMonitor:
         
         Args:
             metric_name: Name of the metric to extract
-            timeout: Ignored in this optimized version (returns immediately)
+            timeout: Optional time to wait for the metric to appear.
         
         Returns:
             Metric value as float, or None if not found yet
         """
-        with self.metrics_lock:
-            return self.latest_metrics.get(metric_name)
+        deadline = time.time() + max(0.0, timeout)
+        while True:
+            with self.metrics_lock:
+                value = self.latest_metrics.get(metric_name)
+            if value is not None or time.time() >= deadline:
+                return value
+            time.sleep(0.001)
     
     def get_all_metrics(self, timeout: float = 0.0) -> Dict[str, float]:
         """
         Get all available metrics.
         
         Args:
-            timeout: Ignored in this optimized version
+            timeout: Optional time to wait for at least one metric.
         
         Returns:
             Dictionary of metric_name -> value
         """
-        with self.metrics_lock:
-            return self.latest_metrics.copy()
+        deadline = time.time() + max(0.0, timeout)
+        while True:
+            with self.metrics_lock:
+                metrics = self.latest_metrics.copy()
+            if metrics or time.time() >= deadline:
+                return metrics
+            time.sleep(0.001)
     
     def is_running(self) -> bool:
         """Check if RTLola process is still running."""

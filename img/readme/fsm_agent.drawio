@@ -1,0 +1,155 @@
+<mxfile host="app.diagrams.net" modified="2026-05-17T00:00:00.000Z" agent="Codex" version="27.0.5" type="device">
+  <diagram id="fsm-agent-updated" name="Agent FSM">
+    <mxGraphModel dx="1200" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="950" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="Agent Finite State Machine" style="text;html=1;strokeColor=none;fillColor=none;fontSize=24;fontStyle=1;fontColor=#1F2937;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="820" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="start" value="" style="ellipse;html=1;shape=ellipse;fillColor=#111827;strokeColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="80" y="180" width="26" height="26" as="geometry"/>
+        </mxCell>
+        <mxCell id="idle" value="Idle" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#E0F2FE;strokeColor=#0284C7;strokeWidth=2;fontSize=16;fontStyle=1;fontColor=#0C4A6E;" vertex="1" parent="1">
+          <mxGeometry x="200" y="150" width="145" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="carrying" value="Carrying" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontSize=16;fontStyle=1;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="465" y="150" width="145" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="rescuing" value="Rescuing" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#F3E8FF;strokeColor=#9333EA;strokeWidth=2;fontSize=16;fontStyle=1;fontColor=#581C87;" vertex="1" parent="1">
+          <mxGeometry x="465" y="410" width="145" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="returning" value="Returning" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontSize=16;fontStyle=1;fontColor=#1E3A8A;" vertex="1" parent="1">
+          <mxGeometry x="200" y="410" width="145" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="failed" value="Failed" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#FEE2E2;strokeColor=#DC2626;strokeWidth=2;fontSize=16;fontStyle=1;fontColor=#7F1D1D;" vertex="1" parent="1">
+          <mxGeometry x="330" y="670" width="145" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="note" value="Labels are CSV events. Conditions are in brackets. fakeFailure is a logged malicious event that does not change the agent state. A carrying failure may also log drop and help, depending on enabled LOG flags." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F9FAFB;strokeColor=#9CA3AF;fontSize=12;fontColor=#374151;align=left;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="160" y="805" width="580" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="eStartIdle" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="start" target="idle">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eIdleCarrying" value="startLoading" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="idle" target="carrying">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eCarryingLoop" value="move" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=13;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="carrying" target="carrying">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="660" y="105"/>
+              <mxPoint x="505" y="105"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eCarryingIdle" value="deliver" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#16A34A;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="carrying" target="idle">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="538" y="280"/>
+              <mxPoint x="273" y="280"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eCarryingReturning" value="drop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#D97706;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="carrying" target="returning">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="720" y="190"/>
+              <mxPoint x="720" y="450"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eIdleRescuing" value="rescue" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#9333EA;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="idle" target="rescuing">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eCarryingRescuing" value="rescue" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#9333EA;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="carrying" target="rescuing">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eRescuingLoop" value="move" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=13;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="rescuing" target="rescuing">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="675" y="535"/>
+              <mxPoint x="505" y="535"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eRescuingCarrying" value="startLoading" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="rescuing" target="carrying">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eRescuingReturning" value="move [no task]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="rescuing" target="returning">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eReturningLoop" value="move" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=13;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="returning" target="returning">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="150" y="535"/>
+              <mxPoint x="305" y="535"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eReturningCarrying" value="startLoading" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="returning" target="carrying">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eReturningIdle" value="move [at source]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="returning" target="idle">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eIdleFailed" value="fail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#DC2626;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="idle" target="failed">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="60" y="190"/>
+              <mxPoint x="60" y="710"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eCarryingFailed" value="fail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#DC2626;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="carrying" target="failed">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eRescuingFailed" value="fail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#DC2626;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="rescuing" target="failed">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eReturningFailed" value="fail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#DC2626;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="returning" target="failed">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eFailedIdle" value="recover" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=13;strokeColor=#16A34A;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="failed" target="idle">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="760" y="710"/>
+              <mxPoint x="760" y="190"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eIdleFake" value="fakeFailure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=13;strokeColor=#7C3AED;strokeWidth=2;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="idle" target="idle">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="215" y="105"/>
+              <mxPoint x="330" y="105"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eCarryingFake" value="fakeFailure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=13;strokeColor=#7C3AED;strokeWidth=2;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="carrying" target="carrying">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="75"/>
+              <mxPoint x="485" y="75"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eReturningFake" value="fakeFailure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=13;strokeColor=#7C3AED;strokeWidth=2;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="returning" target="returning">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="125" y="500"/>
+              <mxPoint x="290" y="500"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="eRescuingFake" value="fakeFailure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=13;strokeColor=#7C3AED;strokeWidth=2;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="rescuing" target="rescuing">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="700" y="500"/>
+              <mxPoint x="530" y="500"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

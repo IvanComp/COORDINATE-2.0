@@ -44,8 +44,8 @@ Example configuration:
 | `RTLOLA_BINARY_PATH` | `~/.cargo/bin/rtlola-cli` | Path to RTLola CLI |
 | `RTLOLA_SPEC_FILE` | `spec2.rtlola` | RTLola specification file |
 | `ADAPTATION_CHECK_INTERVAL` | `300.0` | Check metrics every N seconds |
-| `LATENCY_THRESHOLD_LOW` | `100.0` | Switch to centralized if latency < this |
-| `LATENCY_THRESHOLD_HIGH` | `300.0` | Switch to decentralized if latency > this |
+| `LATENCY_THRESHOLD_LOW` | `10.0` | Switch to centralized if latency < this |
+| `LATENCY_THRESHOLD_HIGH` | `40.0` | Switch to decentralized if latency > this |
 
 ### Architecture Switching Logic
 

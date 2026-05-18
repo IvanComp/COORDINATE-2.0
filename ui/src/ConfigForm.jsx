@@ -44,6 +44,10 @@ const DEFAULTS = {
     N_ROBOTS: 20,
     N_MALICIOUS: 0,
     MALICIOUS_FAKE_FAILURES: false,
+    INITIAL_ARCHITECTURE: "semi-decentralized",
+    ADAPTATION_CHECK_INTERVAL: 300.0,
+    LATENCY_THRESHOLD_LOW: 10.0,
+    LATENCY_THRESHOLD_HIGH: 40.0,
     FIND_ROUTE_STRATEGY: "breadth",
     N_REPETITIONS: 1,
     FAIL_PROB: 0.05,
@@ -72,12 +76,17 @@ const FIELD_METADATA = {
     N_ROOMS: { label: "Number of Rooms", description: "Total number of rooms in the hospital layout." },
     TOPOLOGY_NAME: { label: "Topology", description: "The physical layout of the hospital floor." },
     ARCHITECTURE: { label: "Coordination Mechanism", description: "The strategy agents use to coordinate tasks." },
+    INITIAL_ARCHITECTURE: { label: "Initial Architecture", description: "Coordination mechanism used at the beginning of a dynamic-adaptation run." },
+    ADAPTATION_CHECK_INTERVAL: { label: "Adaptation Check Interval", description: "Simulation-time interval, in seconds, between two dynamic-adaptation checks." },
+    LATENCY_THRESHOLD_LOW: { label: "Low Latency Threshold", description: "Below this latency, dynamic adaptation prefers centralized-impprox." },
+    LATENCY_THRESHOLD_HIGH: { label: "High Latency Threshold", description: "Above this latency, dynamic adaptation prefers decentralized coordination." },
     N_ROBOTS: { label: "Number of Agents", description: "Total number of agents in the fleet." },
     N_MALICIOUS: { label: "Number of Malicious Agent", description: "Number of agents that may fail or act maliciously." },
     SIM_TIME: { label: "Simulation Window (s)", description: "Duration of the simulation in seconds." },
     N_REPETITIONS: { label: "N° Repetitions", description: "Number of independent simulation runs used to compute the final average CSV." },
     FAIL_PROB: { label: "Failure Probability", description: "Probability of an agent failing during operation (0-1)." },
     ITEM_SPAWNING_TIME: { label: "Item Spawning Time", description: "Average time (in seconds) between new item requests." },
+    IMPORTANCE_PROBABILITIES: { label: "Item Importance Probabilities", description: "Spawn probability, as a percentage, for Low, Medium, and High priority items." },
     ITEM_SPAWNING_DISTR: { label: "Event Arrival Distribution", description: "Distribution used to generate new item requests over time." },
     LOAD_TIME: { label: "Load Time", description: "Average time to load an item." },
     MOVEMENT_TIME: { label: "Movement Time", description: "Average time to move between adjacent rooms." },
@@ -101,6 +110,12 @@ const DISTRIBUTION_OPTIONS = [
     { value: 'exponential', label: 'Exponential' },
     { value: 'uniform', label: 'Uniform' },
     { value: 'deterministic', label: 'Deterministic' },
+];
+
+const ITEM_IMPORTANCE_LEVELS = [
+    { label: 'Low', color: '#4CAF50' },
+    { label: 'Medium', color: '#FFC107' },
+    { label: 'High', color: '#FF5722' },
 ];
 
 const CUSTOM_ROOM_VALUE = 'custom';
@@ -337,6 +352,34 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
         }));
     };
 
+    const sanitizeImportanceProbabilities = (probabilities) => {
+        const values = (probabilities || DEFAULTS.IMPORTANCE_PROBABILITIES)
+            .slice(0, 3)
+            .map(value => {
+                const numeric = Number(value);
+                return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+            });
+        while (values.length < 3) values.push(0);
+
+        const total = values.reduce((sum, value) => sum + value, 0);
+        if (total <= 0) {
+            return DEFAULTS.IMPORTANCE_PROBABILITIES;
+        }
+
+        return values.map(value => value / total);
+    };
+
+    const handleImportanceProbabilityChange = (index, percentValue) => {
+        const percent = Number(percentValue);
+        const probability = Number.isFinite(percent) ? Math.max(0, percent) / 100 : 0;
+        setConfig(prev => {
+            const next = [...(prev.IMPORTANCE_PROBABILITIES || DEFAULTS.IMPORTANCE_PROBABILITIES)];
+            while (next.length < 3) next.push(0);
+            next[index] = probability;
+            return { ...prev, IMPORTANCE_PROBABILITIES: next };
+        });
+    };
+
     const sanitizePhases = (phases) => phases
         .map(phase => ({
             start: Number(phase.start),
@@ -356,6 +399,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
         const configToRun = {
             ...config,
             PHASES: sanitizePhases(config.PHASES),
+            IMPORTANCE_PROBABILITIES: sanitizeImportanceProbabilities(config.IMPORTANCE_PROBABILITIES),
         };
         if (configToRun.TOPOLOGY_NAME === CUSTOM_ROOM_VALUE && !configToRun.CUSTOM_TOPOLOGY) {
             setCustomBuilderOpen(true);
@@ -377,6 +421,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
         const configWithSpec = {
             ...config,
             PHASES: sanitizePhases(config.PHASES),
+            IMPORTANCE_PROBABILITIES: sanitizeImportanceProbabilities(config.IMPORTANCE_PROBABILITIES),
             RTLOLA_SPEC_FILE: specFile
         };
         onRun(configWithSpec);
@@ -401,6 +446,12 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
             setConfig(prev => ({ ...prev, TOPOLOGY_NAME: availableTopologies[0] }));
         }
     }, [availableTopologies, config.TOPOLOGY_NAME]);
+
+    const importancePercentages = (config.IMPORTANCE_PROBABILITIES || DEFAULTS.IMPORTANCE_PROBABILITIES)
+        .slice(0, 3)
+        .map(value => Number(((Number(value) || 0) * 100).toFixed(2)));
+    while (importancePercentages.length < 3) importancePercentages.push(0);
+    const importanceTotal = importancePercentages.reduce((sum, value) => sum + value, 0);
 
     return (
         <Paper
@@ -581,6 +632,121 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             ))}
                         </Select>
                     </FormControl>
+
+                    {config.ARCHITECTURE === 'dynamic-adaptation' && (
+                        <>
+                            <FormControl fullWidth size="small" sx={{
+                                '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                '& .MuiOutlinedInput-root': {
+                                    color: '#fff',
+                                    '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                    '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                    '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                },
+                                '& .MuiSelect-icon': { color: 'rgba(255,255,255,0.7)' }
+                            }}>
+                                <InputLabel>
+                                    <Box display="flex" alignItems="center" gap={0.5}>
+                                        Initial Architecture
+                                        <Box component="span" title={FIELD_METADATA.INITIAL_ARCHITECTURE.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                            <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                        </Box>
+                                    </Box>
+                                </InputLabel>
+                                <Select
+                                    value={config.INITIAL_ARCHITECTURE}
+                                    label="Initial Architecture"
+                                    onChange={(e) => handleChange('INITIAL_ARCHITECTURE', e.target.value)}
+                                >
+                                    {ARCHITECTURES.filter(a => a !== 'dynamic-adaptation').map(a => (
+                                        <MenuItem key={a} value={a}>{a}</MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+
+                            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 1 }}>
+                                <TextField
+                                    label="Adapt Check (s)"
+                                    type="number"
+                                    size="small"
+                                    value={config.ADAPTATION_CHECK_INTERVAL}
+                                    onChange={(e) => handleChange('ADAPTATION_CHECK_INTERVAL', parseFloat(e.target.value))}
+                                    InputProps={{
+                                        endAdornment: (
+                                            <InputAdornment position="end">
+                                                <Box component="span" title={FIELD_METADATA.ADAPTATION_CHECK_INTERVAL.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                    <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                                </Box>
+                                            </InputAdornment>
+                                        )
+                                    }}
+                                    sx={{
+                                        '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                        '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                        '& .MuiOutlinedInput-root': {
+                                            color: '#fff',
+                                            '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                            '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                            '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                        }
+                                    }}
+                                />
+                                <TextField
+                                    label="Low Latency"
+                                    type="number"
+                                    size="small"
+                                    value={config.LATENCY_THRESHOLD_LOW}
+                                    onChange={(e) => handleChange('LATENCY_THRESHOLD_LOW', parseFloat(e.target.value))}
+                                    InputProps={{
+                                        endAdornment: (
+                                            <InputAdornment position="end">
+                                                <Box component="span" title={FIELD_METADATA.LATENCY_THRESHOLD_LOW.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                    <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                                </Box>
+                                            </InputAdornment>
+                                        )
+                                    }}
+                                    sx={{
+                                        '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                        '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                        '& .MuiOutlinedInput-root': {
+                                            color: '#fff',
+                                            '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                            '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                            '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                        }
+                                    }}
+                                />
+                                <TextField
+                                    label="High Latency"
+                                    type="number"
+                                    size="small"
+                                    value={config.LATENCY_THRESHOLD_HIGH}
+                                    onChange={(e) => handleChange('LATENCY_THRESHOLD_HIGH', parseFloat(e.target.value))}
+                                    InputProps={{
+                                        endAdornment: (
+                                            <InputAdornment position="end">
+                                                <Box component="span" title={FIELD_METADATA.LATENCY_THRESHOLD_HIGH.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                    <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                                </Box>
+                                            </InputAdornment>
+                                        )
+                                    }}
+                                    sx={{
+                                        '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                        '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                        '& .MuiOutlinedInput-root': {
+                                            color: '#fff',
+                                            '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                            '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                            '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                        }
+                                    }}
+                                />
+                            </Box>
+                        </>
+                    )}
 
                     <TextField
                         label="Number of Agents"

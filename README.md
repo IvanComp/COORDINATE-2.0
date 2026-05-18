@@ -108,8 +108,8 @@ The dynamic-adaptation architecture monitors delivery latency in real-time and a
 **Configuration Parameters:**
 - `INITIAL_ARCHITECTURE`: Starting strategy (default: `semi-decentralized`)
 - `ADAPTATION_CHECK_INTERVAL`: How often to check metrics in seconds (default: 300)
-- `LATENCY_THRESHOLD_LOW`: Switch to centralized if below this (default: 100)
-- `LATENCY_THRESHOLD_HIGH`: Switch to decentralized if above this (default: 300)
+- `LATENCY_THRESHOLD_LOW`: Switch to centralized if below this (default: 10)
+- `LATENCY_THRESHOLD_HIGH`: Switch to decentralized if above this (default: 40)
 
 Architecture switches are logged in the CSV output with event type `switch_architecture_{new_arch}`.
 

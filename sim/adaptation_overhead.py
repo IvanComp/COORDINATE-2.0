@@ -52,7 +52,8 @@ def log_overhead_statistics(
         with open(overhead_csv, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=[
                 'sim_time', 'total_overhead_ms', 'rtlola_query_ms',
-                'scoring_ms', 'switched', 'latency'
+                'scoring_ms', 'switched', 'latency', 'latency_source',
+                'current_architecture', 'selected_architecture'
             ])
             writer.writeheader()
             writer.writerows(adaptation_overhead_samples)

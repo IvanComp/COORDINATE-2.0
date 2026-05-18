@@ -237,8 +237,9 @@ function Robot({ id, position, hasItem, itemImportance, isFailed, isRescuing, la
     const rescueTextOpacity = rescueElapsed < 2 ? (1 - rescueElapsed / 2) : 0;
     const rescueTextOffset = rescueElapsed < 2 ? rescueElapsed * 1.5 : 0;
 
+    const rescueHighlight = isRescuing || rescueElapsed < 2;
     // Robot colors: Blue (rescuing), Red (failed), Green (carrying), Gray (idle)
-    const bodyColor = isFailed ? '#F44336' : (isRescuing ? '#2196F3' : (hasItem ? '#4CAF50' : '#9E9E9E'));
+    const bodyColor = isFailed ? '#F44336' : (rescueHighlight ? '#2196F3' : (hasItem ? '#4CAF50' : '#9E9E9E'));
 
     return (
         <group ref={groupRef} position={[position.x, 0.5, position.z]}>
@@ -336,7 +337,7 @@ function Robot({ id, position, hasItem, itemImportance, isFailed, isRescuing, la
                         outlineOpacity={rescueTextOpacity}
                         fontWeight="bold"
                     >
-                        Recovered
+                        Rescue!
                     </Text>
                 </Billboard>
             )}
@@ -539,7 +540,7 @@ function Visualizer({ topology, robots, items, topologyName = 'mesh25', logs = [
                                 ...prev,
                                 [robotId]: currentTime
                             }));
-                        } else if (event.event === 'recover' || event.event === 'recovery' || event.event === 'rescue') {
+                        } else if (event.event === 'rescue') {
                             setRobotRescueTimes(prev => ({
                                 ...prev,
                                 [robotId]: currentTime

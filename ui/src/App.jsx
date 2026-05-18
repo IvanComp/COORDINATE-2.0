@@ -217,9 +217,11 @@ function App() {
         // Track robot failure state - stays failed until recovery
         if (evtType === 'fail') {
           robots[robotId].failed = true;
+          robots[robotId].rescuing = false;
         } else if (evtType === 'recovery' || evtType === 'recover') {
           // This is the failed robot being recovered
           robots[robotId].failed = false;
+          robots[robotId].rescuing = false;
         } else if (evtType === 'rescue') {
           // This robot is going to rescue another robot
           robots[robotId].rescuing = true;
@@ -230,10 +232,19 @@ function App() {
           robots[robotId].rescuing = false;
         }
 
-        if (itemId !== -1) {
+        // If the agent reaches the rescue target and there is no task to load,
+        // it leaves the rescue phase and starts returning to the source.
+        if (evtType === 'move' && robots[robotId].rescuing && itemId === -1 && position === destination) {
+          robots[robotId].rescuing = false;
+        }
+
+        if (evtType === 'deliver' || evtType === 'drop' || evtType === 'recovery' || evtType === 'recover') {
+          robots[robotId].item = null;
+          robots[robotId].itemImportance = null;
+        } else if (itemId !== -1) {
           robots[robotId].item = itemId;
           robots[robotId].itemImportance = itemImportance;
-        } else {
+        } else if (evtType === 'move') {
           robots[robotId].item = null;
           robots[robotId].itemImportance = null;
         }

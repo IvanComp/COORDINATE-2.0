@@ -55,6 +55,11 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('TARGETS', -1)
     d.setdefault('MALICIOUS_FAKE_FAILURES', True)
     d.setdefault('FIND_ROUTE_STRATEGY', 'breadth')
+    d.setdefault('INITIAL_ARCHITECTURE', 'semi-decentralized')
+    d.setdefault('ADAPTATION_CHECK_INTERVAL', 300.0)
+    d.setdefault('LATENCY_THRESHOLD_LOW', 10.0)
+    d.setdefault('LATENCY_THRESHOLD_HIGH', 40.0)
+    d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.0)
     # Keep simulator resilient if frontend payload omits optional fields.
     d.setdefault('IMPORTANCE_PROBABILITIES', [0.5, 0.1, 0.4])
     d.setdefault('EXPIRATION_TIME', [-1, -1, -1])
@@ -65,6 +70,23 @@ def _build_cfg(config_path: str) -> Cfg:
     for k in ['LOG_ITEM','LOG_DELIVERY','LOG_LOAD','LOG_DROP','LOG_EXPIRE','LOG_MOVE','LOG_FAIL','LOG_RECOVERY','LOG_HELP','LOG_FAKE','LOG_RESCUE']:
         d.setdefault(k, True if k in ['LOG_ITEM','LOG_DELIVERY','LOG_EXPIRE'] else False)
     return Cfg(d)
+
+
+def _get_rtlola_latency(rtlola_monitor, timeout: float = 0.0):
+    if not rtlola_monitor:
+        return None, None
+    metrics = rtlola_monitor.get_all_metrics(timeout=timeout)
+    for metric_name in ('mean_latency_1h', 'latest_latency', 'global_latency'):
+        value = metrics.get(metric_name)
+        if value is None:
+            continue
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(value) and value > 0:
+            return value, metric_name
+    return None, None
 
 def _logfile_name(cfg: Cfg) -> str:
     base = cfg.RESULTS_DIR
@@ -346,35 +368,29 @@ def run(config_path='config.json'):
             elif event.startswith('move-'):
                 idx = int(event.split('-')[1])
                 bot = bots[idx]
-                
-                # Check if delivery will occur (robot has item and is at destination)
-                has_item = bot.getItem() is not None
-                at_destination = bot.getLocation() == bot.destination
-                
-                if has_item and at_destination:
-                    item_id_for_delivery = bot.getItem().getIdx()
-                    dest_id = bot.destination.getIdx()
-                    
-                    # Calculate latency directly
-                    if item_id_for_delivery in item_create_times:
-                        delivery_latency = ts - item_create_times[item_id_for_delivery]
+
+                item_before_move = bot.getItem()
+                delivery_item_id = item_before_move.getIdx() if item_before_move is not None else None
+                delivery_destination = bot.destination if item_before_move is not None else None
+                delivery_destination_id = delivery_destination.getIdx() if delivery_destination is not None else -1
+
+                # Process the move first: delivery is triggered inside Robot.move().
+                bots[idx].move(ts)
+
+                if item_before_move is not None and bot.getLocation() == delivery_destination:
+                    if delivery_item_id in item_create_times:
+                        delivery_latency = ts - item_create_times[delivery_item_id]
                         
                         if delivery_latency > 0:
-                            # Add to latency window
                             latency_window.append((ts, delivery_latency))
                             
-                            # Remove old entries outside the window
                             latency_window = [(t, lat) for t, lat in latency_window if ts - t <= latency_window_duration]
                     
-                    # Send deliver event to RTLola BEFORE move processes it
                     if rtlola_monitor and rtlola_monitor.is_running():
                         try:
-                            rtlola_monitor.send_event(ts, -1, item_id_for_delivery, -1, -1, dest_id, "deliver")
+                            rtlola_monitor.send_event(ts, -1, delivery_item_id, -1, -1, delivery_destination_id, "deliver")
                         except Exception as e:
                             print(f"[RTLola] Error sending delivery event: {e}")
-                
-                # Now process the move
-                bots[idx].move(ts)
             elif event.startswith('recovery-'):
                 idx = int(event.split('-')[1]); bots[idx].recovery(ts)
             elif event.startswith('expire-'):
@@ -388,12 +404,17 @@ def run(config_path='config.json'):
                 adaptation_start_time = time.time()
                 adaptation_check_count += 1
                 
-                # Calculate mean latency from window
+                # Prefer the live RTLola metric, with the Python window as a safe fallback.
                 rtlola_query_start = time.time()
-                if latency_window:
-                    raw_latency = sum(lat for _, lat in latency_window) / len(latency_window)
+                metric_timeout = getattr(cfg, 'RTLOLA_METRIC_TIMEOUT', 0.0)
+                rtlola_latency, rtlola_metric = _get_rtlola_latency(rtlola_monitor, timeout=metric_timeout)
+                python_latency = sum(lat for _, lat in latency_window) / len(latency_window) if latency_window else None
+                if rtlola_latency is not None:
+                    raw_latency = rtlola_latency
+                    latency_source = f'rtlola:{rtlola_metric}'
                 else:
-                    raw_latency = None
+                    raw_latency = python_latency
+                    latency_source = 'python_window' if python_latency is not None else 'none'
                 rtlola_query_time = time.time() - rtlola_query_start
                 
                 if raw_latency is not None:
@@ -411,11 +432,10 @@ def run(config_path='config.json'):
                     
                     # Only consider switching if cool-down period has passed
                     time_since_last_switch = ts - last_switch_time
+                    current_arch = cfg.current_architecture
                     
                     if time_since_last_switch >= min_time_between_switches:
                         best_arch, scores = select_best_architecture(cfg, smoothed_latency)
-                        
-                        current_arch = cfg.current_architecture
                         
                         # Apply architecture switch if needed
                         if best_arch != current_arch:
@@ -444,7 +464,10 @@ def run(config_path='config.json'):
                         'rtlola_query_ms': rtlola_query_time * 1000,
                         'scoring_ms': scoring_time * 1000,
                         'switched': best_arch != current_arch,
-                        'latency': smoothed_latency
+                        'latency': smoothed_latency,
+                        'latency_source': latency_source,
+                        'current_architecture': current_arch,
+                        'selected_architecture': best_arch
                     })
                     
                     # # Log overhead info
@@ -460,7 +483,10 @@ def run(config_path='config.json'):
                         'rtlola_query_ms': rtlola_query_time * 1000,
                         'scoring_ms': 0,
                         'switched': False,
-                        'latency': None
+                        'latency': None,
+                        'latency_source': latency_source,
+                        'current_architecture': cfg.current_architecture,
+                        'selected_architecture': cfg.current_architecture
                     })
     
     finally:
