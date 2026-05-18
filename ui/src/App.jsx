@@ -12,6 +12,9 @@ import AnalyticsModal from './AnalyticsModal';
 import axios from 'axios';
 
 const API_BASE = '/api';
+const ARCHITECTURE_SWITCH_VISIBLE_SECONDS = 8;
+
+const architectureSwitchMessage = (fromArch, toArch) => `Architecture changed from ${fromArch} to ${toArch}`;
 
 function App() {
   // Check for studio mode
@@ -131,8 +134,7 @@ function App() {
     return () => clearInterval(interval);
   }, [isPlaying, maxTime, playbackSpeed]);
 
-  // Calculate all architecture switches for the timeline
-  const archSwitchMarks = useMemo(() => {
+  const architectureSwitches = useMemo(() => {
     if (!logs || logs.length === 0 || !currentConfig) return [];
 
     const switches = [];
@@ -142,30 +144,51 @@ function App() {
       if (event.event && event.event.startsWith('switch_architecture_')) {
         const newArch = event.event.replace('switch_architecture_', '');
         switches.push({
-          value: event.simTime,
-          label: (
-            <Tooltip title={`Architecture changed from ${prevArch} to ${newArch}`} arrow>
-              <Box
-                sx={{
-                  color: 'error.main',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  mt: -4.5, // Move it up to sit on the slider
-                  cursor: 'help',
-                  zIndex: 5
-                }}
-              >
-                <Flag fontSize="small" />
-              </Box>
-            </Tooltip>
-          )
+          time: event.simTime,
+          from: prevArch,
+          to: newArch,
+          message: architectureSwitchMessage(prevArch, newArch)
         });
         prevArch = newArch;
       }
     });
     return switches;
   }, [logs, currentConfig]);
+
+  // Calculate all architecture switches for the timeline
+  const archSwitchMarks = useMemo(() => {
+    return architectureSwitches.map((architectureSwitch) => ({
+      value: architectureSwitch.time,
+      label: (
+        <Tooltip title={architectureSwitch.message} arrow>
+          <Box
+            sx={{
+              color: 'error.main',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              mt: -4.5, // Move it up to sit on the slider
+              cursor: 'help',
+              zIndex: 5
+            }}
+          >
+            <Flag fontSize="small" />
+          </Box>
+        </Tooltip>
+      )
+    }));
+  }, [architectureSwitches]);
+
+  const activeArchitectureSwitch = useMemo(() => {
+    if (currentConfig?.ARCHITECTURE !== 'dynamic-adaptation') return null;
+
+    return [...architectureSwitches]
+      .reverse()
+      .find((architectureSwitch) => (
+        simTime >= architectureSwitch.time
+        && simTime - architectureSwitch.time <= ARCHITECTURE_SWITCH_VISIBLE_SECONDS
+      )) || null;
+  }, [architectureSwitches, currentConfig, simTime]);
 
   // Filter logs for current time
   const currentState = useMemo(() => {
@@ -303,6 +326,37 @@ function App() {
           >
             {error}
           </Alert>
+        )}
+
+        {hasSimulation && activeArchitectureSwitch && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 18,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 1500,
+              px: 2,
+              py: 0.9,
+              borderRadius: 1.5,
+              bgcolor: 'rgba(255, 193, 7, 0.18)',
+              border: '1px solid rgba(255, 193, 7, 0.75)',
+              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.28)',
+              pointerEvents: 'none'
+            }}
+          >
+            <Typography
+              variant="body2"
+              sx={{
+                color: '#FFD54F',
+                fontWeight: 800,
+                textShadow: '0 1px 2px rgba(0,0,0,0.7)',
+                letterSpacing: 0.2
+              }}
+            >
+              {activeArchitectureSwitch.message}
+            </Typography>
+          </Box>
         )}
 
         {!hasSimulation && !loading && (
