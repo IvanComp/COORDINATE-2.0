@@ -459,7 +459,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                 position: 'absolute',
                 top: 16,
                 right: 16,
-                width: 320,
+                width: 360,
                 maxHeight: 'calc(100vh - 100px)',
                 overflow: 'auto',
                 zIndex: 1000,
