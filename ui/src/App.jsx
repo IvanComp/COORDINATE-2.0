@@ -534,7 +534,7 @@ function App() {
               size="small"
               onClick={() => setAnalyticsOpen(true)}
             >
-              📊 Open Analytics
+              📊 Dashboard
             </Button>
             <Button
               variant="contained"

@@ -85,9 +85,9 @@ const FIELD_METADATA = {
     SIM_TIME: { label: "Simulation Window (s)", description: "Duration of the simulation in seconds." },
     N_REPETITIONS: { label: "N° Repetitions", description: "Number of independent simulation runs used to compute the final average CSV." },
     FAIL_PROB: { label: "Failure Probability", description: "Probability of an agent failing during operation (0-1)." },
-    ITEM_SPAWNING_TIME: { label: "Item Spawning Time", description: "Average time (in seconds) between new item requests." },
+    ITEM_SPAWNING_TIME: { label: "Item Spawning Time", description: "Average time (in seconds) between new task generations." },
     IMPORTANCE_PROBABILITIES: { label: "Item Importance Probabilities", description: "Spawn probability, as a percentage, for Low, Medium, and High priority items." },
-    ITEM_SPAWNING_DISTR: { label: "Event Arrival Distribution", description: "Distribution used to generate new item requests over time." },
+    ITEM_SPAWNING_DISTR: { label: "Task Inter-Arrival Time Distribution", description: "Distribution used to sample the time between consecutive task arrivals." },
     LOAD_TIME: { label: "Load Time", description: "Average time to load an item." },
     MOVEMENT_TIME: { label: "Movement Time", description: "Average time to move between adjacent rooms." },
     DROP_TIME: { label: "Drop Time", description: "Average time to drop an item." },
@@ -117,6 +117,10 @@ const ITEM_IMPORTANCE_LEVELS = [
     { label: 'Medium', color: '#FFC107' },
     { label: 'High', color: '#FF5722' },
 ];
+
+const getImportanceTotalPercent = (probabilities) => (probabilities || DEFAULTS.IMPORTANCE_PROBABILITIES)
+    .slice(0, 3)
+    .reduce((sum, value) => sum + ((Number(value) || 0) * 100), 0);
 
 const CUSTOM_ROOM_VALUE = 'custom';
 const DEFAULT_CUSTOM_ROOM_TEXT = '0-1, 1-2, 2-3, 3-0';
@@ -243,6 +247,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     const [customCoordinatesText, setCustomCoordinatesText] = useState(DEFAULT_CUSTOM_COORDS_TEXT);
     const [customBuilderError, setCustomBuilderError] = useState('');
     const [customLayoutPreset, setCustomLayoutPreset] = useState('');
+    const [formError, setFormError] = useState('');
 
     useEffect(() => {
         axios.get(`${API_BASE}/topologies`)
@@ -372,6 +377,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     const handleImportanceProbabilityChange = (index, percentValue) => {
         const percent = Number(percentValue);
         const probability = Number.isFinite(percent) ? Math.max(0, percent) / 100 : 0;
+        setFormError('');
         setConfig(prev => {
             const next = [...(prev.IMPORTANCE_PROBABILITIES || DEFAULTS.IMPORTANCE_PROBABILITIES)];
             while (next.length < 3) next.push(0);
@@ -396,6 +402,13 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
             && Number.isFinite(phase.RECOVERY_TIME));
 
     const handleSubmit = () => {
+        const rawImportanceTotal = getImportanceTotalPercent(config.IMPORTANCE_PROBABILITIES);
+        if (rawImportanceTotal > 100.0001) {
+            setActiveTab('task');
+            setFormError(`Item importance percentages cannot exceed 100%. Current total: ${rawImportanceTotal.toFixed(2)}%.`);
+            return;
+        }
+
         const configToRun = {
             ...config,
             PHASES: sanitizePhases(config.PHASES),
@@ -418,6 +431,13 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     const handleRtlolaSave = (specFile) => {
         // Close editor and run simulation with custom spec file
         setRtlolaEditorOpen(false);
+        const rawImportanceTotal = getImportanceTotalPercent(config.IMPORTANCE_PROBABILITIES);
+        if (rawImportanceTotal > 100.0001) {
+            setActiveTab('task');
+            setFormError(`Item importance percentages cannot exceed 100%. Current total: ${rawImportanceTotal.toFixed(2)}%.`);
+            return;
+        }
+
         const configWithSpec = {
             ...config,
             PHASES: sanitizePhases(config.PHASES),
@@ -452,6 +472,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
         .map(value => Number(((Number(value) || 0) * 100).toFixed(2)));
     while (importancePercentages.length < 3) importancePercentages.push(0);
     const importanceTotal = importancePercentages.reduce((sum, value) => sum + value, 0);
+    const importanceTotalTooHigh = importanceTotal > 100.0001;
 
     return (
         <Paper
@@ -890,13 +911,23 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             <Typography
                                 variant="caption"
                                 sx={{
-                                    color: Math.abs(importanceTotal - 100) < 0.01 ? 'rgba(255,255,255,0.7)' : '#FFC107',
+                                    color: importanceTotalTooHigh
+                                        ? '#EF5350'
+                                        : Math.abs(importanceTotal - 100) < 0.01
+                                            ? 'rgba(255,255,255,0.7)'
+                                            : '#FFC107',
                                     fontSize: '0.72rem'
                                 }}
                             >
                                 Total: {importanceTotal.toFixed(2)}%
                             </Typography>
                         </Box>
+
+                        {importanceTotalTooHigh && (
+                            <Alert severity="error" sx={{ py: 0, fontSize: '0.78rem' }}>
+                                Item importance percentages cannot exceed 100%.
+                            </Alert>
+                        )}
 
                         <Box sx={{ display: 'grid', gap: 0.75 }}>
                             {ITEM_IMPORTANCE_LEVELS.map((level, index) => (
@@ -962,7 +993,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                     }}>
                         <InputLabel>
                             <Box display="flex" alignItems="center" gap={0.5}>
-                                Event Arrival Distribution
+                                Task Inter-Arrival Time Distribution
                                 <Box component="span" title={FIELD_METADATA.ITEM_SPAWNING_DISTR.description} sx={{ display: 'flex', alignItems: 'center' }}>
                                     <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
                                 </Box>
@@ -970,7 +1001,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                         </InputLabel>
                         <Select
                             value={config.ITEM_SPAWNING_DISTR}
-                            label="Event Arrival Distribution"
+                            label="Task Inter-Arrival Time Distribution"
                             onChange={(e) => handleChange('ITEM_SPAWNING_DISTR', e.target.value)}
                         >
                             {DISTRIBUTION_OPTIONS.map((option) => (
@@ -1309,6 +1340,12 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                     )}
 
                     <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)' }} />
+
+                    {formError && (
+                        <Alert severity="error" sx={{ py: 0.5, fontSize: '0.8rem' }}>
+                            {formError}
+                        </Alert>
+                    )}
 
                     <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 1 }}>
                         {activeTab === 'runtime' && (

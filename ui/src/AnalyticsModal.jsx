@@ -676,11 +676,11 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                         bgcolor: '#111827',
                         '&:hover': { bgcolor: '#1f2937' }
                     }}
-                    aria-label="Close analytics"
+                    aria-label="Close dashboard"
                 >
                     <CloseRoundedIcon fontSize="small" />
                 </IconButton>
-                Simulation Analytics
+                Dashboard
             </DialogTitle>
             <DialogContent dividers sx={{ borderColor: '#1f2937', p: { xs: 1.5, md: 2 } }}>
                 <Box
