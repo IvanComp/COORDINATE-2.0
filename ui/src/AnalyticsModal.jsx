@@ -906,7 +906,7 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                             <circle
                                                 cx={(n.nx / 100) * HEATMAP_BASE_WIDTH}
                                                 cy={(n.nz / 100) * HEATMAP_BASE_HEIGHT}
-                                                r="1.95"
+                                                r="3"
                                                 fill="rgba(139, 209, 124, 0.16)"
                                                 stroke="rgba(15, 23, 42, 0.18)"
                                                 strokeWidth="0.5"
@@ -915,7 +915,7 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                             <circle
                                                 cx={(n.nx / 100) * HEATMAP_BASE_WIDTH}
                                                 cy={(n.nz / 100) * HEATMAP_BASE_HEIGHT}
-                                                r="1.18"
+                                                r="1.85"
                                                 fill="rgba(166, 221, 143, 0.62)"
                                                 stroke="rgba(15, 23, 42, 0.34)"
                                                 strokeWidth="0.34"
