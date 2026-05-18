@@ -20,7 +20,7 @@ import {
     DialogActions,
     Alert
 } from '@mui/material';
-import { Settings, ExpandMore, ExpandLess, HelpOutline, Tune, Add, DeleteOutline, Bolt } from '@mui/icons-material';
+import { Settings, ExpandMore, ExpandLess, HelpOutline, Add, DeleteOutline, Inventory2, AccountTree, Bolt } from '@mui/icons-material';
 import { InputAdornment, Tooltip } from '@mui/material';
 import axios from 'axios';
 import RTLolaEditor from './RTLolaEditor';
@@ -136,10 +136,10 @@ const TOPOLOGY_MAP = {
 function AgentTabIcon() {
     return (
         <svg width="16" height="16" viewBox="0 0 16 16" style={{ display: 'block' }} aria-hidden="true">
-            <rect x="5" y="6" width="6" height="7" fill="#9E9E9E" rx="1" />
-            <circle cx="8" cy="4" r="2.5" fill="#9E9E9E" />
-            <circle cx="7" cy="4" r="0.5" fill="white" />
-            <circle cx="9" cy="4" r="0.5" fill="white" />
+            <rect x="5" y="6" width="6" height="7" fill="currentColor" rx="1" />
+            <circle cx="8" cy="4" r="2.5" fill="currentColor" />
+            <circle cx="7" cy="4" r="0.5" fill="rgba(0,0,0,0.75)" />
+            <circle cx="9" cy="4" r="0.5" fill="rgba(0,0,0,0.75)" />
         </svg>
     );
 }
@@ -236,7 +236,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     const [topologies, setTopologies] = useState([]);
     const [expanded, setExpanded] = useState(true);
     const [rtlolaEditorOpen, setRtlolaEditorOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState('configuration');
+    const [activeTab, setActiveTab] = useState('task');
     const [customBuilderOpen, setCustomBuilderOpen] = useState(false);
     const [customRoomCount, setCustomRoomCount] = useState(4);
     const [customEdgesText, setCustomEdgesText] = useState(DEFAULT_CUSTOM_ROOM_TEXT);
@@ -499,19 +499,22 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                 minHeight: 28,
                                 color: 'rgba(255,255,255,0.7)',
                                 textTransform: 'none',
-                                fontSize: '0.75rem',
+                                fontSize: '0.72rem',
+                                minWidth: 0,
+                                px: 0.35,
                                 py: 0.25
                             },
                             '& .MuiTab-root.Mui-selected': { color: '#fff' },
                             '& .MuiTabs-indicator': { backgroundColor: '#fff' }
                         }}
                     >
-                        <Tab label="System" value="configuration" icon={<Tune fontSize="small" />} iconPosition="start" />
+                        <Tab label="Task" value="task" icon={<Inventory2 fontSize="small" />} iconPosition="start" />
+                        <Tab label="Topology" value="topology" icon={<AccountTree fontSize="small" />} iconPosition="start" />
+                        <Tab label="Agent" value="agent" icon={<AgentTabIcon />} iconPosition="start" />
                         <Tab label="Runtime" value="runtime" icon={<Bolt fontSize="small" />} iconPosition="start" />
-                        <Tab label="Agent" value="timing" icon={<AgentTabIcon />} iconPosition="start" />
                     </Tabs>
 
-                    {activeTab === 'configuration' && (
+                    {activeTab === 'topology' && (
                         <>
                     <FormControl fullWidth size="small" sx={{
                         '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
@@ -597,6 +600,11 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             Edit Custom Rooms
                         </Button>
                     )}
+                        </>
+                    )}
+
+                    {activeTab === 'runtime' && (
+                        <>
 
                     <FormControl fullWidth size="small" sx={{
                         '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
@@ -747,6 +755,11 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             </Box>
                         </>
                     )}
+                        </>
+                    )}
+
+                    {activeTab === 'agent' && (
+                        <>
 
                     <TextField
                         label="Number of Agents"
@@ -801,6 +814,11 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             }
                         }}
                     />
+                        </>
+                    )}
+
+                    {activeTab === 'runtime' && (
+                        <>
 
                     <TextField
                         label="Simulation Window (s)"
@@ -828,6 +846,11 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             }
                         }}
                     />
+                        </>
+                    )}
+
+                    {activeTab === 'task' && (
+                        <>
 
                     <TextField
                         label="Item Spawning Time"
@@ -855,6 +878,76 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             }
                         }}
                     />
+
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'rgba(255,255,255,0.75)', fontSize: '0.78rem' }}>
+                                Item importance %
+                                <Box component="span" title={FIELD_METADATA.IMPORTANCE_PROBABILITIES.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                    <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                </Box>
+                            </Box>
+                            <Typography
+                                variant="caption"
+                                sx={{
+                                    color: Math.abs(importanceTotal - 100) < 0.01 ? 'rgba(255,255,255,0.7)' : '#FFC107',
+                                    fontSize: '0.72rem'
+                                }}
+                            >
+                                Total: {importanceTotal.toFixed(2)}%
+                            </Typography>
+                        </Box>
+
+                        <Box sx={{ display: 'grid', gap: 0.75 }}>
+                            {ITEM_IMPORTANCE_LEVELS.map((level, index) => (
+                                <Box
+                                    key={level.label}
+                                    sx={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'minmax(0, 1fr) 128px',
+                                        alignItems: 'center',
+                                        gap: 1,
+                                        p: 0.75,
+                                        border: '1px solid rgba(255,255,255,0.12)',
+                                        borderRadius: 1.5,
+                                        background: 'rgba(255,255,255,0.04)'
+                                    }}
+                                >
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+                                        <Box sx={{ width: 9, height: 9, borderRadius: '50%', bgcolor: level.color, flex: '0 0 auto' }} />
+                                        <Typography variant="body2" sx={{ color: '#fff', fontSize: '0.82rem', fontWeight: 600 }}>
+                                            {level.label}
+                                        </Typography>
+                                    </Box>
+                                    <TextField
+                                        type="number"
+                                        size="small"
+                                        value={importancePercentages[index]}
+                                        onChange={(e) => handleImportanceProbabilityChange(index, e.target.value)}
+                                        InputProps={{
+                                            endAdornment: <InputAdornment position="end">%</InputAdornment>
+                                        }}
+                                        inputProps={{ min: 0, step: 1, 'aria-label': `${level.label} importance percentage` }}
+                                        sx={{
+                                            '& .MuiOutlinedInput-input': {
+                                                py: 0.75,
+                                                textAlign: 'right',
+                                                fontSize: '0.92rem',
+                                                fontWeight: 700
+                                            },
+                                            '& .MuiOutlinedInput-root': {
+                                                color: '#fff',
+                                                '& fieldset': { borderColor: 'rgba(255,255,255,0.28)' },
+                                                '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                                '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                            },
+                                            '& .MuiInputAdornment-root': { color: 'rgba(255,255,255,0.65)' }
+                                        }}
+                                    />
+                                </Box>
+                            ))}
+                        </Box>
+                    </Box>
 
                     <FormControl fullWidth size="small" sx={{
                         '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
@@ -1026,7 +1119,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                         </>
                     )}
 
-                    {activeTab === 'timing' && (
+                    {activeTab === 'agent' && (
                         <>
                             <TextField
                                 label="Failure Probability"
@@ -1218,6 +1311,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                     <Divider sx={{ borderColor: 'rgba(255,255,255,0.2)' }} />
 
                     <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 1 }}>
+                        {activeTab === 'runtime' && (
                         <TextField
                             label="N° Repetitions"
                             type="number"
@@ -1246,6 +1340,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                 }
                             }}
                         />
+                        )}
 
                         <Button
                             variant="contained"
