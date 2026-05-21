@@ -88,13 +88,13 @@ const FIELD_METADATA = {
     SIM_TIME: { label: "Simulation Window (s)", description: "Duration of the simulation in seconds." },
     N_REPETITIONS: { label: "N° Repetitions", description: "Number of independent simulation runs used to compute the final average CSV." },
     FAIL_PROB: { label: "Failure Probability", description: "Probability of an agent failing during operation (0-1)." },
-    ITEM_SPAWNING_TIME: { label: "Item Spawning Time", description: "Average time (in seconds) between new task generations." },
-    IMPORTANCE_PROBABILITIES: { label: "Item Importance Probabilities", description: "Spawn probability, as a percentage, for Low, Medium, and High priority items." },
+    ITEM_SPAWNING_TIME: { label: "Task Spawning Time", description: "Average time (in seconds) between new task generations." },
+    IMPORTANCE_PROBABILITIES: { label: "Task Priority Probabilities", description: "Spawn probability, as a percentage, for Low, Medium, and High priority tasks." },
     ITEM_SPAWNING_DISTR: { label: "Task Inter-Arrival Time Distribution", description: "Distribution used to sample the time between consecutive task arrivals." },
     EXPIRATION_TIME: { label: "Task Expiration Time", description: "Time in seconds after which a pending task expires. Disabled tasks use -1 internally." },
-    LOAD_TIME: { label: "Load Time", description: "Average time to load an item." },
+    LOAD_TIME: { label: "Load Time", description: "Average time to start a task." },
     MOVEMENT_TIME: { label: "Movement Time", description: "Average time to move between adjacent rooms." },
-    DROP_TIME: { label: "Drop Time", description: "Average time to drop an item." },
+    DROP_TIME: { label: "Drop Time", description: "Average time to release a task." },
     COMP_TIME: { label: "Computation Time", description: "Decision-making overhead per action." },
     COMM_TIME: { label: "Communication Time", description: "Communication overhead per interaction." },
     RECOVERY_TIME: { label: "Recovery Time", description: "Average time to recover after a failure." },
@@ -429,7 +429,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
         const rawImportanceTotal = getImportanceTotalPercent(config.IMPORTANCE_PROBABILITIES);
         if (rawImportanceTotal > 100.0001) {
             setActiveTab('task');
-            setFormError(`Item importance percentages cannot exceed 100%. Current total: ${rawImportanceTotal.toFixed(2)}%.`);
+            setFormError(`Task priority percentages cannot exceed 100%. Current total: ${rawImportanceTotal.toFixed(2)}%.`);
             return;
         }
 
@@ -458,7 +458,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
         const rawImportanceTotal = getImportanceTotalPercent(config.IMPORTANCE_PROBABILITIES);
         if (rawImportanceTotal > 100.0001) {
             setActiveTab('task');
-            setFormError(`Item importance percentages cannot exceed 100%. Current total: ${rawImportanceTotal.toFixed(2)}%.`);
+            setFormError(`Task priority percentages cannot exceed 100%. Current total: ${rawImportanceTotal.toFixed(2)}%.`);
             return;
         }
 
@@ -530,7 +530,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
             }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Settings />
-                    <Typography variant="h6">Configure Simulation</Typography>
+                    <Typography variant="h6">Simulation Design</Typography>
                 </Box>
                 <IconButton size="small" onClick={() => setExpanded(!expanded)} sx={{ color: 'white' }}>
                     {expanded ? <ExpandLess /> : <ExpandMore />}
@@ -903,7 +903,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                         <>
 
                     <TextField
-                        label="Item Spawning Time"
+                        label="Task Spawning Time"
                         type="number"
                         size="small"
                         value={config.ITEM_SPAWNING_TIME}
@@ -932,7 +932,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'rgba(255,255,255,0.75)', fontSize: '0.78rem' }}>
-                                Item importance %
+                                Task priority %
                                 <Box component="span" title={FIELD_METADATA.IMPORTANCE_PROBABILITIES.description} sx={{ display: 'flex', alignItems: 'center' }}>
                                     <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
                                 </Box>
@@ -954,7 +954,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
 
                         {importanceTotalTooHigh && (
                             <Alert severity="error" sx={{ py: 0, fontSize: '0.78rem' }}>
-                                Item importance percentages cannot exceed 100%.
+                                Task priority percentages cannot exceed 100%.
                             </Alert>
                         )}
 
@@ -987,7 +987,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                         InputProps={{
                                             endAdornment: <InputAdornment position="end">%</InputAdornment>
                                         }}
-                                        inputProps={{ min: 0, step: 1, 'aria-label': `${level.label} importance percentage` }}
+                                        inputProps={{ min: 0, step: 1, 'aria-label': `${level.label} priority percentage` }}
                                         sx={{
                                             '& .MuiOutlinedInput-input': {
                                                 py: 0.75,

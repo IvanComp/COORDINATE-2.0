@@ -119,19 +119,19 @@ function Legend() {
                     />
 
                     <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)', display: 'block', mt: 1.5, mb: 1 }}>
-                        Items
+                        Tasks
                     </Typography>
                     <LegendItem
                         icon={<Square sx={{ fontSize: 16, color: '#4CAF50' }} />}
-                        label="Low Importance"
+                        label="Low Priority"
                     />
                     <LegendItem
                         icon={<Square sx={{ fontSize: 16, color: '#FFC107' }} />}
-                        label="Medium Importance"
+                        label="Medium Priority"
                     />
                     <LegendItem
                         icon={<Square sx={{ fontSize: 16, color: '#FF5722' }} />}
-                        label="High Importance"
+                        label="High Priority"
                     />
                 </Box>
             </Box>

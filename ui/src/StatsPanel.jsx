@@ -47,12 +47,12 @@ function StatsPanel({ logs, simTime }) {
                 sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white', fontWeight: 'bold' }}
             />
             <Chip
-                label={`Created: ${stats.itemsCreated}`}
+                label={`Created Tasks: ${stats.itemsCreated}`}
                 size="small"
                 sx={{ bgcolor: 'rgba(33, 150, 243, 0.3)', color: 'white', fontWeight: 'bold' }}
             />
             <Chip
-                label={`Delivered: ${stats.deliveries}`}
+                label={`Completed Tasks: ${stats.deliveries}`}
                 size="small"
                 sx={{ bgcolor: 'rgba(76, 175, 80, 0.3)', color: 'white', fontWeight: 'bold' }}
             />

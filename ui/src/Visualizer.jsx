@@ -34,7 +34,7 @@ function DeliveryStamp({ position, timestamp }) {
                 fillOpacity={opacity}
                 outlineOpacity={opacity}
             >
-                Delivered!
+                Completed!
             </Text>
         </group>
     );
@@ -287,7 +287,7 @@ function Robot({ id, position, hasItem, itemImportance, isFailed, isRescuing, la
                         outlineOpacity={deliveryTextOpacity}
                         fontWeight="bold"
                     >
-                        Delivered!
+                        Completed!
                     </Text>
                 </Billboard>
             )}

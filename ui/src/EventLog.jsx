@@ -22,16 +22,16 @@ function EventLog({ logs, simTime }) {
             switch (log.event) {
                 case 'create':
                     const impLabel = { 0: 'L', 1: 'M', 2: 'H' }[log.itemImportance] || log.itemImportance;
-                    message = `Item ${log.itemId} created (Imp: ${impLabel})`;
+                    message = `Task ${log.itemId} created (Priority: ${impLabel})`;
                     break;
                 case 'startLoading':
-                    message = `Agent ${log.robotId} started loading Item ${log.itemId}`;
+                    message = `Agent ${log.robotId} started Task ${log.itemId}`;
                     break;
                 case 'move':
                     message = `Agent ${log.robotId} moving to Room ${log.destination}`;
                     break;
                 case 'deliver':
-                    message = `Agent ${log.robotId} delivered Item ${log.itemId}`;
+                    message = `Agent ${log.robotId} completed Task ${log.itemId}`;
                     break;
                 case 'fail':
                     message = `Agent ${log.robotId} FAILED!`;
@@ -41,10 +41,10 @@ function EventLog({ logs, simTime }) {
                     message = `Agent ${log.robotId} recovered`;
                     break;
                 case 'expire':
-                    message = `Item ${log.itemId} expired`;
+                    message = `Task ${log.itemId} expired`;
                     break;
                 default:
-                    message = `${log.event} (R:${log.robotId}, I:${log.itemId})`;
+                    message = `${log.event} (Agent:${log.robotId}, Task:${log.itemId})`;
             }
 
             return {

@@ -119,6 +119,21 @@ const EVENT_DISTRIBUTION_COLORS = {
     expire: pastelFromString('backlog')
 };
 
+const EVENT_LABELS = {
+    create: 'Created',
+    deliver: 'Completed',
+    fail: 'Failed',
+    recover: 'Recovered',
+    recovery: 'Recovered',
+    expire: 'Expired',
+    move: 'Moved',
+    startLoading: 'Started',
+    drop: 'Released',
+    help: 'Help',
+    fake: 'Fake',
+    rescue: 'Rescue'
+};
+
 const LATENCY_HISTOGRAM_COLOR = '#B8E0D2';
 const AGENT_ACTIVITY_COLORS = [
     '#B8E0D2',
@@ -211,18 +226,18 @@ function ChartCard({
 }
 
 const CHART_IDS = [
-    'chart-events-timeline',
-    'chart-cumulative',
-    'chart-event-pie',
-    'chart-importance',
-    'chart-latency-hist',
+    'chart-event-timeline',
+    'chart-task-throughput',
+    'chart-event-distribution',
+    'chart-tasks-by-priority',
+    'chart-task-latency-spread',
     'chart-agent-activity',
-    'chart-fail-recover',
-    'chart-heatmap',
-    'chart-success-rate',
-    'chart-backlog',
-    'chart-latency-by-importance',
-    'chart-deliveries-by-agent'
+    'chart-failures-recoveries',
+    'chart-agent-heatmap',
+    'chart-task-completion-rate',
+    'chart-pending-tasks',
+    'chart-task-latency',
+    'chart-tasks-by-agent'
 ];
 
 const HEATMAP_BASE_WIDTH = 760;
@@ -305,12 +320,12 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
         const counts = {};
         parsedLogs.forEach((r) => { counts[r.event] = (counts[r.event] || 0) + 1; });
         return Object.entries(counts)
-            .map(([name, value]) => ({ name, value }))
+            .map(([event, value]) => ({ event, name: EVENT_LABELS[event] || event, value }))
             .sort((a, b) => b.value - a.value)
             .slice(0, 10);
     }, [parsedLogs]);
 
-    const eventDistributionColor = (name) => EVENT_DISTRIBUTION_COLORS[name] || pastelFromString(name);
+    const eventDistributionColor = (event) => EVENT_DISTRIBUTION_COLORS[event] || pastelFromString(event);
 
     const importanceDist = useMemo(() => {
         const dist = { Low: 0, Medium: 0, High: 0 };
@@ -688,38 +703,45 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                     sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2, alignItems: 'start' }}
                 >
                     <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Events Timeline" chartId={CHART_IDS[0]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={bins} dataFilename="events_timeline">
+                        <ChartCard title="Task Completion Rate" chartId={CHART_IDS[8]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={successRateTrend} dataFilename="task_completion_rate">
                             <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={bins} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
+                                <LineChart data={successRateTrend} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
                                     <CartesianGrid strokeDasharray="3 3" />
                                     <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
-                                    <YAxis label={{ value: 'Events (#)', angle: -90, position: 'insideLeft' }} />
-                                    <Tooltip />
-                                    <Line type="monotone" dataKey="created" stroke={EVENTS_TIMELINE_COLORS.created} strokeWidth={2} />
-                                    <Line type="monotone" dataKey="delivered" stroke={EVENTS_TIMELINE_COLORS.delivered} strokeWidth={2} />
-                                    <Line
-                                        type="monotone"
-                                        dataKey="failed"
-                                        stroke={EVENTS_TIMELINE_COLORS.failed}
-                                        strokeWidth={2}
-                                        dot={<FailedXDot />}
-                                        activeDot={<FailedXDot />}
-                                    />
+                                    <YAxis domain={[0, 100]} label={{ value: 'Completion Rate (%)', angle: -90, position: 'insideLeft', dy: 45 }} />
+                                    <Tooltip formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                                    <Line type="monotone" dataKey="successRate" name="Completion Rate" stroke="#A5D6A7" strokeWidth={2.5} dot={false} />
                                 </LineChart>
                             </ResponsiveContainer>
                         </ChartCard>
                     </Box>
 
                     <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Cumulative Item Throughput" chartId={CHART_IDS[1]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={cumulative} dataFilename="cumulative_item_throughput">
+                        <ChartCard title="Pending Tasks" chartId={CHART_IDS[9]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={backlogByPriorityTrend} dataFilename="pending_tasks">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={backlogByPriorityTrend} margin={{ top: 12, right: 24, left: 10, bottom: 52 }} barGap={2}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
+                                    <YAxis label={{ value: 'Pending Tasks (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
+                                    <Tooltip />
+                                    <Bar dataKey="low" stackId="backlog" fill={itemImportanceColor('Low')} shape={<PackageStackShape />} />
+                                    <Bar dataKey="medium" stackId="backlog" fill={itemImportanceColor('Medium')} shape={<PackageStackShape />} />
+                                    <Bar dataKey="high" stackId="backlog" fill={itemImportanceColor('High')} shape={<PackageStackShape />} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </ChartCard>
+                    </Box>
+
+                    <Box sx={{ minWidth: 0 }}>
+                        <ChartCard title="Task Throughput" chartId={CHART_IDS[1]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={cumulative} dataFilename="task_throughput">
                             <ResponsiveContainer width="100%" height="100%">
                                 <LineChart data={cumulative} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
                                     <CartesianGrid strokeDasharray="3 3" />
                                     <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
-                                    <YAxis label={{ value: 'Cumulative items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
+                                    <YAxis label={{ value: 'Cumulative Tasks (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
                                     <Tooltip />
-                                    <Line type="monotone" dataKey="created" stroke={EVENTS_TIMELINE_COLORS.created} strokeWidth={2} />
-                                    <Line type="monotone" dataKey="delivered" stroke={EVENTS_TIMELINE_COLORS.delivered} strokeWidth={2} />
+                                    <Line type="monotone" dataKey="created" name="Created Tasks" stroke={EVENTS_TIMELINE_COLORS.created} strokeWidth={2} />
+                                    <Line type="monotone" dataKey="delivered" name="Completed Tasks" stroke={EVENTS_TIMELINE_COLORS.delivered} strokeWidth={2} />
                                 </LineChart>
                             </ResponsiveContainer>
                         </ChartCard>
@@ -730,57 +752,11 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                             <ResponsiveContainer width="100%" height="100%">
                                     <PieChart>
                                         <Pie data={eventDistribution} dataKey="value" nameKey="name" outerRadius={90} label>
-                                        {eventDistribution.map((e) => <Cell key={e.name} fill={eventDistributionColor(e.name)} />)}
+                                        {eventDistribution.map((e) => <Cell key={e.event} fill={eventDistributionColor(e.event)} />)}
                                     </Pie>
                                     <Tooltip />
                                     <Legend verticalAlign="bottom" height={24} wrapperStyle={{ paddingTop: 4, marginBottom: 0 }} />
                                 </PieChart>
-                            </ResponsiveContainer>
-                        </ChartCard>
-                    </Box>
-
-                    <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Created Items by Importance" chartId={CHART_IDS[3]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={importanceDist} dataFilename="created_items_by_importance">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={importanceDist} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="level" tickMargin={10} height={46} label={{ value: 'Importance level', position: 'bottom', offset: 8 }} />
-                                    <YAxis label={{ value: 'Created items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
-                                    <Tooltip />
-                                    <Bar dataKey="value">
-                                        {importanceDist.map((d) => <Cell key={d.level} fill={itemImportanceColor(d.level)} />)}
-                                    </Bar>
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </ChartCard>
-                    </Box>
-
-                    <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Delivery Latency Histogram" chartId={CHART_IDS[4]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={latencyHistogram} dataFilename="delivery_latency_histogram">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={latencyHistogram} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="range" tickMargin={10} height={46} label={{ value: 'Latency range (s)', position: 'bottom', offset: 8 }} />
-                                    <YAxis label={{ value: 'Delivered items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
-                                    <Tooltip />
-                                    <Bar dataKey="count" fill={LATENCY_HISTOGRAM_COLOR} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </ChartCard>
-                    </Box>
-
-                    <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Agent Activity (Top)" chartId={CHART_IDS[5]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={agentActivity} dataFilename="agent_activity_top">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={agentActivity} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="agent" tickMargin={10} height={46} label={{ value: 'Agent ID', position: 'bottom', offset: 8 }} />
-                                    <YAxis label={{ value: 'Actions (#)', angle: -90, position: 'insideLeft' }} />
-                                    <Tooltip />
-                                    <Bar dataKey="actions">
-                                        {agentActivity.map((d, idx) => <Cell key={d.agent} fill={AGENT_ACTIVITY_COLORS[idx % AGENT_ACTIVITY_COLORS.length]} />)}
-                                    </Bar>
-                                </BarChart>
                             </ResponsiveContainer>
                         </ChartCard>
                     </Box>
@@ -802,12 +778,12 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
 
                     <Box sx={{ minWidth: 0 }}>
                         <ChartCard
-                            title="Agent Room Visit Frequency"
+                            title="Agent Heatmap"
                             chartId={CHART_IDS[7]}
                             onDownload={downloadChartPdf}
                             onDownloadData={downloadChartDataCsv}
                             dataRows={heatmapData.map((n) => ({ roomId: n.id, visits: n.visits, normalizedIntensity: Number(n.intensity.toFixed(4)) }))}
-                            dataFilename="agent_room_visit_frequency"
+                            dataFilename="agent_heatmap"
                             leftControls={(
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <Select
@@ -932,41 +908,59 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                     </Box>
 
                     <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Delivery Success Rate Over Time" chartId={CHART_IDS[8]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={successRateTrend} dataFilename="delivery_success_rate_over_time">
+                        <ChartCard title="Agent Activity" chartId={CHART_IDS[5]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={agentActivity} dataFilename="agent_activity">
                             <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={successRateTrend} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
+                                <BarChart data={agentActivity} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
                                     <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
-                                    <YAxis domain={[0, 100]} label={{ value: 'Success Rate (%)', angle: -90, position: 'insideLeft', dy: 45 }} />
-                                    <Tooltip formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                                    <Line type="monotone" dataKey="successRate" stroke="#A5D6A7" strokeWidth={2.5} dot={false} />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        </ChartCard>
-                    </Box>
-
-                    <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Pending Items by Priority Over Time" chartId={CHART_IDS[9]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={backlogByPriorityTrend} dataFilename="backlog_formula_over_time">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={backlogByPriorityTrend} margin={{ top: 12, right: 24, left: 10, bottom: 52 }} barGap={2}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
-                                    <YAxis label={{ value: 'Pending Items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
+                                    <XAxis dataKey="agent" tickMargin={10} height={46} label={{ value: 'Agent ID', position: 'bottom', offset: 8 }} />
+                                    <YAxis label={{ value: 'Actions (#)', angle: -90, position: 'insideLeft' }} />
                                     <Tooltip />
-                                    <Bar dataKey="low" stackId="backlog" fill={itemImportanceColor('Low')} shape={<PackageStackShape />} />
-                                    <Bar dataKey="medium" stackId="backlog" fill={itemImportanceColor('Medium')} shape={<PackageStackShape />} />
-                                    <Bar dataKey="high" stackId="backlog" fill={itemImportanceColor('High')} shape={<PackageStackShape />} />
+                                    <Bar dataKey="actions">
+                                        {agentActivity.map((d, idx) => <Cell key={d.agent} fill={AGENT_ACTIVITY_COLORS[idx % AGENT_ACTIVITY_COLORS.length]} />)}
+                                    </Bar>
                                 </BarChart>
                             </ResponsiveContainer>
                         </ChartCard>
                     </Box>
 
                     <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Average Delivery Latency by Importance" chartId={CHART_IDS[10]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={latencyByImportance} dataFilename="avg_delivery_latency_by_importance">
+                        <ChartCard title="Tasks by Agent" chartId={CHART_IDS[11]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={deliveriesByAgent} dataFilename="tasks_by_agent">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={deliveriesByAgent} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="agent" tickMargin={10} height={46} label={{ value: 'Agent ID', position: 'bottom', offset: 8 }} />
+                                    <YAxis label={{ value: 'Completed Tasks (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
+                                    <Tooltip />
+                                    <Bar dataKey="delivered" name="Completed Tasks">
+                                        {deliveriesByAgent.map((d, idx) => <Cell key={d.agent} fill={AGENT_ACTIVITY_COLORS[idx % AGENT_ACTIVITY_COLORS.length]} />)}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </ChartCard>
+                    </Box>
+
+                    <Box sx={{ minWidth: 0 }}>
+                        <ChartCard title="Tasks by Priority" chartId={CHART_IDS[3]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={importanceDist} dataFilename="tasks_by_priority">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={importanceDist} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="level" tickMargin={10} height={46} label={{ value: 'Priority Level', position: 'bottom', offset: 8 }} />
+                                    <YAxis label={{ value: 'Created Tasks (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
+                                    <Tooltip />
+                                    <Bar dataKey="value">
+                                        {importanceDist.map((d) => <Cell key={d.level} fill={itemImportanceColor(d.level)} />)}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </ChartCard>
+                    </Box>
+
+                    <Box sx={{ minWidth: 0 }}>
+                        <ChartCard title="Task Latency" chartId={CHART_IDS[10]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={latencyByImportance} dataFilename="task_latency">
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={latencyByImportance} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
                                     <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="level" tickMargin={10} height={46} label={{ value: 'Importance Level', position: 'bottom', offset: 8 }} />
+                                    <XAxis dataKey="level" tickMargin={10} height={46} label={{ value: 'Priority Level', position: 'bottom', offset: 8 }} />
                                     <YAxis label={{ value: 'Latency (s)', angle: -90, position: 'insideLeft' }} />
                                     <Tooltip />
                                     <Bar dataKey="avgLatency" name="Average Latency (s)">
@@ -978,16 +972,38 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                     </Box>
 
                     <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Deliveries by Agent" chartId={CHART_IDS[11]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={deliveriesByAgent} dataFilename="deliveries_by_agent">
+                        <ChartCard title="Event Timeline" chartId={CHART_IDS[0]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={bins} dataFilename="event_timeline">
                             <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={deliveriesByAgent} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
+                                <LineChart data={bins} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
                                     <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="agent" tickMargin={10} height={46} label={{ value: 'Agent ID', position: 'bottom', offset: 8 }} />
-                                    <YAxis label={{ value: 'Delivered Items (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
+                                    <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
+                                    <YAxis label={{ value: 'Events (#)', angle: -90, position: 'insideLeft' }} />
                                     <Tooltip />
-                                    <Bar dataKey="delivered" name="Delivered Items">
-                                        {deliveriesByAgent.map((d, idx) => <Cell key={d.agent} fill={AGENT_ACTIVITY_COLORS[idx % AGENT_ACTIVITY_COLORS.length]} />)}
-                                    </Bar>
+                                    <Line type="monotone" dataKey="created" name="Created Tasks" stroke={EVENTS_TIMELINE_COLORS.created} strokeWidth={2} />
+                                    <Line type="monotone" dataKey="delivered" name="Completed Tasks" stroke={EVENTS_TIMELINE_COLORS.delivered} strokeWidth={2} />
+                                    <Line
+                                        type="monotone"
+                                        dataKey="failed"
+                                        name="Failures"
+                                        stroke={EVENTS_TIMELINE_COLORS.failed}
+                                        strokeWidth={2}
+                                        dot={<FailedXDot />}
+                                        activeDot={<FailedXDot />}
+                                    />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </ChartCard>
+                    </Box>
+
+                    <Box sx={{ minWidth: 0 }}>
+                        <ChartCard title="Task Latency Spread" chartId={CHART_IDS[4]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={latencyHistogram} dataFilename="task_latency_spread">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={latencyHistogram} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="range" tickMargin={10} height={46} label={{ value: 'Latency range (s)', position: 'bottom', offset: 8 }} />
+                                    <YAxis label={{ value: 'Completed Tasks (#)', angle: -90, position: 'insideLeft', dy: 45 }} />
+                                    <Tooltip />
+                                    <Bar dataKey="count" fill={LATENCY_HISTOGRAM_COLOR} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </ChartCard>
