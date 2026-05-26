@@ -59,7 +59,7 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('ADAPTATION_CHECK_INTERVAL', 300.0)
     d.setdefault('LATENCY_THRESHOLD_LOW', 10.0)
     d.setdefault('LATENCY_THRESHOLD_HIGH', 40.0)
-    d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.0)
+    d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.05)
     # Keep simulator resilient if frontend payload omits optional fields.
     d.setdefault('IMPORTANCE_PROBABILITIES', [0.5, 0.1, 0.4])
     d.setdefault('EXPIRATION_TIME', [-1, -1, -1])
@@ -75,18 +75,48 @@ def _build_cfg(config_path: str) -> Cfg:
 def _get_rtlola_latency(rtlola_monitor, timeout: float = 0.0):
     if not rtlola_monitor:
         return None, None
-    metrics = rtlola_monitor.get_all_metrics(timeout=timeout)
-    for metric_name in ('mean_latency_1h', 'latest_latency', 'global_latency'):
-        value = metrics.get(metric_name)
-        if value is None:
-            continue
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            continue
-        if np.isfinite(value) and value > 0:
-            return value, metric_name
-    return None, None
+
+    metric_names = (
+        'mean_relative_latency_1h',
+        'mean_latency_1h',
+        'latest_relative_latency',
+        'latest_latency',
+        'global_relative_latency',
+        'global_latency',
+    )
+    deadline = time.time() + max(0.0, timeout)
+
+    while True:
+        metrics = rtlola_monitor.get_all_metrics(timeout=0.0)
+        for metric_name in metric_names:
+            value = metrics.get(metric_name)
+            if value is None:
+                continue
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value) and value > 0:
+                return value, metric_name
+
+        if time.time() >= deadline:
+            return None, None
+        time.sleep(0.001)
+
+
+def _minimum_delivery_time(cfg: Cfg, space: Space, target_room: Room) -> float:
+    if target_room is None:
+        return 0.0
+
+    try:
+        distance = target_room.getProximity()[space.getSource()]
+    except KeyError:
+        return 0.0
+
+    return max(
+        0.0,
+        float(cfg.LOAD_TIME) + float(distance) * float(cfg.MOVEMENT_TIME) + float(cfg.DROP_TIME),
+    )
 
 def _logfile_name(cfg: Cfg) -> str:
     base = cfg.RESULTS_DIR
@@ -105,6 +135,21 @@ def _logfile_name(cfg: Cfg) -> str:
     name += '_A' + str(int(cfg.ITEM_SPAWNING_TIME)) + '_L' + str(int(cfg.LOAD_TIME)) + '_M' + str(int(cfg.MOVEMENT_TIME)) + '_D' + str(int(cfg.DROP_TIME))
     name += '_cp' + str(int(cfg.COMP_TIME)) + '_cm' + str(int(cfg.COMM_TIME)) + '_R' + str(int(cfg.RECOVERY_TIME)) + '.csv'
     return os.path.join(base, name)
+
+
+def _apply_malicious_count(cfg: Cfg, bots, value):
+    try:
+        next_count = int(value)
+    except (TypeError, ValueError):
+        return
+
+    next_count = max(0, min(next_count, len(bots)))
+    if getattr(cfg, 'N_MALICIOUS', None) == next_count:
+        return
+
+    cfg.N_MALICIOUS = next_count
+    for idx, bot in enumerate(bots):
+        bot.malicious = idx < next_count
 
 def getTargetRoom(cfg: Cfg, rooms):
     if cfg.TARGETS == -1:
@@ -279,10 +324,11 @@ def run(config_path='config.json'):
     last_switch_time = -300.0 # Allow immediate switch at start
     min_time_between_switches = 30.0 # Cool-down period (seconds)
     
-    # Latency tracking for adaptation (Python-based)
-    latency_window = []  # Store (timestamp, latency) tuples
+    # Relative-latency tracking for adaptation (Python-based fallback)
+    latency_window = []  # Store (timestamp, relative latency) tuples
     latency_window_duration = 3600.0  # 1 hour window
     item_create_times = {}  # Track when each item was created
+    item_min_delivery_times = {}  # Track ideal delivery time by item
     
     try:
         while clock.getTime() < cfg.SIM_TIME:
@@ -295,6 +341,9 @@ def run(config_path='config.json'):
                 for phase in cfg.PHASES:
                     if phase['start'] <= ts < phase['end']:
                         # Apply phase parameters
+                        if 'N_MALICIOUS' in phase:
+                            _apply_malicious_count(cfg, bots, phase['N_MALICIOUS'])
+
                         if 'FAIL_PROB' in phase and cfg.FAIL_PROB != phase['FAIL_PROB']:
                             cfg.FAIL_PROB = phase['FAIL_PROB']
                             # print(f"[Phase] Time {ts:.1f}: Changed FAIL_PROB to {cfg.FAIL_PROB}")
@@ -355,8 +404,10 @@ def run(config_path='config.json'):
             # Process simulation event
             if event == 'item':
                 trg = getTargetRoom(cfg, rooms)
-                space.newItem(Item(cfg, logfile, itemIdx, space, ts, imp=-1, target=trg))
+                item = Item(cfg, logfile, itemIdx, space, ts, imp=-1, target=trg)
+                space.newItem(item)
                 item_create_times[itemIdx] = ts  # Track creation time
+                item_min_delivery_times[itemIdx] = _minimum_delivery_time(cfg, space, item.getTarget())
                 itemIdx += 1
                 random.shuffle(botsRandomOrder)
                 for bot in botsRandomOrder:
@@ -380,9 +431,11 @@ def run(config_path='config.json'):
                 if item_before_move is not None and bot.getLocation() == delivery_destination:
                     if delivery_item_id in item_create_times:
                         delivery_latency = ts - item_create_times[delivery_item_id]
+                        min_delivery_time = item_min_delivery_times.get(delivery_item_id, 0.0)
+                        relative_latency = max(0.0, delivery_latency - min_delivery_time)
                         
                         if delivery_latency > 0:
-                            latency_window.append((ts, delivery_latency))
+                            latency_window.append((ts, relative_latency))
                             
                             latency_window = [(t, lat) for t, lat in latency_window if ts - t <= latency_window_duration]
                     
@@ -399,6 +452,10 @@ def run(config_path='config.json'):
             # Check for architecture adaptation (score-based)
             if rtlola_monitor and rtlola_monitor.is_running() and (ts - last_adaptation_check) >= adaptation_interval:
                 last_adaptation_check = ts
+                try:
+                    rtlola_monitor.send_event(ts, -1, -1, -1, -1, -1, "adaptation_check")
+                except Exception as e:
+                    print(f"[RTLola] Error sending adaptation check: {e}")
                 
                 # Start overhead measurement
                 adaptation_start_time = time.time()

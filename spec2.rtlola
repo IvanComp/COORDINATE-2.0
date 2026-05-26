@@ -1,12 +1,11 @@
-// time,robotId,itemId,itemImportance,position,destination,event
-import math
+// time,itemId,event,destination
 input time: Float
 input itemId: Int
 input event: String
 input destination: Int
 
 // Helper streams to simplify event checking
-output created: Bool    := event == "create"
+output created: Bool   := event == "create"
 output delivered: Bool := event == "deliver"
 
 // --- Create Event Stream ---
@@ -14,8 +13,8 @@ output delivered: Bool := event == "deliver"
 output create_item(id):Float
     // Spawn a new instance whenever a 'created' event occurs
     spawn with itemId
-    // This instance starts its monitoring using the time
-    eval when created with time
+    // This instance stores the creation time of the matching item only.
+    eval when id = itemId and created with time
 
 // --- Deliver Event Stream ---
 
@@ -44,7 +43,9 @@ output latency(id)
     // Close the instance once the delivery latency is calculated
     close when id = itemId and delivered
 
-output offset:Float := 
+// Minimum expected delivery time from the source room to each destination in
+// the GUH73 scenario: loading + shortest-path movement + drop.
+output min_delivery_time: Float :=
 if destination == 1 then 7.0
 else if destination == 2 then 12.0
 else if destination == 3 then 17.0
@@ -116,14 +117,24 @@ else if destination == 68 then 67.0
 else if destination == 69 then 72.0
 else if destination == 70 then 57.0
 else if destination == 71 then 62.0
-else 67.0
+else if destination == 72 then 67.0
+else 0.0
 
 
-// Calculate latency when an item is delivered
-output global_latency eval when delivered with time - create_item(itemId).hold(or: 0.0)
+// Calculate relative latency when an item is delivered.
+// The backwards-compatible global_latency alias now contains relative latency.
+output global_relative_latency eval when delivered with if time - create_item(itemId).hold(or: 0.0) - min_delivery_time < 0.0 then 0.0
+    else time - create_item(itemId).hold(or: 0.0) - min_delivery_time
 
-// Hold the latest latency value and emit it periodically
-output latest_latency eval @0.5Hz with global_latency.hold(or: 0.0)
+output global_latency eval when delivered with if time - create_item(itemId).hold(or: 0.0) - min_delivery_time < 0.0 then 0.0
+    else time - create_item(itemId).hold(or: 0.0) - min_delivery_time
 
-// Calculate mean latency over the last hour using the periodic latest_latency
-output mean_latency_1h eval @0.5Hz with latest_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0)
+// Emit monitor signals every 10 simulated seconds. The simulator sends
+// adaptation_check inputs to advance the offline monitor clock even when no
+// create/deliver event occurs exactly at the check time.
+output latest_relative_latency eval @0.1Hz with global_relative_latency.hold(or: 0.0)
+output latest_latency eval @0.1Hz with global_relative_latency.hold(or: 0.0)
+
+// Calculate mean relative latency over delivered items in the last simulated hour.
+output mean_relative_latency_1h eval @0.1Hz with global_relative_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0)
+output mean_latency_1h eval @0.1Hz with global_relative_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0)

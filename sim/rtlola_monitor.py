@@ -96,7 +96,10 @@ class RTLolaMonitor:
                     "monitor",
                     "--stdin",
                     self.spec_file,
-                    "--online",
+                    "--offline",
+                    "relative",
+                    "--csv-time-column",
+                    "1",
                     "-v",
                     "outputs"
                 ],
@@ -124,11 +127,17 @@ class RTLolaMonitor:
             )
             self.stderr_thread.start()
             
-            # Send CSV header for spec2.rtlola format
+            # Send CSV header for spec2.rtlola format. In offline mode, column
+            # 1 is also used as the monitor timestamp, so RTLola windows are
+            # evaluated over simulation time rather than wall-clock time.
             # We write this directly to ensure it goes first
             header = "time,itemId,event,destination\n"
             self.proc.stdin.write(header)
             self.proc.stdin.flush()
+            # Give the CLI a short startup window before the simulator begins
+            # streaming accelerated traces; otherwise the first adaptation
+            # query can race with monitor initialization.
+            time.sleep(0.2)
             
             # print(f"[RTLola] Monitor started with PID {self.proc.pid}")
             

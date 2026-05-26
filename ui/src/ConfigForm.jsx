@@ -84,7 +84,7 @@ const FIELD_METADATA = {
     LATENCY_THRESHOLD_LOW: { label: "Low Latency Threshold", description: "Below this latency, dynamic adaptation prefers centralized-impprox." },
     LATENCY_THRESHOLD_HIGH: { label: "High Latency Threshold", description: "Above this latency, dynamic adaptation prefers decentralized coordination." },
     N_ROBOTS: { label: "Number of Agents", description: "Total number of agents in the fleet." },
-    N_MALICIOUS: { label: "Number of Malicious Agent", description: "Number of agents that may fail or act maliciously." },
+    N_MALICIOUS: { label: "Number of Malicious Agents", description: "Number of agents that may fail or act maliciously." },
     SIM_TIME: { label: "Simulation Window (s)", description: "Duration of the simulation in seconds." },
     N_REPETITIONS: { label: "N° Repetitions", description: "Number of independent simulation runs used to compute the final average CSV." },
     FAIL_PROB: { label: "Failure Probability", description: "Probability of an agent failing during operation (0-1)." },
@@ -346,6 +346,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                 {
                     start: fallbackStart,
                     end: fallbackEnd,
+                    N_MALICIOUS: prev.N_MALICIOUS,
                     FAIL_PROB: prev.FAIL_PROB,
                     COMM_FAIL_PROB: prev.COMM_FAIL_PROB,
                     RECOVERY_TIME: prev.RECOVERY_TIME,
@@ -414,6 +415,10 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
         .map(phase => ({
             start: Number(phase.start),
             end: Number(phase.end),
+            N_MALICIOUS: Math.min(
+                Math.max(0, Math.trunc(Number(phase.N_MALICIOUS ?? config.N_MALICIOUS ?? 0))),
+                Math.max(0, Math.trunc(Number(config.N_ROBOTS) || 0))
+            ),
             FAIL_PROB: Number(phase.FAIL_PROB),
             COMM_FAIL_PROB: Number(phase.COMM_FAIL_PROB),
             RECOVERY_TIME: Number(phase.RECOVERY_TIME),
@@ -421,6 +426,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
         .filter(phase => Number.isFinite(phase.start)
             && Number.isFinite(phase.end)
             && phase.end > phase.start
+            && Number.isFinite(phase.N_MALICIOUS)
             && Number.isFinite(phase.FAIL_PROB)
             && Number.isFinite(phase.COMM_FAIL_PROB)
             && Number.isFinite(phase.RECOVERY_TIME));
@@ -839,7 +845,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                     />
 
                     <TextField
-                        label="Number of Malicious Agent"
+                        label="Number of Malicious Agents"
                         type="number"
                         size="small"
                         value={config.N_MALICIOUS}
@@ -1106,7 +1112,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                     {activeTab === 'runtime' && (
                         <>
                             <Box sx={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.8rem', lineHeight: 1.5 }}>
-                                Define optional runtime windows that change adverse-event parameters while the simulation is running.
+                                Define optional fault-tolerant time windows that change adverse-event parameters while the simulation is running.
                             </Box>
 
                             {config.PHASES.map((phase, index) => (
@@ -1124,7 +1130,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                 >
                                     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                         <Typography sx={{ color: '#fff', fontSize: '0.85rem', fontWeight: 600 }}>
-                                            Runtime Window {index + 1}
+                                            Fault-Tolerant Time Window {index + 1}
                                         </Typography>
                                         <IconButton size="small" onClick={() => removePhase(index)} sx={{ color: 'rgba(255,255,255,0.8)' }}>
                                             <DeleteOutline fontSize="small" />
@@ -1167,6 +1173,25 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                             }}
                                         />
                                     </Box>
+
+                                    <TextField
+                                        label="Number of Malicious Agents"
+                                        type="number"
+                                        size="small"
+                                        inputProps={{ min: 0, max: config.N_ROBOTS, step: 1 }}
+                                        value={phase.N_MALICIOUS ?? config.N_MALICIOUS}
+                                        onChange={(e) => handlePhaseChange(index, 'N_MALICIOUS', parseInt(e.target.value || '0', 10))}
+                                        sx={{
+                                            '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                            '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                            '& .MuiOutlinedInput-root': {
+                                                color: '#fff',
+                                                '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                                '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                                '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                            }
+                                        }}
+                                    />
 
                                     <TextField
                                         label="Failure Probability"
@@ -1236,7 +1261,7 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                     '&:hover': { borderColor: 'rgba(255,255,255,0.45)' }
                                 }}
                             >
-                                Add Runtime Window
+                                Fault-Tolerant Time Window
                             </Button>
                         </>
                     )}
