@@ -60,6 +60,14 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('LATENCY_THRESHOLD_LOW', 10.0)
     d.setdefault('LATENCY_THRESHOLD_HIGH', 40.0)
     d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.05)
+    d.setdefault('ADAPTIVE_THRESHOLDS', True)
+    d.setdefault('ADAPTIVE_THRESHOLD_WINDOW', 12)
+    d.setdefault('ADAPTIVE_THRESHOLD_WARMUP', 4)
+    d.setdefault('ADAPTIVE_THRESHOLD_MIN_SPREAD', 5.0)
+    d.setdefault('ADAPTIVE_THRESHOLD_LOW_MULTIPLIER', 0.5)
+    d.setdefault('ADAPTIVE_THRESHOLD_HIGH_MULTIPLIER', 2.0)
+    d.setdefault('ADAPTIVE_THRESHOLD_HYSTERESIS', 0.10)
+    d.setdefault('ADAPTIVE_THRESHOLD_MIN_MARGIN', 1.0)
     # Keep simulator resilient if frontend payload omits optional fields.
     d.setdefault('IMPORTANCE_PROBABILITIES', [0.5, 0.1, 0.4])
     d.setdefault('EXPIRATION_TIME', [-1, -1, -1])
@@ -329,6 +337,7 @@ def run(config_path='config.json'):
     latency_window_duration = 3600.0  # 1 hour window
     item_create_times = {}  # Track when each item was created
     item_min_delivery_times = {}  # Track ideal delivery time by item
+    adaptation_latency_history = []  # Store aggregate latency seen at adaptation checks
     
     try:
         while clock.getTime() < cfg.SIM_TIME:
@@ -482,7 +491,7 @@ def run(config_path='config.json'):
                         smoothed_latency = alpha * raw_latency + (1 - alpha) * smoothed_latency
                         
                     # Import scoring functions
-                    from .architecture_scoring import select_best_architecture
+                    from .architecture_scoring import get_latency_thresholds, select_best_architecture
                     
                     # Calculate scores for all architectures
                     scoring_start = time.time()
@@ -492,7 +501,14 @@ def run(config_path='config.json'):
                     current_arch = cfg.current_architecture
                     
                     if time_since_last_switch >= min_time_between_switches:
-                        best_arch, scores = select_best_architecture(cfg, smoothed_latency)
+                        threshold_context = get_latency_thresholds(cfg, adaptation_latency_history)
+                        best_arch, scores = select_best_architecture(
+                            cfg,
+                            smoothed_latency,
+                            latency_history=adaptation_latency_history,
+                            current_architecture=current_arch,
+                            thresholds=threshold_context,
+                        )
                         
                         # Apply architecture switch if needed
                         if best_arch != current_arch:
@@ -509,8 +525,15 @@ def run(config_path='config.json'):
                         # In cool-down, stick with current
                         scoring_time = 0 # No scoring done
                         best_arch = cfg.current_architecture
+                        threshold_context = get_latency_thresholds(cfg, adaptation_latency_history)
                         
                     scoring_time = time.time() - scoring_start
+                    adaptation_latency_history.append(smoothed_latency)
+                    try:
+                        history_limit = max(1, int(getattr(cfg, 'ADAPTIVE_THRESHOLD_WINDOW', 12)))
+                    except (TypeError, ValueError):
+                        history_limit = 12
+                    adaptation_latency_history = adaptation_latency_history[-history_limit:]
                     
                     # Record overhead for this check
                     check_overhead = time.time() - adaptation_start_time
@@ -523,6 +546,10 @@ def run(config_path='config.json'):
                         'switched': best_arch != current_arch,
                         'latency': smoothed_latency,
                         'latency_source': latency_source,
+                        'threshold_low': threshold_context.get('low'),
+                        'threshold_high': threshold_context.get('high'),
+                        'threshold_mode': threshold_context.get('mode'),
+                        'threshold_history_size': threshold_context.get('history_size'),
                         'current_architecture': current_arch,
                         'selected_architecture': best_arch
                     })
@@ -542,6 +569,10 @@ def run(config_path='config.json'):
                         'switched': False,
                         'latency': None,
                         'latency_source': latency_source,
+                        'threshold_low': None,
+                        'threshold_high': None,
+                        'threshold_mode': 'none',
+                        'threshold_history_size': len(adaptation_latency_history),
                         'current_architecture': cfg.current_architecture,
                         'selected_architecture': cfg.current_architecture
                     })

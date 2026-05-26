@@ -99,17 +99,20 @@ Access the application at **http://localhost:5173**
 
 #### Dynamic-Adaptation Architecture
 
-The dynamic-adaptation architecture monitors delivery latency in real-time and automatically switches between coordination strategies to optimize performance:
+The dynamic-adaptation architecture monitors relative delivery latency in simulation time and automatically switches between coordination strategies to optimize performance. By default, thresholds are self-calibrated from recent latency observations after a short warm-up:
 
-- **High Latency** (> threshold): Switches to `decentralized` to reduce coordination overhead
-- **Low Latency** (< threshold): Switches to `centralized-impprox` for optimal task allocation  
+- **High Latency** (> adaptive high threshold): Switches to `decentralized` to reduce coordination overhead
+- **Low Latency** (< adaptive low threshold): Switches to `centralized-impprox` for optimal task allocation
 - **Medium Latency**: Uses `semi-decentralized` for balanced performance
 
 **Configuration Parameters:**
 - `INITIAL_ARCHITECTURE`: Starting strategy (default: `semi-decentralized`)
 - `ADAPTATION_CHECK_INTERVAL`: How often to check metrics in seconds (default: 300)
-- `LATENCY_THRESHOLD_LOW`: Switch to centralized if below this (default: 10)
-- `LATENCY_THRESHOLD_HIGH`: Switch to decentralized if above this (default: 40)
+- `ADAPTIVE_THRESHOLDS`: Enable online threshold calibration (default: `true`)
+- `ADAPTIVE_THRESHOLD_WINDOW`: Number of recent adaptation checks used for calibration (default: 12)
+- `ADAPTIVE_THRESHOLD_WARMUP`: Number of checks that use static thresholds before calibration starts (default: 4)
+- `LATENCY_THRESHOLD_LOW`: Static/fallback low threshold (default: 10)
+- `LATENCY_THRESHOLD_HIGH`: Static/fallback high threshold (default: 40)
 
 Architecture switches are logged in the CSV output with event type `switch_architecture_{new_arch}`.
 

@@ -44,12 +44,15 @@ Example configuration:
 | `RTLOLA_BINARY_PATH` | `~/.cargo/bin/rtlola-cli` | Path to RTLola CLI |
 | `RTLOLA_SPEC_FILE` | `spec2.rtlola` | RTLola specification file |
 | `ADAPTATION_CHECK_INTERVAL` | `300.0` | Check metrics every N seconds |
-| `LATENCY_THRESHOLD_LOW` | `10.0` | Switch to centralized if latency < this |
-| `LATENCY_THRESHOLD_HIGH` | `40.0` | Switch to decentralized if latency > this |
+| `ADAPTIVE_THRESHOLDS` | `true` | Learn thresholds online from recent latency checks |
+| `ADAPTIVE_THRESHOLD_WINDOW` | `12` | Number of recent checks used for calibration |
+| `ADAPTIVE_THRESHOLD_WARMUP` | `4` | Number of checks that use static thresholds before calibration starts |
+| `LATENCY_THRESHOLD_LOW` | `10.0` | Static/fallback low-latency threshold |
+| `LATENCY_THRESHOLD_HIGH` | `40.0` | Static/fallback high-latency threshold |
 
 ### Architecture Switching Logic
 
-The system monitors delivery latency and switches architectures based on thresholds:
+The system monitors relative delivery latency and switches architectures based on adaptive thresholds. During warm-up, it uses the static fallback thresholds. After warm-up, it estimates a robust baseline from recent checks using median/MAD and applies a small hysteresis margin to avoid oscillating near a boundary:
 
 - **Latency > HIGH threshold** → Switch to `decentralized` (reduce coordination overhead)
 - **Latency < LOW threshold** → Switch to `centralized-impprox` (optimize task allocation)
@@ -73,10 +76,8 @@ Example output:
 
 The RTLola specification (`spec2.rtlola`) monitors:
 
-- **Delivery latency**: Time from item creation to delivery
-- **Mean latency (1h)**: Rolling average over 1-hour window
-- **Failures**: Count of robot failures
-- **Robot utilization**: Percentage of busy robots
+- **Relative delivery latency**: Delivery time minus the minimum expected delivery time for the destination
+- **Mean relative latency (1h)**: Rolling average over delivered items in the last simulated hour
 
 ## Troubleshooting
 

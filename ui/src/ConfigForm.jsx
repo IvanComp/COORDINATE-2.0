@@ -49,6 +49,11 @@ const DEFAULTS = {
     MALICIOUS_FAKE_FAILURES: false,
     INITIAL_ARCHITECTURE: "semi-decentralized",
     ADAPTATION_CHECK_INTERVAL: 300.0,
+    ADAPTIVE_THRESHOLDS: true,
+    ADAPTIVE_THRESHOLD_WINDOW: 12,
+    ADAPTIVE_THRESHOLD_WARMUP: 4,
+    ADAPTIVE_THRESHOLD_MIN_SPREAD: 5.0,
+    ADAPTIVE_THRESHOLD_HYSTERESIS: 0.10,
     LATENCY_THRESHOLD_LOW: 10.0,
     LATENCY_THRESHOLD_HIGH: 40.0,
     FIND_ROUTE_STRATEGY: "breadth",
@@ -81,8 +86,11 @@ const FIELD_METADATA = {
     ARCHITECTURE: { label: "Coordination Mechanism", description: "The strategy agents use to coordinate tasks." },
     INITIAL_ARCHITECTURE: { label: "Initial Architecture", description: "Coordination mechanism used at the beginning of a dynamic-adaptation run." },
     ADAPTATION_CHECK_INTERVAL: { label: "Adaptation Check Interval", description: "Simulation-time interval, in seconds, between two dynamic-adaptation checks." },
-    LATENCY_THRESHOLD_LOW: { label: "Low Latency Threshold", description: "Below this latency, dynamic adaptation prefers centralized-impprox." },
-    LATENCY_THRESHOLD_HIGH: { label: "High Latency Threshold", description: "Above this latency, dynamic adaptation prefers decentralized coordination." },
+    ADAPTIVE_THRESHOLDS: { label: "Adaptive Thresholds", description: "Learn latency thresholds online from recent adaptation checks." },
+    ADAPTIVE_THRESHOLD_WINDOW: { label: "Adaptive Window", description: "Number of recent adaptation checks used to calibrate thresholds." },
+    ADAPTIVE_THRESHOLD_WARMUP: { label: "Adaptive Warm-Up", description: "Number of checks that use fallback thresholds before adaptive calibration starts." },
+    LATENCY_THRESHOLD_LOW: { label: "Fallback Low Latency Threshold", description: "Fallback threshold used during warm-up or when adaptive thresholds are disabled." },
+    LATENCY_THRESHOLD_HIGH: { label: "Fallback High Latency Threshold", description: "Fallback threshold used during warm-up or when adaptive thresholds are disabled." },
     N_ROBOTS: { label: "Number of Agents", description: "Total number of agents in the fleet." },
     N_MALICIOUS: { label: "Number of Malicious Agents", description: "Number of agents that may fail or act maliciously." },
     SIM_TIME: { label: "Simulation Window (s)", description: "Duration of the simulation in seconds." },
@@ -729,6 +737,24 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                 </Select>
                             </FormControl>
 
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={Boolean(config.ADAPTIVE_THRESHOLDS)}
+                                        onChange={(e) => handleChange('ADAPTIVE_THRESHOLDS', e.target.checked)}
+                                    />
+                                }
+                                label={
+                                    <Box display="flex" alignItems="center" gap={0.5}>
+                                        Adaptive Thresholds
+                                        <Box component="span" title={FIELD_METADATA.ADAPTIVE_THRESHOLDS.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                            <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                        </Box>
+                                    </Box>
+                                }
+                                sx={{ color: '#fff', m: 0 }}
+                            />
+
                             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 1 }}>
                                 <TextField
                                     label="Adapt Check (s)"
@@ -809,6 +835,63 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                     }}
                                 />
                             </Box>
+
+                            {config.ADAPTIVE_THRESHOLDS && (
+                                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1 }}>
+                                    <TextField
+                                        label="Adaptive Window"
+                                        type="number"
+                                        size="small"
+                                        value={config.ADAPTIVE_THRESHOLD_WINDOW}
+                                        onChange={(e) => handleChange('ADAPTIVE_THRESHOLD_WINDOW', parseInt(e.target.value || '1', 10))}
+                                        InputProps={{
+                                            endAdornment: (
+                                                <InputAdornment position="end">
+                                                    <Box component="span" title={FIELD_METADATA.ADAPTIVE_THRESHOLD_WINDOW.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                        <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                                    </Box>
+                                                </InputAdornment>
+                                            )
+                                        }}
+                                        sx={{
+                                            '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                            '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                            '& .MuiOutlinedInput-root': {
+                                                color: '#fff',
+                                                '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                                '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                                '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                            }
+                                        }}
+                                    />
+                                    <TextField
+                                        label="Warm-Up Checks"
+                                        type="number"
+                                        size="small"
+                                        value={config.ADAPTIVE_THRESHOLD_WARMUP}
+                                        onChange={(e) => handleChange('ADAPTIVE_THRESHOLD_WARMUP', parseInt(e.target.value || '1', 10))}
+                                        InputProps={{
+                                            endAdornment: (
+                                                <InputAdornment position="end">
+                                                    <Box component="span" title={FIELD_METADATA.ADAPTIVE_THRESHOLD_WARMUP.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                        <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                                    </Box>
+                                                </InputAdornment>
+                                            )
+                                        }}
+                                        sx={{
+                                            '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                            '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                            '& .MuiOutlinedInput-root': {
+                                                color: '#fff',
+                                                '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                                '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                                '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                            }
+                                        }}
+                                    />
+                                </Box>
+                            )}
                         </>
                     )}
                         </>

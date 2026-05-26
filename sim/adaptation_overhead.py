@@ -53,6 +53,8 @@ def log_overhead_statistics(
             writer = csv.DictWriter(f, fieldnames=[
                 'sim_time', 'total_overhead_ms', 'rtlola_query_ms',
                 'scoring_ms', 'switched', 'latency', 'latency_source',
+                'threshold_low', 'threshold_high', 'threshold_mode',
+                'threshold_history_size',
                 'current_architecture', 'selected_architecture'
             ])
             writer.writeheader()
