@@ -17,6 +17,7 @@ class Cfg:
             self.current_architecture = self.ARCHITECTURE
         # RTLola monitor reference (set by simulator)
         self.rtlola_monitor = None
+        self.da_message_events = []
     
     def set_architecture(self, new_arch: str):
         """Update the current architecture at runtime (for dynamic-adaptation)."""
@@ -25,6 +26,10 @@ class Cfg:
             return
         self.current_architecture = new_arch
         # print(f'[ADAPTATION] Switched architecture to: {new_arch}')
+
+    def record_coordination_message(self, simTime: float, delivered: bool):
+        """Track coordination-message outcomes for dynamic-adaptation metrics."""
+        self.da_message_events.append((simTime, bool(delivered)))
 
 class Clock:
     def __init__(self):
@@ -307,8 +312,16 @@ class Robot:
         elif not (self.isFree() and self.position == self.space.getSource()):
             self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
         # malicious fake messages
-        if self.isHealthy() and self.malicious and self.cfg.MALICIOUS_FAKE_FAILURES and not (np.random.uniform() < self.cfg.COMM_FAIL_PROB):
-            self._fakeFailure(nextRoom, simTime)
+        if self.isHealthy() and self.malicious and self.cfg.MALICIOUS_FAKE_FAILURES:
+            message_lost = np.random.uniform() < self.cfg.COMM_FAIL_PROB
+            uses_coordination_message = (
+                self.cfg.current_architecture == 'semi-decentralized'
+                or 'centralized-' in self.cfg.current_architecture
+            )
+            if uses_coordination_message and hasattr(self.cfg, 'record_coordination_message'):
+                self.cfg.record_coordination_message(simTime, not message_lost)
+            if not message_lost:
+                self._fakeFailure(nextRoom, simTime)
 
     def _fail(self, simTime):
         if np.random.uniform() < self.cfg.FAIL_PROB:
@@ -317,7 +330,14 @@ class Robot:
             if self.item is not None:
                 itemToDrop = self.item
                 self.dropItem(simTime)
-                if not (np.random.uniform() < self.cfg.COMM_FAIL_PROB):
+                message_lost = np.random.uniform() < self.cfg.COMM_FAIL_PROB
+                uses_coordination_message = (
+                    self.cfg.current_architecture == 'semi-decentralized'
+                    or 'centralized-' in self.cfg.current_architecture
+                )
+                if uses_coordination_message and hasattr(self.cfg, 'record_coordination_message'):
+                    self.cfg.record_coordination_message(simTime, not message_lost)
+                if not message_lost:
                     if self.cfg.current_architecture == 'semi-decentralized':
                         importance = itemToDrop.getImportance() if not self.malicious else len(self.cfg.IMPORTANCE_PROBABILITIES) + 1
                         self._sendPeers(importance, self.position, simTime)

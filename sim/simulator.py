@@ -56,7 +56,12 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('MALICIOUS_FAKE_FAILURES', True)
     d.setdefault('FIND_ROUTE_STRATEGY', 'breadth')
     d.setdefault('INITIAL_ARCHITECTURE', 'semi-decentralized')
+    d.setdefault('ADAPTATION_POLICY', 'hybrid-score')
     d.setdefault('ADAPTATION_CHECK_INTERVAL', 300.0)
+    d.setdefault('ADAPTATION_WINDOW', 3600.0)
+    d.setdefault('ADAPTATION_MIN_SWITCH_INTERVAL', 30.0)
+    d.setdefault('ADAPTATION_PERSISTENCE_CHECKS', 2)
+    d.setdefault('ADAPTATION_CRITICAL_BYPASS_PERSISTENCE', True)
     d.setdefault('LATENCY_THRESHOLD_LOW', 10.0)
     d.setdefault('LATENCY_THRESHOLD_HIGH', 40.0)
     d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.05)
@@ -68,6 +73,25 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('ADAPTIVE_THRESHOLD_HIGH_MULTIPLIER', 2.0)
     d.setdefault('ADAPTIVE_THRESHOLD_HYSTERESIS', 0.10)
     d.setdefault('ADAPTIVE_THRESHOLD_MIN_MARGIN', 1.0)
+    d.setdefault('ADAPTATION_SCORE_LOW', 0.35)
+    d.setdefault('ADAPTATION_SCORE_HIGH', 0.65)
+    d.setdefault('ADAPTATION_SCORE_HYSTERESIS', 0.05)
+    d.setdefault('ADAPTATION_WEIGHT_LATENCY', 0.65)
+    d.setdefault('ADAPTATION_WEIGHT_PENDING', 0.20)
+    d.setdefault('ADAPTATION_WEIGHT_FAILURE', 0.10)
+    d.setdefault('ADAPTATION_WEIGHT_MESSAGE_LOSS', 0.05)
+    d.setdefault('ADAPTATION_PENDING_REF', 1.0)
+    d.setdefault('ADAPTATION_FAILURE_REF', 0.50)
+    d.setdefault('ADAPTATION_PENDING_CRITICAL_RATIO', 2.0)
+    d.setdefault('ADAPTATION_FAILURE_CRITICAL_RATE', 1.25)
+    d.setdefault('ADAPTATION_MESSAGE_CRITICAL_LOSS', 0.60)
+    d.setdefault('ADAPTATION_FD_MESSAGE_LOSS_THRESHOLD', 0.35)
+    d.setdefault('ADAPTATION_FD_COMM_FAIL_PROB_THRESHOLD', 0.35)
+    d.setdefault('ADAPTATION_FD_MALICIOUS_RATIO_THRESHOLD', 0.50)
+    d.setdefault('ADAPTATION_FD_FAILURE_RATE_THRESHOLD', 999.0)
+    d.setdefault('ADAPTATION_RECOVERY_FAIL_PROB_THRESHOLD', 0.08)
+    d.setdefault('ADAPTATION_RECOVERY_COMM_FAIL_THRESHOLD', 0.05)
+    d.setdefault('ADAPTATION_RECOVERY_MALICIOUS_RATIO_THRESHOLD', 0.20)
     # Keep simulator resilient if frontend payload omits optional fields.
     d.setdefault('IMPORTANCE_PROBABILITIES', [0.5, 0.1, 0.4])
     d.setdefault('EXPIRATION_TIME', [-1, -1, -1])
@@ -125,6 +149,69 @@ def _minimum_delivery_time(cfg: Cfg, space: Space, target_room: Room) -> float:
         0.0,
         float(cfg.LOAD_TIME) + float(distance) * float(cfg.MOVEMENT_TIME) + float(cfg.DROP_TIME),
     )
+
+
+def _prune_times(values, now: float, window: float):
+    return [value for value in values if now - value <= window]
+
+
+def _cfg_bool(cfg: Cfg, name: str, default: bool) -> bool:
+    value = getattr(cfg, name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _recent_message_counts(cfg: Cfg, now: float, window: float):
+    events = getattr(cfg, 'da_message_events', [])
+    events = [(t, delivered) for t, delivered in events if now - t <= window]
+    cfg.da_message_events = events
+    sent = len(events)
+    lost = sum(1 for _, delivered in events if not delivered)
+    return sent, lost
+
+
+def _runtime_adaptation_metrics(
+    cfg: Cfg,
+    space: Space,
+    now: float,
+    created_window,
+    failure_window,
+    window: float,
+) -> dict:
+    created_window = _prune_times(created_window, now, window)
+    failure_window = _prune_times(failure_window, now, window)
+    messages_sent, messages_lost = _recent_message_counts(cfg, now, window)
+
+    pending_tasks = len(space.availItems) + len(space.movingItems)
+    created_count = len(created_window)
+    pending_ratio = pending_tasks / max(1, created_count)
+    failure_rate = len(failure_window) / max(1, int(cfg.N_ROBOTS))
+    message_loss_rate = messages_lost / max(1, messages_sent)
+
+    return {
+        'pending_tasks': pending_tasks,
+        'created_window': created_count,
+        'pending_ratio': pending_ratio,
+        'failures_window': len(failure_window),
+        'failure_rate': failure_rate,
+        'messages_sent': messages_sent,
+        'messages_lost': messages_lost,
+        'message_loss_rate': message_loss_rate,
+    }, created_window, failure_window
+
+
+def _candidate_persisted(candidate_history, candidate, required_checks: int):
+    if required_checks <= 1:
+        return True, [candidate]
+    candidate_history.append(candidate)
+    candidate_history = candidate_history[-required_checks:]
+    return (
+        len(candidate_history) == required_checks
+        and all(value == candidate for value in candidate_history)
+    ), candidate_history
 
 def _logfile_name(cfg: Cfg) -> str:
     base = cfg.RESULTS_DIR
@@ -241,6 +328,10 @@ def _build_custom_topology(cfg: Cfg):
 
 def run(config_path='config.json'):
     cfg = _build_cfg(config_path)
+    seed = getattr(cfg, 'RANDOM_SEED', None)
+    if seed is not None:
+        random.seed(int(seed))
+        np.random.seed(int(seed))
     # print("DEBUG: Loaded Config:", json.dumps(cfg.__dict__, indent=2))
     
     # Validate architecture
@@ -330,11 +421,14 @@ def run(config_path='config.json'):
     smoothed_latency = None
     alpha = 0.2 # Smoothing factor for EMA
     last_switch_time = -300.0 # Allow immediate switch at start
-    min_time_between_switches = 30.0 # Cool-down period (seconds)
+    min_time_between_switches = float(getattr(cfg, 'ADAPTATION_MIN_SWITCH_INTERVAL', 30.0))
+    candidate_history = []
     
     # Relative-latency tracking for adaptation (Python-based fallback)
     latency_window = []  # Store (timestamp, relative latency) tuples
-    latency_window_duration = 3600.0  # 1 hour window
+    latency_window_duration = float(getattr(cfg, 'ADAPTATION_WINDOW', 3600.0))
+    created_window = []
+    failure_window = []
     item_create_times = {}  # Track when each item was created
     item_min_delivery_times = {}  # Track ideal delivery time by item
     adaptation_latency_history = []  # Store aggregate latency seen at adaptation checks
@@ -417,6 +511,8 @@ def run(config_path='config.json'):
                 space.newItem(item)
                 item_create_times[itemIdx] = ts  # Track creation time
                 item_min_delivery_times[itemIdx] = _minimum_delivery_time(cfg, space, item.getTarget())
+                created_window.append(ts)
+                created_window = _prune_times(created_window, ts, latency_window_duration)
                 itemIdx += 1
                 random.shuffle(botsRandomOrder)
                 for bot in botsRandomOrder:
@@ -435,7 +531,11 @@ def run(config_path='config.json'):
                 delivery_destination_id = delivery_destination.getIdx() if delivery_destination is not None else -1
 
                 # Process the move first: delivery is triggered inside Robot.move().
+                was_healthy = bot.isHealthy()
                 bots[idx].move(ts)
+                if was_healthy and not bot.isHealthy():
+                    failure_window.append(ts)
+                    failure_window = _prune_times(failure_window, ts, latency_window_duration)
 
                 if item_before_move is not None and bot.getLocation() == delivery_destination:
                     if delivery_item_id in item_create_times:
@@ -482,100 +582,141 @@ def run(config_path='config.json'):
                     raw_latency = python_latency
                     latency_source = 'python_window' if python_latency is not None else 'none'
                 rtlola_query_time = time.time() - rtlola_query_start
-                
+
+                runtime_metrics, created_window, failure_window = _runtime_adaptation_metrics(
+                    cfg,
+                    space,
+                    ts,
+                    created_window,
+                    failure_window,
+                    latency_window_duration,
+                )
+
                 if raw_latency is not None:
-                    # Update Smoothed Latency (EMA)
                     if smoothed_latency is None:
                         smoothed_latency = raw_latency
                     else:
                         smoothed_latency = alpha * raw_latency + (1 - alpha) * smoothed_latency
-                        
-                    # Import scoring functions
-                    from .architecture_scoring import get_latency_thresholds, select_best_architecture
-                    
-                    # Calculate scores for all architectures
-                    scoring_start = time.time()
-                    
-                    # Only consider switching if cool-down period has passed
-                    time_since_last_switch = ts - last_switch_time
-                    current_arch = cfg.current_architecture
-                    
-                    if time_since_last_switch >= min_time_between_switches:
-                        threshold_context = get_latency_thresholds(cfg, adaptation_latency_history)
-                        best_arch, scores = select_best_architecture(
+
+                effective_latency = smoothed_latency if smoothed_latency is not None else raw_latency
+
+                scoring_start = time.time()
+                current_arch = cfg.current_architecture
+                candidate_arch = current_arch
+                best_arch = current_arch
+                scores = {}
+                score_details = {}
+                switch_reason = 'no_latency'
+
+                # Import scoring functions
+                from .architecture_scoring import get_latency_thresholds
+                threshold_context = get_latency_thresholds(cfg, adaptation_latency_history)
+
+                time_since_last_switch = ts - last_switch_time
+                if time_since_last_switch < min_time_between_switches:
+                    switch_reason = 'cooldown'
+                else:
+                    policy = str(getattr(cfg, 'ADAPTATION_POLICY', 'hybrid-score')).lower()
+                    if policy in {'latency-threshold', 'legacy', 'latency'}:
+                        if effective_latency is not None:
+                            from .architecture_scoring import select_best_architecture
+                            candidate_arch, scores = select_best_architecture(
+                                cfg,
+                                effective_latency,
+                                latency_history=adaptation_latency_history,
+                                current_architecture=current_arch,
+                                thresholds=threshold_context,
+                            )
+                            best_arch = candidate_arch
+                            switch_reason = 'latency_threshold'
+                    else:
+                        from .architecture_scoring import select_hybrid_architecture
+                        candidate_arch, scores, score_details = select_hybrid_architecture(
                             cfg,
-                            smoothed_latency,
+                            effective_latency,
+                            runtime_metrics=runtime_metrics,
                             latency_history=adaptation_latency_history,
                             current_architecture=current_arch,
                             thresholds=threshold_context,
                         )
-                        
-                        # Apply architecture switch if needed
-                        if best_arch != current_arch:
-                            adaptation_switch_count += 1
-                            last_switch_time = ts
-                            cfg.set_architecture(best_arch)
-                            # Log architecture switch
-                            with open(logfile, 'a') as f:
-                                f.write(f'{ts},-2,-1,-1,-1,-1,switch_architecture_{best_arch}\n')
-                            
-                            # Only print when switching architecture
-                            # print(f"[ADAPTATION] @ {ts:.2f}s: Switched from {current_arch} to {best_arch} (latency={smoothed_latency:.2f})")
-                    else:
-                        # In cool-down, stick with current
-                        scoring_time = 0 # No scoring done
-                        best_arch = cfg.current_architecture
-                        threshold_context = get_latency_thresholds(cfg, adaptation_latency_history)
-                        
-                    scoring_time = time.time() - scoring_start
-                    adaptation_latency_history.append(smoothed_latency)
+                        best_arch = candidate_arch
+                        switch_reason = score_details.get('state', 'hybrid_score')
+
+                    if best_arch != current_arch and policy not in {'latency-threshold', 'legacy', 'latency'}:
+                        required_checks = max(1, int(getattr(cfg, 'ADAPTATION_PERSISTENCE_CHECKS', 2)))
+                        bypass_persistence = (
+                            score_details.get('critical_override', False)
+                            and _cfg_bool(cfg, 'ADAPTATION_CRITICAL_BYPASS_PERSISTENCE', True)
+                        )
+                        persisted, candidate_history = _candidate_persisted(
+                            candidate_history,
+                            candidate_arch,
+                            required_checks,
+                        )
+                        if not (bypass_persistence or persisted):
+                            best_arch = current_arch
+                            switch_reason = f'waiting_persistence_{len(candidate_history)}/{required_checks}'
+                    elif best_arch == current_arch:
+                        candidate_history = []
+
+                    if best_arch != current_arch:
+                        adaptation_switch_count += 1
+                        last_switch_time = ts
+                        cfg.set_architecture(best_arch)
+                        candidate_history = []
+                        with open(logfile, 'a') as f:
+                            f.write(f'{ts},-2,-1,-1,-1,-1,switch_architecture_{best_arch}\n')
+
+                scoring_time = time.time() - scoring_start
+
+                if effective_latency is not None:
+                    adaptation_latency_history.append(effective_latency)
                     try:
                         history_limit = max(1, int(getattr(cfg, 'ADAPTIVE_THRESHOLD_WINDOW', 12)))
                     except (TypeError, ValueError):
                         history_limit = 12
                     adaptation_latency_history = adaptation_latency_history[-history_limit:]
-                    
-                    # Record overhead for this check
-                    check_overhead = time.time() - adaptation_start_time
-                    adaptation_overhead_total += check_overhead
-                    adaptation_overhead_samples.append({
-                        'sim_time': ts,
-                        'total_overhead_ms': check_overhead * 1000,
-                        'rtlola_query_ms': rtlola_query_time * 1000,
-                        'scoring_ms': scoring_time * 1000,
-                        'switched': best_arch != current_arch,
-                        'latency': smoothed_latency,
-                        'latency_source': latency_source,
-                        'threshold_low': threshold_context.get('low'),
-                        'threshold_high': threshold_context.get('high'),
-                        'threshold_mode': threshold_context.get('mode'),
-                        'threshold_history_size': threshold_context.get('history_size'),
-                        'current_architecture': current_arch,
-                        'selected_architecture': best_arch
-                    })
-                    
-                    # # Log overhead info
-                    # print(f"[OVERHEAD] Check #{adaptation_check_count}: {check_overhead*1000:.2f}ms "
-                    #       f"(RTLola: {rtlola_query_time*1000:.2f}ms, Scoring: {scoring_time*1000:.2f}ms)")
-                else:
-                    # No valid latency, still record overhead
-                    check_overhead = time.time() - adaptation_start_time
-                    adaptation_overhead_total += check_overhead
-                    adaptation_overhead_samples.append({
-                        'sim_time': ts,
-                        'total_overhead_ms': check_overhead * 1000,
-                        'rtlola_query_ms': rtlola_query_time * 1000,
-                        'scoring_ms': 0,
-                        'switched': False,
-                        'latency': None,
-                        'latency_source': latency_source,
-                        'threshold_low': None,
-                        'threshold_high': None,
-                        'threshold_mode': 'none',
-                        'threshold_history_size': len(adaptation_latency_history),
-                        'current_architecture': cfg.current_architecture,
-                        'selected_architecture': cfg.current_architecture
-                    })
+
+                check_overhead = time.time() - adaptation_start_time
+                adaptation_overhead_total += check_overhead
+                adaptation_overhead_samples.append({
+                    'sim_time': ts,
+                    'total_overhead_ms': check_overhead * 1000,
+                    'rtlola_query_ms': rtlola_query_time * 1000,
+                    'scoring_ms': scoring_time * 1000,
+                    'switched': best_arch != current_arch,
+                    'latency': effective_latency,
+                    'raw_latency': raw_latency,
+                    'latency_source': latency_source,
+                    'threshold_low': threshold_context.get('low'),
+                    'threshold_high': threshold_context.get('high'),
+                    'threshold_mode': threshold_context.get('mode'),
+                    'threshold_history_size': threshold_context.get('history_size'),
+                    'performance_score': score_details.get('score'),
+                    'performance_state': score_details.get('state'),
+                    'fd_pressure': score_details.get('fd_pressure'),
+                    'recovery_mode': score_details.get('recovery_mode'),
+                    'score_latency': score_details.get('components', {}).get('latency'),
+                    'score_pending': score_details.get('components', {}).get('pending'),
+                    'score_failure': score_details.get('components', {}).get('failure'),
+                    'score_message_loss': score_details.get('components', {}).get('message_loss'),
+                    'pending_tasks': runtime_metrics.get('pending_tasks'),
+                    'created_window': runtime_metrics.get('created_window'),
+                    'pending_ratio': runtime_metrics.get('pending_ratio'),
+                    'failures_window': runtime_metrics.get('failures_window'),
+                    'failure_rate': runtime_metrics.get('failure_rate'),
+                    'messages_sent': runtime_metrics.get('messages_sent'),
+                    'messages_lost': runtime_metrics.get('messages_lost'),
+                    'message_loss_rate': runtime_metrics.get('message_loss_rate'),
+                    'current_architecture': current_arch,
+                    'candidate_architecture': candidate_arch,
+                    'selected_architecture': best_arch,
+                    'switch_reason': switch_reason,
+                })
+
+                # # Log overhead info
+                # print(f"[OVERHEAD] Check #{adaptation_check_count}: {check_overhead*1000:.2f}ms "
+                #       f"(RTLola: {rtlola_query_time*1000:.2f}ms, Scoring: {scoring_time*1000:.2f}ms)")
     
     finally:
         # Clean up RTLola monitor
