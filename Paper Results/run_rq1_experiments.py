@@ -26,6 +26,11 @@ Run from the project root or from this directory, for example:
 Useful dry checks:
     python "Paper Results/run_rq1_experiments.py" --dry-run
     python "Paper Results/run_rq1_experiments.py" --quick --repetitions 1
+
+Resume behavior:
+    Completed runs are detected from RQ1/runs.csv and their raw log folders.
+    Re-launching with more repetitions skips completed repetitions and runs only
+    missing or previously failed ones. Use --force to intentionally re-run all.
 """
 
 from __future__ import annotations
@@ -396,6 +401,28 @@ def write_rows(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def read_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with path.open(newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def completed_run_ids(rows: list[dict]) -> set[str]:
+    completed = set()
+    for row in rows:
+        run_id = str(row.get("run_id", ""))
+        logfile = str(row.get("logfile", ""))
+        if run_id and row.get("status") == "ok" and logfile and Path(logfile).exists():
+            completed.add(run_id)
+    return completed
+
+
+def replace_row(rows: list[dict], row: dict) -> list[dict]:
+    run_id = row.get("run_id")
+    return [existing for existing in rows if existing.get("run_id") != run_id] + [row]
+
+
 def summarise_runs(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     ok_rows = [row for row in rows if row.get("status") == "ok"]
     group_fields = [
@@ -491,12 +518,17 @@ def run_campaign(args: argparse.Namespace) -> None:
         print("Dry run only. No simulations launched.")
         return
 
-    rows = []
-    errors = []
+    rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
+    errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
+    completed = completed_run_ids(rows)
     started_at = time.time()
 
     for idx, params in enumerate(combos, start=1):
         rid = run_id(params)
+        if rid in completed and not args.force:
+            print(f"[{idx}/{total_runs}] {rid} already completed; skipping", flush=True)
+            continue
+
         run_dir = RAW_LOGS_DIR / rid
         run_dir.mkdir(parents=True, exist_ok=True)
         logfile = run_dir / "simulation_log.csv"
@@ -509,6 +541,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         error_message = ""
         wall_time = math.nan
         event_count = math.nan
+        errors = [error for error in errors if error.get("run_id") != rid]
 
         try:
             if logfile.exists() and not args.force:
@@ -556,7 +589,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "event_count": event_count,
             **metrics,
         }
-        rows.append(row)
+        rows = replace_row(rows, row)
 
         write_rows(RESULTS_ROOT / "runs.csv", rows)
         if errors:
