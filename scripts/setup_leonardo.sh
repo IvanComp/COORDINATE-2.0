@@ -76,5 +76,5 @@ echo
 echo "[setup] Done. Submit a small test with:"
 echo "  export REPETITIONS=1"
 echo "  export RQS='RQ1'"
-echo "  export EXTRA_ARGS='--limit 3'"
+echo "  export EXTRA_ARGS='--limit 4'"
 echo "  sbatch run_campaign.slurm"

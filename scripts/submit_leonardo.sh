@@ -28,7 +28,7 @@ case "$MODE" in
     test)
         export REPETITIONS=1
         export RQS="RQ1"
-        export EXTRA_ARGS="--limit 3"
+        export EXTRA_ARGS="--limit 4"
         ;;
     full)
         export REPETITIONS="$REPETITIONS_ARG"
