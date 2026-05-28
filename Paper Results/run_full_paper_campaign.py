@@ -50,7 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Print campaign design without running simulations.")
     parser.add_argument("--force", action="store_true", help="Force every RQ script to re-run all configured runs.")
     parser.add_argument("--fail-fast", action="store_true", help="Forward --fail-fast to each RQ script.")
-    parser.add_argument("--continue-on-error", action="store_true", help="Continue with later RQs if one RQ script fails.")
+    parser.add_argument("--continue-on-error", action="store_true", help="Continue with later RQs if one RQ script fails. This is the default.")
+    parser.add_argument("--stop-on-error", action="store_true", help="Stop the campaign when an RQ script fails.")
     parser.add_argument("--no-reuse-rq1", action="store_true", help="Disable RQ1 artifact reuse in RQ2/RQ3.")
     parser.add_argument("--limit", type=int, default=None, help="Forward --limit to each RQ script.")
     parser.add_argument(
@@ -188,7 +189,7 @@ def run_campaign(args: argparse.Namespace) -> int:
         })
         write_rows(PAPER_ROOT / "campaign_status.csv", status_rows)
 
-        if return_code != 0 and not args.continue_on_error:
+        if return_code != 0 and args.stop_on_error:
             print(f"Stopping because {rq} failed with return code {return_code}.", flush=True)
             return return_code
 

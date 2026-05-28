@@ -541,7 +541,11 @@ def run_campaign(args: argparse.Namespace) -> None:
         error_message = ""
         wall_time = math.nan
         event_count = math.nan
+        had_previous_error = any(error.get("run_id") == rid for error in errors)
         errors = [error for error in errors if error.get("run_id") != rid]
+        if had_previous_error and logfile.exists() and not args.force:
+            print("  previous error found; removing stale log and re-running", flush=True)
+            logfile.unlink()
 
         try:
             if logfile.exists() and not args.force:
@@ -550,9 +554,11 @@ def run_campaign(args: argparse.Namespace) -> None:
                 _, wall_time, event_count = simulator.run(str(cfg_path))
 
             metrics = analyze_log(logfile, cfg["SIM_TIME"])
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             status = "error"
-            error_message = str(exc)
+            error_message = str(exc) or exc.__class__.__name__
             metrics = {}
             errors.append({
                 **params,

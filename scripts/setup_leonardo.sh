@@ -39,38 +39,11 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements-docker.txt matplotlib notebook ipykernel
 
-if [[ -f rtlola-cli ]]; then
-    if ! ./rtlola-cli --version >/dev/null 2>&1; then
-        echo "[setup] Moving incompatible local rtlola-cli to rtlola-cli.incompatible"
-        mv rtlola-cli rtlola-cli.incompatible
-    fi
-fi
-
-if [[ -f "$HOME/.cargo/env" ]]; then
-    # shellcheck disable=SC1091
-    source "$HOME/.cargo/env"
-fi
-
-if ! command -v cargo >/dev/null 2>&1; then
-    echo "[setup] Installing Rust in \$HOME via rustup"
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup.sh
-    sh rustup.sh -y --profile minimal
-    rm -f rustup.sh
-    # shellcheck disable=SC1091
-    source "$HOME/.cargo/env"
-fi
-
-if ! command -v rtlola-cli >/dev/null 2>&1; then
-    echo "[setup] Installing rtlola-cli 0.1.2"
-    cargo install rtlola-cli --version 0.1.2
-else
-    echo "[setup] rtlola-cli already available"
-fi
+bash scripts/install_rtlola_venv.sh
 
 echo "[setup] Final checks"
 python --version
-which rtlola-cli
-rtlola-cli --version
+.venv/bin/rtlola-cli --version
 
 echo
 echo "[setup] Done. Submit a small test with:"

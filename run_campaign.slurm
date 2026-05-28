@@ -37,12 +37,12 @@ if [[ ! -f ".venv/bin/activate" ]]; then
     exit 2
 fi
 
-source .venv/bin/activate
-
 if [[ -f "$HOME/.cargo/env" ]]; then
     # shellcheck disable=SC1091
     source "$HOME/.cargo/env"
 fi
+
+source .venv/bin/activate
 
 python --version
 python - <<'PY'

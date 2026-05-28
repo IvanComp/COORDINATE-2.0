@@ -224,7 +224,11 @@ def run_campaign(args: argparse.Namespace) -> None:
         source_rq = "RQ3"
         source_run_id = rid
         source_logfile = str(planned_logfile)
+        had_previous_error = any(error.get("run_id") == rid for error in errors)
         errors = [error for error in errors if error.get("run_id") != rid]
+        if had_previous_error and planned_logfile.exists() and not args.force:
+            print("  previous error found; removing stale log and re-running", flush=True)
+            planned_logfile.unlink()
 
         try:
             reuse_row = None
@@ -255,9 +259,11 @@ def run_campaign(args: argparse.Namespace) -> None:
                     sim_time=cfg["SIM_TIME"],
                     force=args.force,
             )
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             status = "error"
-            error_message = str(exc)
+            error_message = str(exc) or exc.__class__.__name__
             errors.append({
                 **params,
                 "run_id": rid,

@@ -4,6 +4,7 @@ Manages RTLola subprocess for runtime monitoring and architecture adaptation.
 """
 
 import os
+import platform
 import shutil
 import sys
 import queue
@@ -11,6 +12,13 @@ import subprocess
 import threading
 import time
 from typing import Optional, Dict, Any
+
+
+def _candidate_label(path: str) -> str:
+    try:
+        return os.path.abspath(path)
+    except Exception:
+        return path
 
 
 def _make_executable(path: str) -> None:
@@ -48,6 +56,88 @@ def _usable_rtlola_binary(candidate: Optional[str]) -> Optional[str]:
     return resolved
 
 
+def _platform_rtlola_names() -> list[str]:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    if system == "darwin":
+        os_names = ["macos", "darwin"]
+    elif system == "linux":
+        os_names = ["linux"]
+    elif system == "windows":
+        os_names = ["windows", "win"]
+    else:
+        os_names = [system]
+
+    if machine in {"x86_64", "amd64"}:
+        arch_names = ["x86_64", "amd64"]
+    elif machine in {"aarch64", "arm64"}:
+        arch_names = ["aarch64", "arm64"]
+    else:
+        arch_names = [machine]
+
+    names = []
+    for os_name in os_names:
+        for arch_name in arch_names:
+            names.extend([
+                f"rtlola-cli-{os_name}-{arch_name}",
+                f"rtlola-cli-{os_name}_{arch_name}",
+            ])
+        names.append(f"rtlola-cli-{os_name}")
+
+    if sys.platform == "win32":
+        names.extend([f"{name}.exe" for name in list(names)])
+        names.append("rtlola-cli.exe")
+    names.append("rtlola-cli")
+    return list(dict.fromkeys(names))
+
+
+def _venv_bin_dirs(project_root: str) -> list[str]:
+    venvs = []
+    env_venv = os.environ.get("VIRTUAL_ENV")
+    if env_venv:
+        venvs.append(env_venv)
+    venvs.append(os.path.join(project_root, ".venv"))
+
+    dirs = []
+    for venv in venvs:
+        dirs.append(os.path.join(venv, "Scripts" if sys.platform == "win32" else "bin"))
+    return list(dict.fromkeys(dirs))
+
+
+def _rtlola_candidates(project_root: str, script_dir: str) -> list[Optional[str]]:
+    names = _platform_rtlola_names()
+    candidates: list[Optional[str]] = []
+
+    for bin_dir in _venv_bin_dirs(project_root):
+        for name in names:
+            candidates.append(os.path.join(bin_dir, name))
+
+    for base_dir in (
+        os.path.join(project_root, "bin"),
+        os.path.join(project_root, "tools"),
+        project_root,
+        script_dir,
+    ):
+        for name in names:
+            candidates.append(os.path.join(base_dir, name))
+
+    candidates.extend([
+        shutil.which("rtlola-cli"),
+        os.path.expanduser("~/.cargo/bin/rtlola-cli"),
+    ])
+
+    seen = set()
+    unique = []
+    for candidate in candidates:
+        key = _candidate_label(candidate) if candidate else ""
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
 class RTLolaMonitor:
     """
     Manages RTLola CLI process for monitoring simulation events and extracting metrics.
@@ -65,13 +155,7 @@ class RTLolaMonitor:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.dirname(script_dir)
 
-            candidates = [
-                os.path.join(project_root, "rtlola-cli"),
-                os.path.join(script_dir, "rtlola-cli"),
-                shutil.which("rtlola-cli"),
-                os.path.expanduser("~/.cargo/bin/rtlola-cli"),
-            ]
-            for candidate in candidates:
+            for candidate in _rtlola_candidates(project_root, script_dir):
                 rtlola_binary = _usable_rtlola_binary(candidate)
                 if rtlola_binary is not None:
                     break

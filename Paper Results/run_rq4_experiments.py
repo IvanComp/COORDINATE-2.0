@@ -258,7 +258,11 @@ def run_campaign(args: argparse.Namespace) -> None:
             "max_rss_mb": math.nan,
         }
         metrics: dict[str, Any] = {}
+        had_previous_error = any(error.get("run_id") == rid for error in errors)
         errors = [error for error in errors if error.get("run_id") != rid]
+        if had_previous_error and logfile.exists() and not args.force:
+            print("  previous error found; removing stale log and re-running", flush=True)
+            logfile.unlink()
 
         try:
             if logfile.exists() and not args.force:
@@ -266,9 +270,11 @@ def run_campaign(args: argparse.Namespace) -> None:
             else:
                 subprocess_metrics = run_subprocess(cfg_path)
             metrics = analyze_log(logfile, cfg["SIM_TIME"])
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             status = "error"
-            error_message = str(exc)
+            error_message = str(exc) or exc.__class__.__name__
             errors.append({
                 **params,
                 "run_id": rid,

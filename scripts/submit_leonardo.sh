@@ -7,21 +7,14 @@ cd "$ROOT_DIR"
 MODE="${1:-test}"
 REPETITIONS_ARG="${2:-2}"
 
-if [[ -f "$HOME/.cargo/env" ]]; then
-    # shellcheck disable=SC1091
-    source "$HOME/.cargo/env"
-fi
-
 if [[ ! -x scripts/setup_leonardo.sh ]]; then
     chmod +x scripts/setup_leonardo.sh
 fi
 
-if [[ ! -d .venv ]] || ! command -v rtlola-cli >/dev/null 2>&1; then
+if [[ ! -d .venv ]] || [[ ! -x .venv/bin/rtlola-cli ]]; then
     bash scripts/setup_leonardo.sh
-    if [[ -f "$HOME/.cargo/env" ]]; then
-        # shellcheck disable=SC1091
-        source "$HOME/.cargo/env"
-    fi
+elif ! .venv/bin/rtlola-cli --version >/dev/null 2>&1; then
+    bash scripts/install_rtlola_venv.sh
 fi
 
 case "$MODE" in
@@ -49,8 +42,8 @@ echo "[submit] Mode: $MODE"
 echo "[submit] Repetitions: ${REPETITIONS:-}"
 echo "[submit] RQs: ${RQS:-}"
 echo "[submit] Extra args: ${EXTRA_ARGS:-<none>}"
-echo "[submit] rtlola-cli: $(command -v rtlola-cli)"
-rtlola-cli --version
+echo "[submit] rtlola-cli: $ROOT_DIR/.venv/bin/rtlola-cli"
+.venv/bin/rtlola-cli --version
 
 SBATCH_ARGS=("--time=${SBATCH_TIME:-$DEFAULT_TIME}")
 
