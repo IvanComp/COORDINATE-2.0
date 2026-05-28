@@ -10,6 +10,8 @@ elif ! .venv/bin/rtlola-cli --version >/dev/null 2>&1; then
     bash scripts/install_rtlola_venv.sh
 fi
 
+.venv/bin/python scripts/check_rtlola.py
+
 MODE="${1:-test}"
 REPETITIONS="${2:-2}"
 

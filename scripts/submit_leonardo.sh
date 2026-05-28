@@ -44,6 +44,7 @@ echo "[submit] RQs: ${RQS:-}"
 echo "[submit] Extra args: ${EXTRA_ARGS:-<none>}"
 echo "[submit] rtlola-cli: $ROOT_DIR/.venv/bin/rtlola-cli"
 .venv/bin/rtlola-cli --version
+.venv/bin/python scripts/check_rtlola.py
 
 SBATCH_ARGS=("--time=${SBATCH_TIME:-$DEFAULT_TIME}")
 

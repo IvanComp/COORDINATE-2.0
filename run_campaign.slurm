@@ -51,10 +51,12 @@ if sys.version_info < (3, 10):
     raise SystemExit(f"ERROR: Python >= 3.10 required, found {sys.version.split()[0]}")
 PY
 
-if ! command -v rtlola-cli >/dev/null 2>&1 && [[ ! -x "./rtlola-cli" ]]; then
-    echo "WARNING: rtlola-cli was not found in PATH or as ./rtlola-cli."
-    echo "Dynamic-adaptation runs may fail unless RTLola is installed."
+if [[ ! -x ".venv/bin/rtlola-cli" ]] || ! .venv/bin/rtlola-cli --version >/dev/null 2>&1; then
+    echo "Installing a platform-compatible rtlola-cli into .venv/bin"
+    bash scripts/install_rtlola_venv.sh
 fi
+
+python scripts/check_rtlola.py
 
 REPETITIONS="${REPETITIONS:-2}"
 RQS="${RQS:-RQ1,RQ2,RQ3,RQ4}"

@@ -126,6 +126,24 @@ def print_status(prefix: str, status: dict[str, Any]) -> None:
     )
 
 
+def preflight_rtlola(args: argparse.Namespace) -> int:
+    checker = PAPER_ROOT.parent / "scripts" / "check_rtlola.py"
+    if not checker.exists():
+        print("RTLola preflight skipped: scripts/check_rtlola.py not found.", flush=True)
+        return 0
+
+    print("RTLola preflight", flush=True)
+    result = subprocess.run([args.python, str(checker)], cwd=str(PAPER_ROOT.parent))
+    if result.returncode != 0:
+        print(
+            "RTLola is required for dynamic-adaptation runs. "
+            "Install the platform-compatible binary with: "
+            "bash scripts/setup_experiments.sh",
+            flush=True,
+        )
+    return result.returncode
+
+
 def run_step(rq: str, cmd: list[str], log_file: Path) -> int:
     print(f"\n{'=' * 80}", flush=True)
     print(f"Starting {rq}: {' '.join(cmd)}", flush=True)
@@ -165,6 +183,11 @@ def run_campaign(args: argparse.Namespace) -> int:
     print(f"Master log: {log_file}")
     print(f"RQ1 reuse enabled for RQ2/RQ3: {not args.no_reuse_rq1}")
     print("Resume is enabled by default in every RQ script.")
+
+    if not args.dry_run:
+        rtlola_status = preflight_rtlola(args)
+        if rtlola_status != 0:
+            return rtlola_status
 
     for rq in rqs:
         before = rq_status(rq)
