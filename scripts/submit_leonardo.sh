@@ -29,11 +29,13 @@ case "$MODE" in
         export REPETITIONS=1
         export RQS="RQ1"
         export EXTRA_ARGS="--limit 4"
+        DEFAULT_TIME="00:30:00"
         ;;
     full)
         export REPETITIONS="$REPETITIONS_ARG"
         export RQS="RQ1,RQ2,RQ3,RQ4"
         unset EXTRA_ARGS || true
+        DEFAULT_TIME="12:00:00"
         ;;
     *)
         echo "Usage:"
@@ -50,4 +52,15 @@ echo "[submit] Extra args: ${EXTRA_ARGS:-<none>}"
 echo "[submit] rtlola-cli: $(command -v rtlola-cli)"
 rtlola-cli --version
 
-sbatch run_campaign.slurm
+SBATCH_ARGS=("--time=${SBATCH_TIME:-$DEFAULT_TIME}")
+
+if [[ -n "${SBATCH_PARTITION:-}" ]]; then
+    SBATCH_ARGS+=("--partition=$SBATCH_PARTITION")
+fi
+
+if [[ -n "${SBATCH_ACCOUNT:-}" ]]; then
+    SBATCH_ARGS+=("--account=$SBATCH_ACCOUNT")
+fi
+
+echo "[submit] sbatch args: ${SBATCH_ARGS[*]}"
+sbatch "${SBATCH_ARGS[@]}" run_campaign.slurm

@@ -2,7 +2,7 @@
 #SBATCH --job-name=coordinate-rqs
 #SBATCH --output=slurm_logs/coordinate_%j.out
 #SBATCH --error=slurm_logs/coordinate_%j.err
-#SBATCH --time=48:00:00
+#SBATCH --time=01:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
