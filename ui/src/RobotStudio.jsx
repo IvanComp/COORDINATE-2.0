@@ -35,18 +35,10 @@ function Robot({ id, position, hasItem, isFailed, colorOverride }) {
             </mesh>
 
             {/* Item indicator if carrying */}
-            {hasItem && !isFailed && (
+            {hasItem && (
                 <mesh position={[0, 1.4, 0]} castShadow>
                     <boxGeometry args={[0.5, 0.5, 0.5]} />
                     <meshStandardMaterial color="#FFC107" />
-                </mesh>
-            )}
-
-            {/* Failure indicator */}
-            {isFailed && (
-                <mesh position={[0, 1.4, 0]} castShadow>
-                    <coneGeometry args={[0.4, 0.7, 3]} />
-                    <meshStandardMaterial color="#FF5722" emissive="#FF5722" emissiveIntensity={0.5} />
                 </mesh>
             )}
         </group>

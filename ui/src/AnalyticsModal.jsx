@@ -50,14 +50,14 @@ function normalizeNum(v, fallback = 0) {
     return Number.isFinite(n) ? n : fallback;
 }
 
-function FailedXDot(props) {
-    const { cx, cy, stroke = '#ff3b30' } = props;
+function ExpiredTaskDot(props) {
+    const { cx, cy, stroke = '#ffab40' } = props;
     if (cx == null || cy == null) return null;
-    const s = 4;
     return (
         <g>
-            <line x1={cx - s} y1={cy - s} x2={cx + s} y2={cy + s} stroke={stroke} strokeWidth={1.8} />
-            <line x1={cx - s} y1={cy + s} x2={cx + s} y2={cy - s} stroke={stroke} strokeWidth={1.8} />
+            <circle cx={cx} cy={cy} r={4.2} fill="#fff8e1" stroke={stroke} strokeWidth={1.7} />
+            <line x1={cx} y1={cy - 2.2} x2={cx} y2={cy + 0.4} stroke={stroke} strokeWidth={1.5} strokeLinecap="round" />
+            <circle cx={cx} cy={cy + 2.2} r={0.7} fill={stroke} />
         </g>
     );
 }
@@ -107,7 +107,7 @@ function PackageStackShape(props) {
 const EVENTS_TIMELINE_COLORS = {
     created: '#A5D6A7',
     delivered: '#A7C7FF',
-    failed: '#ff3b30'
+    expired: '#ffab40'
 };
 
 const EVENT_DISTRIBUTION_COLORS = {
@@ -378,6 +378,13 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
             .sort((a, b) => b.actions - a.actions)
             .slice(0, 12);
     }, [parsedLogs]);
+
+    const eventTimeline = useMemo(() => bins.map((b) => ({
+        t: b.t,
+        created: b.created,
+        delivered: b.delivered,
+        expired: b.expired
+    })), [bins]);
 
     const failRecoverTrend = useMemo(() => bins.map((b) => ({ t: b.t, failures: b.failed, recoveries: b.recovered })), [bins]);
 
@@ -972,9 +979,9 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                     </Box>
 
                     <Box sx={{ minWidth: 0 }}>
-                        <ChartCard title="Event Timeline" chartId={CHART_IDS[0]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={bins} dataFilename="event_timeline">
+                        <ChartCard title="Event Timeline" chartId={CHART_IDS[0]} onDownload={downloadChartPdf} onDownloadData={downloadChartDataCsv} dataRows={eventTimeline} dataFilename="event_timeline">
                             <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={bins} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
+                                <LineChart data={eventTimeline} margin={{ top: 12, right: 24, left: 10, bottom: 52 }}>
                                     <CartesianGrid strokeDasharray="3 3" />
                                     <XAxis dataKey="t" tickMargin={10} height={46} label={{ value: 'Time (s)', position: 'bottom', offset: 8 }} />
                                     <YAxis label={{ value: 'Events (#)', angle: -90, position: 'insideLeft' }} />
@@ -983,12 +990,12 @@ function AnalyticsModal({ open, onClose, logs = [], topology = null, topologyNam
                                     <Line type="monotone" dataKey="delivered" name="Completed Tasks" stroke={EVENTS_TIMELINE_COLORS.delivered} strokeWidth={2} />
                                     <Line
                                         type="monotone"
-                                        dataKey="failed"
-                                        name="Failures"
-                                        stroke={EVENTS_TIMELINE_COLORS.failed}
+                                        dataKey="expired"
+                                        name="Expired Tasks"
+                                        stroke={EVENTS_TIMELINE_COLORS.expired}
                                         strokeWidth={2}
-                                        dot={<FailedXDot />}
-                                        activeDot={<FailedXDot />}
+                                        dot={<ExpiredTaskDot />}
+                                        activeDot={<ExpiredTaskDot />}
                                     />
                                 </LineChart>
                             </ResponsiveContainer>

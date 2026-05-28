@@ -365,7 +365,7 @@ function Robot({ id, position, hasItem, itemImportance, isFailed, isRescuing, la
             </mesh>
 
             {/* Item indicator with scale animation */}
-            {!isFailed && (() => {
+            {hasItem && (() => {
                 const colors = ['#4CAF50', '#FFC107', '#FF5722'];
                 const itemColor = colors[itemImportance] || '#9E9E9E';
                 return (
@@ -375,14 +375,6 @@ function Robot({ id, position, hasItem, itemImportance, isFailed, isRescuing, la
                     </mesh>
                 );
             })()}
-
-            {/* Failure indicator */}
-            {isFailed && (
-                <mesh position={[0, 1.4, 0]} castShadow>
-                    <coneGeometry args={[0.4, 0.7, 3]} />
-                    <meshStandardMaterial color="#FF5722" emissive="#FF5722" emissiveIntensity={0.5} />
-                </mesh>
-            )}
         </group>
     );
 }

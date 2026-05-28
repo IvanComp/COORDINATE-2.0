@@ -16,12 +16,8 @@ function RobotIcon({ hasItem, isFailed, isRescuing }) {
             <circle cx="7" cy="4" r="0.5" fill="white" />
             <circle cx="9" cy="4" r="0.5" fill="white" />
             {/* Item on top if carrying */}
-            {hasItem && !isFailed && (
+            {hasItem && (
                 <rect x="6.5" y="1" width="3" height="3" fill="#FFC107" rx="0.5" />
-            )}
-            {/* Warning triangle if failed */}
-            {isFailed && (
-                <polygon points="8,1 10,4 6,4" fill="#FF5722" />
             )}
         </svg>
     );
