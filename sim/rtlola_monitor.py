@@ -13,6 +13,41 @@ import time
 from typing import Optional, Dict, Any
 
 
+def _make_executable(path: str) -> None:
+    if sys.platform == "win32" or not os.path.exists(path) or os.access(path, os.X_OK):
+        return
+    try:
+        st = os.stat(path)
+        os.chmod(path, st.st_mode | 0o111)
+    except Exception as e:
+        print(f"[RTLola] Warning: Could not make binary executable: {e}")
+
+
+def _usable_rtlola_binary(candidate: Optional[str]) -> Optional[str]:
+    if not candidate:
+        return None
+
+    resolved = shutil.which(candidate) or candidate
+    if not os.path.exists(resolved):
+        return None
+
+    _make_executable(resolved)
+    try:
+        subprocess.run(
+            [resolved, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"[RTLola] Skipping unusable binary '{resolved}': {e}")
+        return None
+
+    return resolved
+
+
 class RTLolaMonitor:
     """
     Manages RTLola CLI process for monitoring simulation events and extracting metrics.
@@ -29,38 +64,19 @@ class RTLolaMonitor:
         if rtlola_binary is None:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.dirname(script_dir)
-            
-            # 1. Check project root
-            local_binary = os.path.join(project_root, "rtlola-cli")
-            if os.path.exists(local_binary):
-                rtlola_binary = local_binary
-                if sys.platform != "win32" and not os.access(rtlola_binary, os.X_OK):
-                    try:
-                        st = os.stat(rtlola_binary)
-                        os.chmod(rtlola_binary, st.st_mode | 0o111)
-                    except Exception:
-                        pass
 
-            # 2. Check sim package directory
-            local_binary = os.path.join(script_dir, "rtlola-cli")
-            if rtlola_binary is None and os.path.exists(local_binary):
-                rtlola_binary = local_binary
-                # Auto-make executable if on non-Windows
-                if sys.platform != "win32" and not os.access(rtlola_binary, os.X_OK):
-                    try:
-                        st = os.stat(rtlola_binary)
-                        os.chmod(rtlola_binary, st.st_mode | 0o111)
-                        print(f"[RTLola] Made local binary executable: {rtlola_binary}")
-                    except Exception as e:
-                        print(f"[RTLola] Warning: Could not make binary executable: {e}")
-            
-            # 3. Check system PATH
-            if rtlola_binary is None:
-                rtlola_binary = shutil.which("rtlola-cli")
-            
-            # 4. Check default cargo location (last resort)
-            if rtlola_binary is None:
-                rtlola_binary = os.path.expanduser("~/.cargo/bin/rtlola-cli")
+            candidates = [
+                os.path.join(project_root, "rtlola-cli"),
+                os.path.join(script_dir, "rtlola-cli"),
+                shutil.which("rtlola-cli"),
+                os.path.expanduser("~/.cargo/bin/rtlola-cli"),
+            ]
+            for candidate in candidates:
+                rtlola_binary = _usable_rtlola_binary(candidate)
+                if rtlola_binary is not None:
+                    break
+        else:
+            rtlola_binary = _usable_rtlola_binary(rtlola_binary)
         
         self.spec_file = spec_file
         self.rtlola_binary = rtlola_binary
@@ -75,10 +91,10 @@ class RTLolaMonitor:
         self.event_counter = 0
         
         # Verify RTLola binary exists
-        if not os.path.exists(self.rtlola_binary) and not shutil.which(self.rtlola_binary):
+        if not self.rtlola_binary:
             raise FileNotFoundError(
-                f"RTLola binary not found at '{self.rtlola_binary}' and not in PATH. "
-                f"Please install RTLola (e.g., 'cargo install rtlola-cli') or specify the correct path."
+                "No usable RTLola binary found. Please install RTLola "
+                "(e.g., 'cargo install rtlola-cli') or specify a Linux-compatible binary."
             )
         
         # Verify spec file exists
