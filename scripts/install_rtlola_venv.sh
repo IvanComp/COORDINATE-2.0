@@ -4,16 +4,20 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [[ ! -f ".venv/bin/activate" ]]; then
-    echo "[rtlola] ERROR: .venv not found. Create the project venv first."
+TARGET_VENV="${RTLOLA_TARGET_VENV:-${VIRTUAL_ENV:-$ROOT_DIR/.venv}}"
+TARGET_BIN="$TARGET_VENV/bin"
+
+if [[ ! -f "$TARGET_BIN/activate" ]]; then
+    echo "[rtlola] ERROR: virtual environment not found at $TARGET_VENV."
+    echo "[rtlola] Create it first or set RTLOLA_TARGET_VENV=/path/to/venv."
     exit 2
 fi
 
-source .venv/bin/activate
+source "$TARGET_BIN/activate"
 
-if [[ -x ".venv/bin/rtlola-cli" ]] && .venv/bin/rtlola-cli --version >/dev/null 2>&1; then
-    echo "[rtlola] Using existing venv binary: $ROOT_DIR/.venv/bin/rtlola-cli"
-    .venv/bin/rtlola-cli --version
+if [[ -x "$TARGET_BIN/rtlola-cli" ]] && "$TARGET_BIN/rtlola-cli" --version >/dev/null 2>&1; then
+    echo "[rtlola] Using existing venv binary: $TARGET_BIN/rtlola-cli"
+    "$TARGET_BIN/rtlola-cli" --version
     exit 0
 fi
 
@@ -31,8 +35,8 @@ if ! command -v cargo >/dev/null 2>&1; then
     source "$HOME/.cargo/env"
 fi
 
-echo "[rtlola] Installing rtlola-cli 0.1.2 into .venv/bin"
-cargo install rtlola-cli --version 0.1.2 --root "$ROOT_DIR/.venv" --force
+echo "[rtlola] Installing rtlola-cli 0.1.2 into $TARGET_BIN"
+cargo install rtlola-cli --version 0.1.2 --root "$TARGET_VENV" --force
 
 echo "[rtlola] Installed:"
-"$ROOT_DIR/.venv/bin/rtlola-cli" --version
+"$TARGET_BIN/rtlola-cli" --version

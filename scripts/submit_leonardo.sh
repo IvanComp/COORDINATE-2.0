@@ -14,7 +14,9 @@ fi
 if [[ ! -d .venv ]] || [[ ! -x .venv/bin/rtlola-cli ]]; then
     bash scripts/setup_leonardo.sh
 elif ! .venv/bin/rtlola-cli --version >/dev/null 2>&1; then
-    bash scripts/install_rtlola_venv.sh
+    if ! bash scripts/install_rtlola_venv.sh; then
+        echo "[submit] WARNING: RTLola install failed; dynamic-adaptation runs may be recorded as errors."
+    fi
 fi
 
 case "$MODE" in
@@ -43,8 +45,12 @@ echo "[submit] Repetitions: ${REPETITIONS:-}"
 echo "[submit] RQs: ${RQS:-}"
 echo "[submit] Extra args: ${EXTRA_ARGS:-<none>}"
 echo "[submit] rtlola-cli: $ROOT_DIR/.venv/bin/rtlola-cli"
-.venv/bin/rtlola-cli --version
-.venv/bin/python scripts/check_rtlola.py
+if [[ -x ".venv/bin/rtlola-cli" ]]; then
+    .venv/bin/rtlola-cli --version || true
+fi
+if ! .venv/bin/python scripts/check_rtlola.py; then
+    echo "[submit] WARNING: RTLola is unavailable; submitting anyway."
+fi
 
 SBATCH_ARGS=("--time=${SBATCH_TIME:-$DEFAULT_TIME}")
 

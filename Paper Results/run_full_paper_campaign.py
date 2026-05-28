@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -52,6 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fail-fast", action="store_true", help="Forward --fail-fast to each RQ script.")
     parser.add_argument("--continue-on-error", action="store_true", help="Continue with later RQs if one RQ script fails. This is the default.")
     parser.add_argument("--stop-on-error", action="store_true", help="Stop the campaign when an RQ script fails.")
+    parser.add_argument("--strict-rtlola", action="store_true", help="Stop before running if RTLola cannot be initialized.")
     parser.add_argument("--no-reuse-rq1", action="store_true", help="Disable RQ1 artifact reuse in RQ2/RQ3.")
     parser.add_argument("--limit", type=int, default=None, help="Forward --limit to each RQ script.")
     parser.add_argument(
@@ -126,22 +128,47 @@ def print_status(prefix: str, status: dict[str, Any]) -> None:
     )
 
 
-def preflight_rtlola(args: argparse.Namespace) -> int:
+def preflight_rtlola(args: argparse.Namespace) -> bool:
     checker = PAPER_ROOT.parent / "scripts" / "check_rtlola.py"
     if not checker.exists():
         print("RTLola preflight skipped: scripts/check_rtlola.py not found.", flush=True)
-        return 0
+        return True
 
     print("RTLola preflight", flush=True)
     result = subprocess.run([args.python, str(checker)], cwd=str(PAPER_ROOT.parent))
-    if result.returncode != 0:
+    if result.returncode == 0:
+        return True
+
+    installer = PAPER_ROOT.parent / "scripts" / "install_rtlola_venv.sh"
+    active_venv = os.environ.get("VIRTUAL_ENV")
+    project_venv = PAPER_ROOT.parent / ".venv"
+    installable_venv = Path(active_venv) if active_venv else project_venv
+    venv_python = installable_venv / "bin" / "python"
+    if installer.exists() and venv_python.exists():
+        print(f"RTLola not found; trying to install a platform-compatible binary into {installable_venv / 'bin'}", flush=True)
+        subprocess.run(["bash", str(installer)], cwd=str(PAPER_ROOT.parent))
+        result = subprocess.run([args.python, str(checker)], cwd=str(PAPER_ROOT.parent))
+        if result.returncode == 0:
+            return True
+
+    print(
+        "WARNING: RTLola is still unavailable. Dynamic-adaptation runs may be "
+        "recorded as errors, but the campaign will continue unless --strict-rtlola "
+        "is used.",
+        flush=True,
+    )
+    return False
+
+
+def maybe_warn_about_rtlola(args: argparse.Namespace) -> int:
+    ok = preflight_rtlola(args)
+    if not ok and args.strict_rtlola:
         print(
-            "RTLola is required for dynamic-adaptation runs. "
-            "Install the platform-compatible binary with: "
-            "bash scripts/setup_experiments.sh",
+            "Stopping because --strict-rtlola was requested and RTLola is unavailable.",
             flush=True,
         )
-    return result.returncode
+        return 1
+    return 0
 
 
 def run_step(rq: str, cmd: list[str], log_file: Path) -> int:
@@ -185,7 +212,7 @@ def run_campaign(args: argparse.Namespace) -> int:
     print("Resume is enabled by default in every RQ script.")
 
     if not args.dry_run:
-        rtlola_status = preflight_rtlola(args)
+        rtlola_status = maybe_warn_about_rtlola(args)
         if rtlola_status != 0:
             return rtlola_status
 

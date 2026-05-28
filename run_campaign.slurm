@@ -53,10 +53,14 @@ PY
 
 if [[ ! -x ".venv/bin/rtlola-cli" ]] || ! .venv/bin/rtlola-cli --version >/dev/null 2>&1; then
     echo "Installing a platform-compatible rtlola-cli into .venv/bin"
-    bash scripts/install_rtlola_venv.sh
+    if ! bash scripts/install_rtlola_venv.sh; then
+        echo "WARNING: RTLola install failed; dynamic-adaptation runs may be recorded as errors."
+    fi
 fi
 
-python scripts/check_rtlola.py
+if ! python scripts/check_rtlola.py; then
+    echo "WARNING: RTLola is unavailable; continuing campaign without stopping globally."
+fi
 
 REPETITIONS="${REPETITIONS:-2}"
 RQS="${RQS:-RQ1,RQ2,RQ3,RQ4}"

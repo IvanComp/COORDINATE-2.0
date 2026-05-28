@@ -39,11 +39,18 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements-docker.txt matplotlib notebook ipykernel
 
-bash scripts/install_rtlola_venv.sh
+if ! bash scripts/install_rtlola_venv.sh; then
+    echo "[setup] WARNING: RTLola could not be installed automatically."
+    echo "[setup] The environment is still usable, but dynamic-adaptation runs may fail."
+fi
 
 echo "[setup] Final checks"
 python --version
-.venv/bin/rtlola-cli --version
+if [[ -x ".venv/bin/rtlola-cli" ]] && .venv/bin/rtlola-cli --version >/dev/null 2>&1; then
+    .venv/bin/rtlola-cli --version
+else
+    echo "rtlola-cli missing or unusable"
+fi
 
 echo
 echo "[setup] Done. Submit a small test with:"
