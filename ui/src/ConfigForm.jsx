@@ -28,7 +28,7 @@ import axios from 'axios';
 import RTLolaEditor from './RTLolaEditor';
 
 const API_BASE = '/api';
-const DEFAULT_EXPIRATION_SECONDS = 300;
+const DEFAULT_EXPIRATION_TIMES = [28800, 7200, 3600];
 
 const DEFAULTS = {
     RESULTS_DIR: "results",
@@ -99,7 +99,7 @@ const FIELD_METADATA = {
     ITEM_SPAWNING_TIME: { label: "Task Spawning Time", description: "Average time (in seconds) between new task generations." },
     IMPORTANCE_PROBABILITIES: { label: "Task Priority Probabilities", description: "Spawn probability, as a percentage, for Low, Medium, and High priority tasks." },
     ITEM_SPAWNING_DISTR: { label: "Task Inter-Arrival Time Distribution", description: "Distribution used to sample the time between consecutive task arrivals." },
-    EXPIRATION_TIME: { label: "Task Expiration Time", description: "Time in seconds after which a pending task expires. Disabled tasks use -1 internally." },
+    EXPIRATION_TIME: { label: "Task Expiration Time", description: "Deadline in seconds after which a pending task expires. Disabled tasks use -1 internally." },
     LOAD_TIME: { label: "Load Time", description: "Average time to start a task." },
     MOVEMENT_TIME: { label: "Movement Time", description: "Average time to move between adjacent rooms." },
     DROP_TIME: { label: "Drop Time", description: "Average time to release a task." },
@@ -402,20 +402,26 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     const handleExpirationToggle = (enabled) => {
         setConfig(prev => {
             const currentTimes = prev.EXPIRATION_TIME || DEFAULTS.EXPIRATION_TIME;
-            const currentPositiveTime = currentTimes.find(value => Number(value) > 0);
-            const expirationTime = Number(currentPositiveTime) > 0 ? Number(currentPositiveTime) : DEFAULT_EXPIRATION_SECONDS;
+            const nextTimes = DEFAULT_EXPIRATION_TIMES.map((fallback, index) => {
+                const current = Number(currentTimes[index]);
+                return Number.isFinite(current) && current > 0 ? current : fallback;
+            });
             return {
                 ...prev,
-                EXPIRATION_TIME: enabled ? [expirationTime, expirationTime, expirationTime] : [-1, -1, -1]
+                EXPIRATION_TIME: enabled ? nextTimes : [-1, -1, -1],
+                EXPIRATION_DISTR: enabled ? ["deterministic", "deterministic", "deterministic"] : prev.EXPIRATION_DISTR
             };
         });
     };
 
-    const handleExpirationTimeChange = (timeValue) => {
-        const expirationTime = Math.max(0, Number(timeValue) || 0);
+    const handleExpirationTimeChange = (index, timeValue) => {
+        const expirationTime = Math.max(1, Number(timeValue) || 1);
         setConfig(prev => ({
             ...prev,
-            EXPIRATION_TIME: [expirationTime, expirationTime, expirationTime]
+            EXPIRATION_TIME: (prev.EXPIRATION_TIME || DEFAULT_EXPIRATION_TIMES).map((value, i) => (
+                i === index ? expirationTime : value
+            )),
+            EXPIRATION_DISTR: ["deterministic", "deterministic", "deterministic"]
         }));
     };
 
@@ -512,10 +518,11 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     const importanceTotal = importancePercentages.reduce((sum, value) => sum + value, 0);
     const importanceTotalTooHigh = importanceTotal > 100.0001;
     const expirationTimes = config.EXPIRATION_TIME || DEFAULTS.EXPIRATION_TIME;
-    const expirationEnabled = expirationTimes.some(value => Number(value) >= 0);
-    const expirationTimeValue = expirationEnabled
-        ? Number(expirationTimes.find(value => Number(value) >= 0) ?? DEFAULT_EXPIRATION_SECONDS)
-        : DEFAULT_EXPIRATION_SECONDS;
+    const expirationEnabled = expirationTimes.some(value => Number(value) > 0);
+    const expirationTimeValues = DEFAULT_EXPIRATION_TIMES.map((fallback, index) => {
+        const current = Number(expirationTimes[index]);
+        return Number.isFinite(current) && current > 0 ? current : fallback;
+    });
 
     return (
         <Paper
@@ -1160,33 +1167,50 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                         />
 
                         {expirationEnabled && (
-                            <TextField
-                                label="Expiration Time (s)"
-                                type="number"
-                                size="small"
-                                value={expirationTimeValue}
-                                onChange={(e) => handleExpirationTimeChange(e.target.value)}
-                                inputProps={{ min: 0, step: 1 }}
-                                InputProps={{
-                                    endAdornment: (
-                                        <InputAdornment position="end">
-                                            <Box component="span" title={FIELD_METADATA.EXPIRATION_TIME.description} sx={{ display: 'flex', alignItems: 'center' }}>
-                                                <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
-                                            </Box>
-                                        </InputAdornment>
-                                    )
-                                }}
-                                sx={{
-                                    '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
-                                    '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
-                                    '& .MuiOutlinedInput-root': {
-                                        color: '#fff',
-                                        '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
-                                        '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
-                                        '&.Mui-focused fieldset': { borderColor: '#fff' }
-                                    }
-                                }}
-                            />
+                            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, gap: 1 }}>
+                                {ITEM_IMPORTANCE_LEVELS.map((level, index) => (
+                                    <TextField
+                                        key={`expiration-${level.label}`}
+                                        label={`${level.label} Expiration (s)`}
+                                        type="number"
+                                        size="small"
+                                        value={expirationTimeValues[index]}
+                                        onChange={(e) => handleExpirationTimeChange(index, e.target.value)}
+                                        inputProps={{ min: 1, step: 1 }}
+                                        InputProps={{
+                                            startAdornment: (
+                                                <InputAdornment position="start">
+                                                    <Box
+                                                        sx={{
+                                                            width: 10,
+                                                            height: 10,
+                                                            borderRadius: '50%',
+                                                            backgroundColor: level.color
+                                                        }}
+                                                    />
+                                                </InputAdornment>
+                                            ),
+                                            endAdornment: (
+                                                <InputAdornment position="end">
+                                                    <Box component="span" title={FIELD_METADATA.EXPIRATION_TIME.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                        <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
+                                                    </Box>
+                                                </InputAdornment>
+                                            )
+                                        }}
+                                        sx={{
+                                            '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
+                                            '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
+                                            '& .MuiOutlinedInput-root': {
+                                                color: '#fff',
+                                                '& fieldset': { borderColor: 'rgba(255,255,255,0.3)' },
+                                                '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.5)' },
+                                                '&.Mui-focused fieldset': { borderColor: '#fff' }
+                                            }
+                                        }}
+                                    />
+                                ))}
+                            </Box>
                         )}
                     </Box>
                         </>
