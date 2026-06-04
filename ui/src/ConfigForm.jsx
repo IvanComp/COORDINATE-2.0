@@ -48,7 +48,15 @@ const DEFAULTS = {
     N_MALICIOUS: 0,
     MALICIOUS_FAKE_FAILURES: false,
     INITIAL_ARCHITECTURE: "semi-decentralized",
+    ADAPTATION_POLICY: "contextual-bandit",
     ADAPTATION_CHECK_INTERVAL: 300.0,
+    ADAPTATION_MIN_SWITCH_INTERVAL: 30.0,
+    ADAPTATION_PERSISTENCE_CHECKS: 2,
+    BANDIT_EXPLORATION_EPSILON: 0.08,
+    BANDIT_LEARNING_RATE: 0.05,
+    BANDIT_IMPROVEMENT_MARGIN: 0.02,
+    BANDIT_SWITCH_PENALTY: 0.03,
+    BANDIT_CRITICAL_OVERRIDE: true,
     ADAPTIVE_THRESHOLDS: true,
     ADAPTIVE_THRESHOLD_WINDOW: 12,
     ADAPTIVE_THRESHOLD_WARMUP: 4,
@@ -86,6 +94,11 @@ const FIELD_METADATA = {
     ARCHITECTURE: { label: "Coordination Mechanism", description: "The strategy agents use to coordinate tasks." },
     INITIAL_ARCHITECTURE: { label: "Initial Architecture", description: "Coordination mechanism used at the beginning of a dynamic-adaptation run." },
     ADAPTATION_CHECK_INTERVAL: { label: "Adaptation Check Interval", description: "Simulation-time interval, in seconds, between two dynamic-adaptation checks." },
+    BANDIT_EXPLORATION_EPSILON: { label: "Exploration", description: "Initial probability that online DA explores a non-greedy coordination mechanism." },
+    BANDIT_LEARNING_RATE: { label: "Learning Rate", description: "Update rate of the online value estimator for each coordination mechanism." },
+    BANDIT_IMPROVEMENT_MARGIN: { label: "Switch Margin", description: "Minimum estimated reward improvement required before a non-exploratory switch." },
+    BANDIT_SWITCH_PENALTY: { label: "Switch Penalty", description: "Reward penalty applied after a mechanism switch." },
+    BANDIT_CRITICAL_OVERRIDE: { label: "Critical Override", description: "Allow critical runtime evidence to force a robust coordination mechanism." },
     ADAPTIVE_THRESHOLDS: { label: "Adaptive Thresholds", description: "Learn latency thresholds online from recent adaptation checks." },
     ADAPTIVE_THRESHOLD_WINDOW: { label: "Adaptive Window", description: "Number of recent adaptation checks used to calibrate thresholds." },
     ADAPTIVE_THRESHOLD_WARMUP: { label: "Adaptive Warm-Up", description: "Number of checks that use fallback thresholds before adaptive calibration starts." },
@@ -747,14 +760,14 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                             <FormControlLabel
                                 control={
                                     <Switch
-                                        checked={Boolean(config.ADAPTIVE_THRESHOLDS)}
-                                        onChange={(e) => handleChange('ADAPTIVE_THRESHOLDS', e.target.checked)}
+                                        checked={Boolean(config.BANDIT_CRITICAL_OVERRIDE)}
+                                        onChange={(e) => handleChange('BANDIT_CRITICAL_OVERRIDE', e.target.checked)}
                                     />
                                 }
                                 label={
                                     <Box display="flex" alignItems="center" gap={0.5}>
-                                        Adaptive Thresholds
-                                        <Box component="span" title={FIELD_METADATA.ADAPTIVE_THRESHOLDS.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                        Critical Override
+                                        <Box component="span" title={FIELD_METADATA.BANDIT_CRITICAL_OVERRIDE.description} sx={{ display: 'flex', alignItems: 'center' }}>
                                             <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
                                         </Box>
                                     </Box>
@@ -790,15 +803,15 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                     }}
                                 />
                                 <TextField
-                                    label="Low Latency"
+                                    label="Exploration"
                                     type="number"
                                     size="small"
-                                    value={config.LATENCY_THRESHOLD_LOW}
-                                    onChange={(e) => handleChange('LATENCY_THRESHOLD_LOW', parseFloat(e.target.value))}
+                                    value={config.BANDIT_EXPLORATION_EPSILON}
+                                    onChange={(e) => handleChange('BANDIT_EXPLORATION_EPSILON', parseFloat(e.target.value))}
                                     InputProps={{
                                         endAdornment: (
                                             <InputAdornment position="end">
-                                                <Box component="span" title={FIELD_METADATA.LATENCY_THRESHOLD_LOW.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                <Box component="span" title={FIELD_METADATA.BANDIT_EXPLORATION_EPSILON.description} sx={{ display: 'flex', alignItems: 'center' }}>
                                                     <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
                                                 </Box>
                                             </InputAdornment>
@@ -816,15 +829,15 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                     }}
                                 />
                                 <TextField
-                                    label="High Latency"
+                                    label="Learning Rate"
                                     type="number"
                                     size="small"
-                                    value={config.LATENCY_THRESHOLD_HIGH}
-                                    onChange={(e) => handleChange('LATENCY_THRESHOLD_HIGH', parseFloat(e.target.value))}
+                                    value={config.BANDIT_LEARNING_RATE}
+                                    onChange={(e) => handleChange('BANDIT_LEARNING_RATE', parseFloat(e.target.value))}
                                     InputProps={{
                                         endAdornment: (
                                             <InputAdornment position="end">
-                                                <Box component="span" title={FIELD_METADATA.LATENCY_THRESHOLD_HIGH.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                <Box component="span" title={FIELD_METADATA.BANDIT_LEARNING_RATE.description} sx={{ display: 'flex', alignItems: 'center' }}>
                                                     <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
                                                 </Box>
                                             </InputAdornment>
@@ -843,18 +856,18 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                 />
                             </Box>
 
-                            {config.ADAPTIVE_THRESHOLDS && (
+                            {config.ARCHITECTURE === 'dynamic-adaptation' && (
                                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1 }}>
                                     <TextField
-                                        label="Adaptive Window"
+                                        label="Switch Margin"
                                         type="number"
                                         size="small"
-                                        value={config.ADAPTIVE_THRESHOLD_WINDOW}
-                                        onChange={(e) => handleChange('ADAPTIVE_THRESHOLD_WINDOW', parseInt(e.target.value || '1', 10))}
+                                        value={config.BANDIT_IMPROVEMENT_MARGIN}
+                                        onChange={(e) => handleChange('BANDIT_IMPROVEMENT_MARGIN', parseFloat(e.target.value))}
                                         InputProps={{
                                             endAdornment: (
                                                 <InputAdornment position="end">
-                                                    <Box component="span" title={FIELD_METADATA.ADAPTIVE_THRESHOLD_WINDOW.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                    <Box component="span" title={FIELD_METADATA.BANDIT_IMPROVEMENT_MARGIN.description} sx={{ display: 'flex', alignItems: 'center' }}>
                                                         <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
                                                     </Box>
                                                 </InputAdornment>
@@ -872,15 +885,15 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
                                         }}
                                     />
                                     <TextField
-                                        label="Warm-Up Checks"
+                                        label="Switch Penalty"
                                         type="number"
                                         size="small"
-                                        value={config.ADAPTIVE_THRESHOLD_WARMUP}
-                                        onChange={(e) => handleChange('ADAPTIVE_THRESHOLD_WARMUP', parseInt(e.target.value || '1', 10))}
+                                        value={config.BANDIT_SWITCH_PENALTY}
+                                        onChange={(e) => handleChange('BANDIT_SWITCH_PENALTY', parseFloat(e.target.value))}
                                         InputProps={{
                                             endAdornment: (
                                                 <InputAdornment position="end">
-                                                    <Box component="span" title={FIELD_METADATA.ADAPTIVE_THRESHOLD_WARMUP.description} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                    <Box component="span" title={FIELD_METADATA.BANDIT_SWITCH_PENALTY.description} sx={{ display: 'flex', alignItems: 'center' }}>
                                                         <HelpOutline sx={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', cursor: 'help' }} />
                                                     </Box>
                                                 </InputAdornment>

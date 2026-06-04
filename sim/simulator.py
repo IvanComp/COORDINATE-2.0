@@ -56,12 +56,29 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('MALICIOUS_FAKE_FAILURES', True)
     d.setdefault('FIND_ROUTE_STRATEGY', 'breadth')
     d.setdefault('INITIAL_ARCHITECTURE', 'semi-decentralized')
-    d.setdefault('ADAPTATION_POLICY', 'hybrid-score')
+    d.setdefault('ADAPTATION_POLICY', 'contextual-bandit')
     d.setdefault('ADAPTATION_CHECK_INTERVAL', 300.0)
     d.setdefault('ADAPTATION_WINDOW', 3600.0)
     d.setdefault('ADAPTATION_MIN_SWITCH_INTERVAL', 30.0)
     d.setdefault('ADAPTATION_PERSISTENCE_CHECKS', 2)
     d.setdefault('ADAPTATION_CRITICAL_BYPASS_PERSISTENCE', True)
+    d.setdefault('BANDIT_EXPLORATION_EPSILON', 0.08)
+    d.setdefault('BANDIT_MIN_EXPLORATION_EPSILON', 0.02)
+    d.setdefault('BANDIT_EXPLORATION_DECAY', 0.995)
+    d.setdefault('BANDIT_EXPLORATION_VALUE_FLOOR', 0.10)
+    d.setdefault('BANDIT_EXPLORATION_BYPASS_PERSISTENCE', True)
+    d.setdefault('BANDIT_LEARNING_RATE', 0.05)
+    d.setdefault('BANDIT_L2', 0.001)
+    d.setdefault('BANDIT_IMPROVEMENT_MARGIN', 0.02)
+    d.setdefault('BANDIT_SWITCH_PENALTY', 0.03)
+    d.setdefault('BANDIT_WEIGHT_LATENCY', 0.45)
+    d.setdefault('BANDIT_WEIGHT_PENDING', 0.20)
+    d.setdefault('BANDIT_WEIGHT_FAILURE', 0.10)
+    d.setdefault('BANDIT_WEIGHT_MESSAGE_LOSS', 0.10)
+    d.setdefault('BANDIT_WEIGHT_DEADLINE_MISS', 0.10)
+    d.setdefault('BANDIT_WEIGHT_IDLE_WHEN_PENDING', 0.05)
+    d.setdefault('BANDIT_WEIGHT_THROUGHPUT', 0.10)
+    d.setdefault('BANDIT_CRITICAL_OVERRIDE', True)
     d.setdefault('LATENCY_THRESHOLD_LOW', 10.0)
     d.setdefault('LATENCY_THRESHOLD_HIGH', 40.0)
     d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.05)
@@ -178,29 +195,52 @@ def _runtime_adaptation_metrics(
     space: Space,
     now: float,
     created_window,
+    delivered_window,
+    expired_window,
     failure_window,
     window: float,
 ) -> dict:
     created_window = _prune_times(created_window, now, window)
+    delivered_window = _prune_times(delivered_window, now, window)
+    expired_window = _prune_times(expired_window, now, window)
     failure_window = _prune_times(failure_window, now, window)
     messages_sent, messages_lost = _recent_message_counts(cfg, now, window)
 
     pending_tasks = len(space.availItems) + len(space.movingItems)
     created_count = len(created_window)
+    delivered_count = len(delivered_window)
+    expired_count = len(expired_window)
     pending_ratio = pending_tasks / max(1, created_count)
     failure_rate = len(failure_window) / max(1, int(cfg.N_ROBOTS))
     message_loss_rate = messages_lost / max(1, messages_sent)
+    deadline_miss_rate = expired_count / max(1, created_count)
+    throughput_rate = delivered_count / max(1e-9, window)
+    throughput_norm = delivered_count / max(1, created_count)
+
+    robots = space.getAllRobots()
+    idle_agents = sum(
+        1 for robot in robots
+        if robot.isHealthy() and robot.isFree() and not robot.hasOtherTasks()
+    )
+    idle_ratio = idle_agents / max(1, len(robots))
 
     return {
         'pending_tasks': pending_tasks,
         'created_window': created_count,
+        'delivered_window': delivered_count,
+        'expired_window': expired_count,
         'pending_ratio': pending_ratio,
         'failures_window': len(failure_window),
         'failure_rate': failure_rate,
         'messages_sent': messages_sent,
         'messages_lost': messages_lost,
         'message_loss_rate': message_loss_rate,
-    }, created_window, failure_window
+        'deadline_miss_rate': deadline_miss_rate,
+        'throughput_rate': throughput_rate,
+        'throughput_norm': min(1.0, throughput_norm),
+        'idle_agents': idle_agents,
+        'idle_ratio': idle_ratio,
+    }, created_window, delivered_window, expired_window, failure_window
 
 
 def _candidate_persisted(candidate_history, candidate, required_checks: int):
@@ -423,11 +463,25 @@ def run(config_path='config.json'):
     last_switch_time = -300.0 # Allow immediate switch at start
     min_time_between_switches = float(getattr(cfg, 'ADAPTATION_MIN_SWITCH_INTERVAL', 30.0))
     candidate_history = []
+    adaptation_policy = str(getattr(cfg, 'ADAPTATION_POLICY', 'contextual-bandit')).lower()
+    bandit_policy = None
+    bandit_pending_action = None
+    bandit_pending_context = None
+    bandit_pending_switched = False
+    if cfg.ARCHITECTURE == 'dynamic-adaptation':
+        try:
+            from .contextual_bandit import BANDIT_POLICIES, ConservativeContextualBandit
+            if adaptation_policy in BANDIT_POLICIES:
+                bandit_policy = ConservativeContextualBandit(cfg)
+        except Exception as e:
+            print(f"[WARNING] Could not initialize contextual-bandit policy: {e}")
     
     # Relative-latency tracking for adaptation (Python-based fallback)
     latency_window = []  # Store (timestamp, relative latency) tuples
     latency_window_duration = float(getattr(cfg, 'ADAPTATION_WINDOW', 3600.0))
     created_window = []
+    delivered_window = []
+    expired_window = []
     failure_window = []
     item_create_times = {}  # Track when each item was created
     item_min_delivery_times = {}  # Track ideal delivery time by item
@@ -538,6 +592,8 @@ def run(config_path='config.json'):
                     failure_window = _prune_times(failure_window, ts, latency_window_duration)
 
                 if item_before_move is not None and bot.getLocation() == delivery_destination:
+                    delivered_window.append(ts)
+                    delivered_window = _prune_times(delivered_window, ts, latency_window_duration)
                     if delivery_item_id in item_create_times:
                         delivery_latency = ts - item_create_times[delivery_item_id]
                         min_delivery_time = item_min_delivery_times.get(delivery_item_id, 0.0)
@@ -557,8 +613,10 @@ def run(config_path='config.json'):
                 idx = int(event.split('-')[1]); bots[idx].recovery(ts)
             elif event.startswith('expire-'):
                 idx = int(event.split('-')[1]); item = space.getItembyId(idx); space.expireItem(item, ts)
+                expired_window.append(ts)
+                expired_window = _prune_times(expired_window, ts, latency_window_duration)
             
-            # Check for architecture adaptation (score-based)
+            # Check for architecture adaptation.
             if rtlola_monitor and rtlola_monitor.is_running() and (ts - last_adaptation_check) >= adaptation_interval:
                 last_adaptation_check = ts
                 try:
@@ -583,11 +641,13 @@ def run(config_path='config.json'):
                     latency_source = 'python_window' if python_latency is not None else 'none'
                 rtlola_query_time = time.time() - rtlola_query_start
 
-                runtime_metrics, created_window, failure_window = _runtime_adaptation_metrics(
+                runtime_metrics, created_window, delivered_window, expired_window, failure_window = _runtime_adaptation_metrics(
                     cfg,
                     space,
                     ts,
                     created_window,
+                    delivered_window,
+                    expired_window,
                     failure_window,
                     latency_window_duration,
                 )
@@ -605,19 +665,67 @@ def run(config_path='config.json'):
                 candidate_arch = current_arch
                 best_arch = current_arch
                 scores = {}
-                score_details = {}
-                switch_reason = 'no_latency'
+                score_details = {'policy': adaptation_policy}
+                switch_reason = 'no_decision'
+                threshold_context = {
+                    'low': None,
+                    'high': None,
+                    'mode': 'contextual-bandit' if bandit_policy is not None else 'legacy',
+                    'history_size': len(adaptation_latency_history),
+                }
+                bandit_context = {}
+                bandit_update_details = {}
+                bandit_reward = None
+                reward_details = {}
 
-                # Import scoring functions
-                from .architecture_scoring import get_latency_thresholds
-                threshold_context = get_latency_thresholds(cfg, adaptation_latency_history)
+                if bandit_policy is not None:
+                    from .contextual_bandit import build_context, context_reward
 
-                time_since_last_switch = ts - last_switch_time
-                if time_since_last_switch < min_time_between_switches:
-                    switch_reason = 'cooldown'
+                    bandit_context = build_context(cfg, runtime_metrics, effective_latency, current_arch)
+
+                    if bandit_pending_action is not None and bandit_pending_context is not None:
+                        bandit_reward, reward_details = context_reward(
+                            cfg,
+                            bandit_context,
+                            bandit_pending_switched,
+                        )
+                        bandit_update_details = bandit_policy.update(
+                            bandit_pending_action,
+                            bandit_pending_context,
+                            bandit_reward,
+                        ) or {}
+
+                    decision = bandit_policy.select(bandit_context, current_arch)
+                    candidate_arch = decision['candidate_architecture']
+                    best_arch = candidate_arch
+                    scores = decision.get('scores', {})
+                    switch_reason = decision.get('reason', 'bandit')
+                    selected_value = scores.get(best_arch)
+                    current_value = scores.get(current_arch)
+                    score_details = {
+                        'policy': 'contextual-bandit',
+                        'state': 'online_learning',
+                        'score': selected_value,
+                        'selected_value': selected_value,
+                        'current_value': current_value,
+                        'greedy_architecture': decision.get('greedy_architecture'),
+                        'estimated_values': decision.get('estimated_values', {}),
+                        'epsilon': decision.get('epsilon'),
+                        'explored': decision.get('explored'),
+                        'improvement_margin': decision.get('improvement_margin'),
+                        'critical_override': decision.get('critical_override', False),
+                        'fd_pressure': decision.get('fd_pressure', False),
+                        'critical_reason': decision.get('critical_reason'),
+                        'reward': bandit_reward,
+                        'reward_details': reward_details,
+                        'update_details': bandit_update_details,
+                    }
                 else:
-                    policy = str(getattr(cfg, 'ADAPTATION_POLICY', 'hybrid-score')).lower()
-                    if policy in {'latency-threshold', 'legacy', 'latency'}:
+                    from .architecture_scoring import get_latency_thresholds
+                    threshold_context = get_latency_thresholds(cfg, adaptation_latency_history)
+
+                    if adaptation_policy in {'latency-threshold', 'legacy', 'latency'}:
+                        switch_reason = 'no_latency'
                         if effective_latency is not None:
                             from .architecture_scoring import select_best_architecture
                             candidate_arch, scores = select_best_architecture(
@@ -639,14 +747,23 @@ def run(config_path='config.json'):
                             current_architecture=current_arch,
                             thresholds=threshold_context,
                         )
+                        score_details['policy'] = 'hybrid-score'
                         best_arch = candidate_arch
                         switch_reason = score_details.get('state', 'hybrid_score')
 
-                    if best_arch != current_arch and policy not in {'latency-threshold', 'legacy', 'latency'}:
+                time_since_last_switch = ts - last_switch_time
+                if best_arch != current_arch:
+                    if time_since_last_switch < min_time_between_switches:
+                        best_arch = current_arch
+                        switch_reason = 'cooldown'
+                    elif adaptation_policy not in {'latency-threshold', 'legacy', 'latency'}:
                         required_checks = max(1, int(getattr(cfg, 'ADAPTATION_PERSISTENCE_CHECKS', 2)))
                         bypass_persistence = (
                             score_details.get('critical_override', False)
                             and _cfg_bool(cfg, 'ADAPTATION_CRITICAL_BYPASS_PERSISTENCE', True)
+                        ) or (
+                            score_details.get('explored', False)
+                            and _cfg_bool(cfg, 'BANDIT_EXPLORATION_BYPASS_PERSISTENCE', True)
                         )
                         persisted, candidate_history = _candidate_persisted(
                             candidate_history,
@@ -656,16 +773,22 @@ def run(config_path='config.json'):
                         if not (bypass_persistence or persisted):
                             best_arch = current_arch
                             switch_reason = f'waiting_persistence_{len(candidate_history)}/{required_checks}'
-                    elif best_arch == current_arch:
-                        candidate_history = []
+                else:
+                    candidate_history = []
 
-                    if best_arch != current_arch:
-                        adaptation_switch_count += 1
-                        last_switch_time = ts
-                        cfg.set_architecture(best_arch)
-                        candidate_history = []
-                        with open(logfile, 'a') as f:
-                            f.write(f'{ts},-2,-1,-1,-1,-1,switch_architecture_{best_arch}\n')
+                switched_now = best_arch != current_arch
+                if switched_now:
+                    adaptation_switch_count += 1
+                    last_switch_time = ts
+                    cfg.set_architecture(best_arch)
+                    candidate_history = []
+                    with open(logfile, 'a') as f:
+                        f.write(f'{ts},-2,-1,-1,-1,-1,switch_architecture_{best_arch}\n')
+
+                if bandit_policy is not None:
+                    bandit_pending_action = best_arch
+                    bandit_pending_context = bandit_context
+                    bandit_pending_switched = switched_now
 
                 scoring_time = time.time() - scoring_start
 
@@ -696,18 +819,67 @@ def run(config_path='config.json'):
                     'performance_state': score_details.get('state'),
                     'fd_pressure': score_details.get('fd_pressure'),
                     'recovery_mode': score_details.get('recovery_mode'),
-                    'score_latency': score_details.get('components', {}).get('latency'),
-                    'score_pending': score_details.get('components', {}).get('pending'),
-                    'score_failure': score_details.get('components', {}).get('failure'),
-                    'score_message_loss': score_details.get('components', {}).get('message_loss'),
+                    'score_latency': score_details.get('components', {}).get('latency', bandit_context.get('latency_norm')),
+                    'score_pending': score_details.get('components', {}).get('pending', bandit_context.get('pending_norm')),
+                    'score_failure': score_details.get('components', {}).get('failure', bandit_context.get('failure_norm')),
+                    'score_message_loss': score_details.get('components', {}).get('message_loss', bandit_context.get('message_loss_rate')),
+                    'score_deadline_miss': bandit_context.get('deadline_miss_rate'),
+                    'score_throughput': bandit_context.get('throughput_norm'),
+                    'score_idle': bandit_context.get('idle_ratio'),
                     'pending_tasks': runtime_metrics.get('pending_tasks'),
                     'created_window': runtime_metrics.get('created_window'),
+                    'delivered_window': runtime_metrics.get('delivered_window'),
+                    'expired_window': runtime_metrics.get('expired_window'),
                     'pending_ratio': runtime_metrics.get('pending_ratio'),
                     'failures_window': runtime_metrics.get('failures_window'),
                     'failure_rate': runtime_metrics.get('failure_rate'),
                     'messages_sent': runtime_metrics.get('messages_sent'),
                     'messages_lost': runtime_metrics.get('messages_lost'),
                     'message_loss_rate': runtime_metrics.get('message_loss_rate'),
+                    'deadline_miss_rate': runtime_metrics.get('deadline_miss_rate'),
+                    'throughput_rate': runtime_metrics.get('throughput_rate'),
+                    'throughput_norm': runtime_metrics.get('throughput_norm'),
+                    'idle_agents': runtime_metrics.get('idle_agents'),
+                    'idle_ratio': runtime_metrics.get('idle_ratio'),
+                    'adaptation_policy': score_details.get('policy'),
+                    'bandit_reward': score_details.get('reward'),
+                    'bandit_badness': score_details.get('reward_details', {}).get('badness'),
+                    'bandit_throughput_bonus': score_details.get('reward_details', {}).get('throughput_bonus'),
+                    'bandit_switch_penalty': score_details.get('reward_details', {}).get('switch_penalty'),
+                    'bandit_reward_latency': score_details.get('reward_details', {}).get('reward_latency'),
+                    'bandit_reward_pending': score_details.get('reward_details', {}).get('reward_pending'),
+                    'bandit_reward_failure': score_details.get('reward_details', {}).get('reward_failure'),
+                    'bandit_reward_message_loss': score_details.get('reward_details', {}).get('reward_message_loss'),
+                    'bandit_reward_deadline_miss': score_details.get('reward_details', {}).get('reward_deadline_miss'),
+                    'bandit_reward_idle_when_pending': score_details.get('reward_details', {}).get('reward_idle_when_pending'),
+                    'bandit_updated_action': score_details.get('update_details', {}).get('updated_action'),
+                    'bandit_prediction_before_update': score_details.get('update_details', {}).get('prediction_before_update'),
+                    'bandit_prediction_error': score_details.get('update_details', {}).get('prediction_error'),
+                    'bandit_updates_for_action': score_details.get('update_details', {}).get('updates_for_action'),
+                    'bandit_epsilon': score_details.get('epsilon'),
+                    'bandit_explored': score_details.get('explored'),
+                    'bandit_improvement_margin': score_details.get('improvement_margin'),
+                    'bandit_current_value': score_details.get('current_value'),
+                    'bandit_selected_value': score_details.get('selected_value'),
+                    'bandit_value_ce': score_details.get('estimated_values', {}).get('centralized-impprox'),
+                    'bandit_value_sd': score_details.get('estimated_values', {}).get('semi-decentralized'),
+                    'bandit_value_fd': score_details.get('estimated_values', {}).get('decentralized'),
+                    'bandit_greedy_architecture': score_details.get('greedy_architecture'),
+                    'bandit_critical_reason': score_details.get('critical_reason'),
+                    'context_latency_norm': bandit_context.get('latency_norm'),
+                    'context_latency_missing': bandit_context.get('latency_missing'),
+                    'context_pending_norm': bandit_context.get('pending_norm'),
+                    'context_failure_norm': bandit_context.get('failure_norm'),
+                    'context_message_loss_rate': bandit_context.get('message_loss_rate'),
+                    'context_deadline_miss_rate': bandit_context.get('deadline_miss_rate'),
+                    'context_throughput_norm': bandit_context.get('throughput_norm'),
+                    'context_idle_ratio': bandit_context.get('idle_ratio'),
+                    'context_malicious_ratio': bandit_context.get('malicious_ratio'),
+                    'context_failure_prob': bandit_context.get('configured_failure_prob'),
+                    'context_comm_loss_prob': bandit_context.get('configured_comm_loss_prob'),
+                    'context_is_ce': bandit_context.get('is_ce'),
+                    'context_is_sd': bandit_context.get('is_sd'),
+                    'context_is_fd': bandit_context.get('is_fd'),
                     'current_architecture': current_arch,
                     'candidate_architecture': candidate_arch,
                     'selected_architecture': best_arch,

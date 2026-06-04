@@ -95,24 +95,32 @@ Access the application at **http://localhost:5173**
 | **Centralized-Importance** | Central coordinator prioritizes high-importance items |
 | **Centralized-ProxImp** | Proximity-first, then importance tiebreaker |
 | **Centralized-ImpProx** | Importance-first, then proximity tiebreaker |
-| **Dynamic-Adaptation** | 🆕 **Adaptive coordination that switches strategies at runtime based on latency metrics** |
+| **Dynamic-Adaptation** | 🆕 **Adaptive coordination that learns online when to switch strategies at runtime** |
 
 #### Dynamic-Adaptation Architecture
 
-The dynamic-adaptation architecture monitors relative delivery latency in simulation time and automatically switches between coordination strategies to optimize performance. By default, thresholds are self-calibrated from recent latency observations after a short warm-up:
+The dynamic-adaptation architecture monitors recent runtime indicators and uses
+a conservative contextual bandit to learn online which coordination mechanism is
+expected to perform best in the current operating context. The default policy
+chooses among `centralized-impprox` (CE), `semi-decentralized` (SD), and
+`decentralized` (FD) using relative latency, pending tasks, failures,
+coordination-message losses, throughput, idle agents, deadline misses, and the
+currently active mechanism.
 
-- **High Latency** (> adaptive high threshold): Switches to `decentralized` to reduce coordination overhead
-- **Low Latency** (< adaptive low threshold): Switches to `centralized-impprox` for optimal task allocation
-- **Medium Latency**: Uses `semi-decentralized` for balanced performance
+At each adaptation interval, the policy updates the value estimator associated
+with the mechanism used in the previous window, then selects the mechanism with
+the best estimated reward for the current context. Small exploration, switch
+penalties, a minimum switch interval, a persistence condition, and critical
+overrides keep switching conservative.
 
 **Configuration Parameters:**
 - `INITIAL_ARCHITECTURE`: Starting strategy (default: `semi-decentralized`)
 - `ADAPTATION_CHECK_INTERVAL`: How often to check metrics in seconds (default: 300)
-- `ADAPTIVE_THRESHOLDS`: Enable online threshold calibration (default: `true`)
-- `ADAPTIVE_THRESHOLD_WINDOW`: Number of recent adaptation checks used for calibration (default: 12)
-- `ADAPTIVE_THRESHOLD_WARMUP`: Number of checks that use static thresholds before calibration starts (default: 4)
-- `LATENCY_THRESHOLD_LOW`: Static/fallback low threshold (default: 10)
-- `LATENCY_THRESHOLD_HIGH`: Static/fallback high threshold (default: 40)
+- `ADAPTATION_POLICY`: Adaptation policy (default: `contextual-bandit`)
+- `BANDIT_EXPLORATION_EPSILON`: Initial online exploration probability (default: 0.08)
+- `BANDIT_LEARNING_RATE`: Linear value-estimator update rate (default: 0.05)
+- `BANDIT_IMPROVEMENT_MARGIN`: Minimum estimated reward gain before a non-exploratory switch (default: 0.02)
+- `BANDIT_SWITCH_PENALTY`: Reward penalty applied to unnecessary switching (default: 0.03)
 
 Architecture switches are logged in the CSV output with event type `switch_architecture_{new_arch}`.
 
