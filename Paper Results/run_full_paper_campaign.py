@@ -55,6 +55,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-on-error", action="store_true", help="Stop the campaign when an RQ script fails.")
     parser.add_argument("--strict-rtlola", action="store_true", help="Stop before running if RTLola cannot be initialized.")
     parser.add_argument("--no-reuse-rq1", action="store_true", help="Disable RQ1 artifact reuse in RQ2/RQ3.")
+    parser.add_argument(
+        "--coord-labels",
+        default=None,
+        help="Comma-separated mechanisms to forward to RQ1/RQ3/RQ4, e.g. CE,DA for RQ4.",
+    )
+    parser.add_argument("--machine-label", default=None, help="Forward a machine label to RQ4 only.")
+    parser.add_argument("--rq4-shard-count", type=int, default=1, help="Forward --shard-count to RQ4 only.")
+    parser.add_argument("--rq4-shard-index", type=int, default=1, help="Forward --shard-index to RQ4 only.")
     parser.add_argument("--limit", type=int, default=None, help="Forward --limit to each RQ script.")
     parser.add_argument(
         "--log-file",
@@ -72,23 +80,36 @@ def selected_rqs(raw: str) -> list[str]:
     return rqs
 
 
-def read_design_total(rq: str) -> Optional[int]:
+def read_design(rq: str) -> dict[str, Any]:
     design_path = PAPER_ROOT / rq / "experiment_design.json"
     if not design_path.exists():
-        return None
+        return {}
     try:
-        design = json.loads(design_path.read_text())
+        return json.loads(design_path.read_text())
     except json.JSONDecodeError:
-        return None
+        return {}
+
+
+def design_total(design: dict[str, Any]) -> Optional[int]:
     total = design.get("total_runs")
     return int(total) if total is not None else None
 
 
+def filter_rows_for_design(rows: list[dict[str, Any]], design: dict[str, Any]) -> list[dict[str, Any]]:
+    mechanisms = design.get("coordination_mechanisms")
+    if not isinstance(mechanisms, list) or not mechanisms:
+        return rows
+    selected = {str(label) for label in mechanisms}
+    return [row for row in rows if str(row.get("coord_label", "")) in selected]
+
+
 def rq_status(rq: str) -> dict[str, Any]:
+    design = read_design(rq)
     rows = read_rows(PAPER_ROOT / rq / "runs.csv")
-    completed = completed_run_ids(rows)
-    errors = [row for row in rows if row.get("status") == "error"]
-    total = read_design_total(rq)
+    scoped_rows = filter_rows_for_design(rows, design)
+    completed = completed_run_ids(scoped_rows)
+    errors = [row for row in scoped_rows if row.get("status") == "error"]
+    total = design_total(design)
     remaining = total - len(completed) if total is not None else None
     return {
         "rq": rq,
@@ -112,6 +133,14 @@ def command_for_rq(rq: str, args: argparse.Namespace) -> list[str]:
         cmd.append("--fail-fast")
     if args.limit is not None:
         cmd.extend(["--limit", str(args.limit)])
+    if args.coord_labels and rq in {"RQ1", "RQ3", "RQ4"}:
+        cmd.extend(["--coord-labels", args.coord_labels])
+    if rq == "RQ4":
+        if args.machine_label:
+            cmd.extend(["--machine-label", args.machine_label])
+        if args.rq4_shard_count != 1 or args.rq4_shard_index != 1:
+            cmd.extend(["--shard-count", str(args.rq4_shard_count)])
+            cmd.extend(["--shard-index", str(args.rq4_shard_index)])
     if args.no_reuse_rq1 and rq in {"RQ2", "RQ3"}:
         cmd.append("--no-reuse-rq1")
     return cmd

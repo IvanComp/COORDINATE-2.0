@@ -2,11 +2,8 @@
   "research_question": "RQ1",
   "sim_days": 30,
   "repetitions": 5,
-  "total_runs": 2160,
+  "total_runs": 540,
   "coordination_mechanisms": [
-    "CE",
-    "SD",
-    "FD",
     "DA"
   ],
   "item_spawning_times": [

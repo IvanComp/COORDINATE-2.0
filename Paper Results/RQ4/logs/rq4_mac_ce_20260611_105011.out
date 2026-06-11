@@ -1,0 +1,225 @@
+Full paper campaign
+RQs: RQ4
+Repetitions: 5
+Master log: /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/full_campaign.log
+RQ1 reuse enabled for RQ2/RQ3: True
+Resume is enabled by default in every RQ script.
+RTLola preflight
+[rtlola-check] Project: /Users/ivan/Desktop/COORDINATE-2.0
+[rtlola-check] Platform: Darwin arm64
+[rtlola-check] Candidate order:
+  01. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-macos-aarch64 [missing]
+  02. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-macos_aarch64 [missing]
+  03. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-macos-arm64 [missing]
+  04. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-macos_arm64 [missing]
+  05. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-macos [missing]
+  06. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-darwin-aarch64 [missing]
+  07. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-darwin_aarch64 [missing]
+  08. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-darwin-arm64 [missing]
+  09. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-darwin_arm64 [missing]
+  10. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli-darwin [missing]
+  11. /Users/ivan/Desktop/COORDINATE-2.0/.venv/bin/rtlola-cli [missing]
+  12. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-macos-aarch64 [missing]
+  13. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-macos_aarch64 [missing]
+  14. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-macos-arm64 [missing]
+  15. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-macos_arm64 [missing]
+  16. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-macos [missing]
+  17. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-darwin-aarch64 [missing]
+  18. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-darwin_aarch64 [missing]
+  19. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-darwin-arm64 [missing]
+  20. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-darwin_arm64 [missing]
+  21. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli-darwin [missing]
+  22. /Users/ivan/Desktop/COORDINATE-2.0/bin/rtlola-cli [missing]
+  23. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-macos-aarch64 [missing]
+  24. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-macos_aarch64 [missing]
+  25. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-macos-arm64 [missing]
+  26. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-macos_arm64 [missing]
+  27. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-macos [missing]
+  28. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-darwin-aarch64 [missing]
+  29. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-darwin_aarch64 [missing]
+  30. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-darwin-arm64 [missing]
+  31. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-darwin_arm64 [missing]
+  32. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli-darwin [missing]
+  33. /Users/ivan/Desktop/COORDINATE-2.0/tools/rtlola-cli [missing]
+  34. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-macos-aarch64 [missing]
+  35. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-macos_aarch64 [missing]
+  36. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-macos-arm64 [missing]
+  37. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-macos_arm64 [missing]
+  38. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-macos [missing]
+  39. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-darwin-aarch64 [missing]
+  40. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-darwin_aarch64 [missing]
+  41. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-darwin-arm64 [missing]
+  42. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-darwin_arm64 [missing]
+  43. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli-darwin [missing]
+  44. /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli [exists]
+  45. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-macos-aarch64 [missing]
+  46. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-macos_aarch64 [missing]
+  47. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-macos-arm64 [missing]
+  48. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-macos_arm64 [missing]
+  49. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-macos [missing]
+  50. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-darwin-aarch64 [missing]
+  51. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-darwin_aarch64 [missing]
+  52. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-darwin-arm64 [missing]
+  53. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-darwin_arm64 [missing]
+  54. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli-darwin [missing]
+  55. /Users/ivan/Desktop/COORDINATE-2.0/sim/rtlola-cli [missing]
+  56. /Users/ivan/.cargo/bin/rtlola-cli [exists]
+[rtlola-check] Selected: /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli
+rtlola-cli 0.1.2
+[rtlola-check] File: /Users/ivan/Desktop/COORDINATE-2.0/rtlola-cli: Mach-O 64-bit executable arm64
+Before RQ4 status: completed=135/135, errors=0, remaining=0
+
+================================================================================
+Starting RQ4: /usr/local/bin/python3 /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/run_rq4_experiments.py --repetitions 5 --coord-labels CE --machine-label mac
+================================================================================
+[RQ4] ================================================================================
+[RQ4] RQ4 SCALABILITY CAMPAIGN
+[RQ4] ================================================================================
+[RQ4] {'research_question': 'RQ4', 'repetitions': 5, 'total_runs': 135, 'full_campaign_runs': 135, 'shard_runs_before_limit': 135, 'machine_label': 'mac', 'machine_metadata': {'machine_label': 'mac', 'machine_node': 'MacBook-Pro-di-Ivan.local', 'machine_system': 'Darwin', 'machine_release': '25.6.0', 'machine_platform': 'macOS-26.6-arm64-arm-64bit', 'machine_processor': 'arm', 'machine_cpu_count': 11, 'python_version': '3.12.6'}, 'shard_count': 1, 'shard_index': 1, 'sim_days': [1, 7, 30], 'item_spawning_times': [150, 120, 90], 'n_robots': [10, 20, 30], 'coordination_mechanisms': ['CE'], 'malicious_ratio': 0.33, 'fail_prob': 0.66, 'msg_loss': 0.1, 'daily_stress_window': [12, 24], 'stress_multiplier': 1.2, 'purpose': 'Measure execution time, peak RSS, event throughput, and trace size.'}
+[RQ4] ================================================================================
+[RQ4] [1/135] mac_c001_r01_CE_days1_spawn150_bots10
+[RQ4] [2/135] mac_c001_r02_CE_days1_spawn150_bots10
+[RQ4] [3/135] mac_c001_r03_CE_days1_spawn150_bots10
+[RQ4] [4/135] mac_c001_r04_CE_days1_spawn150_bots10
+[RQ4] [5/135] mac_c001_r05_CE_days1_spawn150_bots10
+[RQ4] [6/135] mac_c002_r01_CE_days1_spawn150_bots20
+[RQ4] [7/135] mac_c002_r02_CE_days1_spawn150_bots20
+[RQ4] [8/135] mac_c002_r03_CE_days1_spawn150_bots20
+[RQ4] [9/135] mac_c002_r04_CE_days1_spawn150_bots20
+[RQ4] [10/135] mac_c002_r05_CE_days1_spawn150_bots20
+[RQ4] [11/135] mac_c003_r01_CE_days1_spawn150_bots30
+[RQ4] [12/135] mac_c003_r02_CE_days1_spawn150_bots30
+[RQ4] [13/135] mac_c003_r03_CE_days1_spawn150_bots30
+[RQ4] [14/135] mac_c003_r04_CE_days1_spawn150_bots30
+[RQ4] [15/135] mac_c003_r05_CE_days1_spawn150_bots30
+[RQ4] [16/135] mac_c004_r01_CE_days1_spawn120_bots10
+[RQ4] [17/135] mac_c004_r02_CE_days1_spawn120_bots10
+[RQ4] [18/135] mac_c004_r03_CE_days1_spawn120_bots10
+[RQ4] [19/135] mac_c004_r04_CE_days1_spawn120_bots10
+[RQ4] [20/135] mac_c004_r05_CE_days1_spawn120_bots10
+[RQ4] [21/135] mac_c005_r01_CE_days1_spawn120_bots20
+[RQ4] [22/135] mac_c005_r02_CE_days1_spawn120_bots20
+[RQ4] [23/135] mac_c005_r03_CE_days1_spawn120_bots20
+[RQ4] [24/135] mac_c005_r04_CE_days1_spawn120_bots20
+[RQ4] [25/135] mac_c005_r05_CE_days1_spawn120_bots20
+[RQ4] [26/135] mac_c006_r01_CE_days1_spawn120_bots30
+[RQ4] [27/135] mac_c006_r02_CE_days1_spawn120_bots30
+[RQ4] [28/135] mac_c006_r03_CE_days1_spawn120_bots30
+[RQ4] [29/135] mac_c006_r04_CE_days1_spawn120_bots30
+[RQ4] [30/135] mac_c006_r05_CE_days1_spawn120_bots30
+[RQ4] [31/135] mac_c007_r01_CE_days1_spawn90_bots10
+[RQ4] [32/135] mac_c007_r02_CE_days1_spawn90_bots10
+[RQ4] [33/135] mac_c007_r03_CE_days1_spawn90_bots10
+[RQ4] [34/135] mac_c007_r04_CE_days1_spawn90_bots10
+[RQ4] [35/135] mac_c007_r05_CE_days1_spawn90_bots10
+[RQ4] [36/135] mac_c008_r01_CE_days1_spawn90_bots20
+[RQ4] [37/135] mac_c008_r02_CE_days1_spawn90_bots20
+[RQ4] [38/135] mac_c008_r03_CE_days1_spawn90_bots20
+[RQ4] [39/135] mac_c008_r04_CE_days1_spawn90_bots20
+[RQ4] [40/135] mac_c008_r05_CE_days1_spawn90_bots20
+[RQ4] [41/135] mac_c009_r01_CE_days1_spawn90_bots30
+[RQ4] [42/135] mac_c009_r02_CE_days1_spawn90_bots30
+[RQ4] [43/135] mac_c009_r03_CE_days1_spawn90_bots30
+[RQ4] [44/135] mac_c009_r04_CE_days1_spawn90_bots30
+[RQ4] [45/135] mac_c009_r05_CE_days1_spawn90_bots30
+[RQ4] [46/135] mac_c010_r01_CE_days7_spawn150_bots10
+[RQ4] [47/135] mac_c010_r02_CE_days7_spawn150_bots10
+[RQ4] [48/135] mac_c010_r03_CE_days7_spawn150_bots10
+[RQ4] [49/135] mac_c010_r04_CE_days7_spawn150_bots10
+[RQ4] [50/135] mac_c010_r05_CE_days7_spawn150_bots10
+[RQ4] [51/135] mac_c011_r01_CE_days7_spawn150_bots20
+[RQ4] [52/135] mac_c011_r02_CE_days7_spawn150_bots20
+[RQ4] [53/135] mac_c011_r03_CE_days7_spawn150_bots20
+[RQ4] [54/135] mac_c011_r04_CE_days7_spawn150_bots20
+[RQ4] [55/135] mac_c011_r05_CE_days7_spawn150_bots20
+[RQ4] [56/135] mac_c012_r01_CE_days7_spawn150_bots30
+[RQ4] [57/135] mac_c012_r02_CE_days7_spawn150_bots30
+[RQ4] [58/135] mac_c012_r03_CE_days7_spawn150_bots30
+[RQ4] [59/135] mac_c012_r04_CE_days7_spawn150_bots30
+[RQ4] [60/135] mac_c012_r05_CE_days7_spawn150_bots30
+[RQ4] [61/135] mac_c013_r01_CE_days7_spawn120_bots10
+[RQ4] [62/135] mac_c013_r02_CE_days7_spawn120_bots10
+[RQ4] [63/135] mac_c013_r03_CE_days7_spawn120_bots10
+[RQ4] [64/135] mac_c013_r04_CE_days7_spawn120_bots10
+[RQ4] [65/135] mac_c013_r05_CE_days7_spawn120_bots10
+[RQ4] [66/135] mac_c014_r01_CE_days7_spawn120_bots20
+[RQ4] [67/135] mac_c014_r02_CE_days7_spawn120_bots20
+[RQ4] [68/135] mac_c014_r03_CE_days7_spawn120_bots20
+[RQ4] [69/135] mac_c014_r04_CE_days7_spawn120_bots20
+[RQ4] [70/135] mac_c014_r05_CE_days7_spawn120_bots20
+[RQ4] [71/135] mac_c015_r01_CE_days7_spawn120_bots30
+[RQ4] [72/135] mac_c015_r02_CE_days7_spawn120_bots30
+[RQ4] [73/135] mac_c015_r03_CE_days7_spawn120_bots30
+[RQ4] [74/135] mac_c015_r04_CE_days7_spawn120_bots30
+[RQ4] [75/135] mac_c015_r05_CE_days7_spawn120_bots30
+[RQ4] [76/135] mac_c016_r01_CE_days7_spawn90_bots10
+[RQ4] [77/135] mac_c016_r02_CE_days7_spawn90_bots10
+[RQ4] [78/135] mac_c016_r03_CE_days7_spawn90_bots10
+[RQ4] [79/135] mac_c016_r04_CE_days7_spawn90_bots10
+[RQ4] [80/135] mac_c016_r05_CE_days7_spawn90_bots10
+[RQ4] [81/135] mac_c017_r01_CE_days7_spawn90_bots20
+[RQ4] [82/135] mac_c017_r02_CE_days7_spawn90_bots20
+[RQ4] [83/135] mac_c017_r03_CE_days7_spawn90_bots20
+[RQ4] [84/135] mac_c017_r04_CE_days7_spawn90_bots20
+[RQ4] [85/135] mac_c017_r05_CE_days7_spawn90_bots20
+[RQ4] [86/135] mac_c018_r01_CE_days7_spawn90_bots30
+[RQ4] [87/135] mac_c018_r02_CE_days7_spawn90_bots30
+[RQ4] [88/135] mac_c018_r03_CE_days7_spawn90_bots30
+[RQ4] [89/135] mac_c018_r04_CE_days7_spawn90_bots30
+[RQ4] [90/135] mac_c018_r05_CE_days7_spawn90_bots30
+[RQ4] [91/135] mac_c019_r01_CE_days30_spawn150_bots10
+[RQ4] [92/135] mac_c019_r02_CE_days30_spawn150_bots10
+[RQ4] [93/135] mac_c019_r03_CE_days30_spawn150_bots10
+[RQ4] [94/135] mac_c019_r04_CE_days30_spawn150_bots10
+[RQ4] [95/135] mac_c019_r05_CE_days30_spawn150_bots10
+[RQ4] [96/135] mac_c020_r01_CE_days30_spawn150_bots20
+[RQ4] [97/135] mac_c020_r02_CE_days30_spawn150_bots20
+[RQ4] [98/135] mac_c020_r03_CE_days30_spawn150_bots20
+[RQ4] [99/135] mac_c020_r04_CE_days30_spawn150_bots20
+[RQ4] [100/135] mac_c020_r05_CE_days30_spawn150_bots20
+[RQ4] [101/135] mac_c021_r01_CE_days30_spawn150_bots30
+[RQ4] [102/135] mac_c021_r02_CE_days30_spawn150_bots30
+[RQ4] [103/135] mac_c021_r03_CE_days30_spawn150_bots30
+[RQ4] [104/135] mac_c021_r04_CE_days30_spawn150_bots30
+[RQ4] [105/135] mac_c021_r05_CE_days30_spawn150_bots30
+[RQ4] [106/135] mac_c022_r01_CE_days30_spawn120_bots10
+[RQ4] [107/135] mac_c022_r02_CE_days30_spawn120_bots10
+[RQ4] [108/135] mac_c022_r03_CE_days30_spawn120_bots10
+[RQ4] [109/135] mac_c022_r04_CE_days30_spawn120_bots10
+[RQ4] [110/135] mac_c022_r05_CE_days30_spawn120_bots10
+[RQ4] [111/135] mac_c023_r01_CE_days30_spawn120_bots20
+[RQ4] [112/135] mac_c023_r02_CE_days30_spawn120_bots20
+[RQ4] [113/135] mac_c023_r03_CE_days30_spawn120_bots20
+[RQ4] [114/135] mac_c023_r04_CE_days30_spawn120_bots20
+[RQ4] [115/135] mac_c023_r05_CE_days30_spawn120_bots20
+[RQ4] [116/135] mac_c024_r01_CE_days30_spawn120_bots30
+[RQ4] [117/135] mac_c024_r02_CE_days30_spawn120_bots30
+[RQ4] [118/135] mac_c024_r03_CE_days30_spawn120_bots30
+[RQ4] [119/135] mac_c024_r04_CE_days30_spawn120_bots30
+[RQ4] [120/135] mac_c024_r05_CE_days30_spawn120_bots30
+[RQ4] [121/135] mac_c025_r01_CE_days30_spawn90_bots10
+[RQ4] [122/135] mac_c025_r02_CE_days30_spawn90_bots10
+[RQ4] [123/135] mac_c025_r03_CE_days30_spawn90_bots10
+[RQ4] [124/135] mac_c025_r04_CE_days30_spawn90_bots10
+[RQ4] [125/135] mac_c025_r05_CE_days30_spawn90_bots10
+[RQ4] [126/135] mac_c026_r01_CE_days30_spawn90_bots20
+[RQ4] [127/135] mac_c026_r02_CE_days30_spawn90_bots20
+[RQ4] [128/135] mac_c026_r03_CE_days30_spawn90_bots20
+[RQ4] [129/135] mac_c026_r04_CE_days30_spawn90_bots20
+[RQ4] [130/135] mac_c026_r05_CE_days30_spawn90_bots20
+[RQ4] [131/135] mac_c027_r01_CE_days30_spawn90_bots30
+[RQ4] [132/135] mac_c027_r02_CE_days30_spawn90_bots30
+[RQ4] [133/135] mac_c027_r03_CE_days30_spawn90_bots30
+[RQ4] [134/135] mac_c027_r04_CE_days30_spawn90_bots30
+[RQ4] [135/135] mac_c027_r05_CE_days30_spawn90_bots30
+[RQ4] ================================================================================
+[RQ4] RQ4 campaign completed in 2167.79s wall-clock.
+[RQ4] Run-level CSV:   /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/RQ4/runs.csv
+[RQ4] Machine CSV:     /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/RQ4/runs_mac.csv
+[RQ4] Summary CSV:     /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/RQ4/scalability_summary.csv
+[RQ4] Machine summary: /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/RQ4/scalability_summary_mac.csv
+[RQ4] ================================================================================
+After  RQ4 status: completed=270/270, errors=0, remaining=0
+
+Full paper campaign finished.
+Status CSV: /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/campaign_status.csv

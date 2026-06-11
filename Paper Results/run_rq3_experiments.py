@@ -8,7 +8,11 @@ the paper's daily stress-window setup and records both simulation wall time and
 per-check adaptation overhead.
 
 Default campaign:
-    3 workload levels x 3 fleet sizes x 4 mechanisms x 5 repetitions = 180 runs.
+    3 workload levels x 3 fleet sizes x 1 mechanism (DA) x
+    5 repetitions = 45 runs.
+
+    The fixed-mechanism baselines can still be requested explicitly with
+    --coord-labels CE,SD,FD,DA.
 
 Run examples:
     python "Paper Results/run_rq3_experiments.py" --dry-run
@@ -59,7 +63,7 @@ from paper_experiment_utils import (
 RESULTS_ROOT = PAPER_ROOT / "RQ3"
 DEFAULT_ITEM_SPAWNING_TIMES = [90, 120, 150]
 DEFAULT_N_ROBOTS = [10, 20, 30]
-DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
+DEFAULT_COORD_LABELS = ["DA"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,21 +79,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quick", action="store_true", help="Small smoke campaign for checking the runner.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
     parser.add_argument("--force", action="store_true", help="Re-run even if the raw log already exists.")
+    parser.add_argument(
+        "--coord-labels",
+        default=",".join(DEFAULT_COORD_LABELS),
+        help="Comma-separated mechanisms to include, e.g. DA or CE,SD,FD,DA.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N run instances.")
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately if a run fails.")
     return parser.parse_args()
 
 
+def selected_coord_labels(args: argparse.Namespace) -> list[str]:
+    labels = [label.strip().upper() for label in args.coord_labels.split(",") if label.strip()]
+    unknown = [label for label in labels if label not in COORD_TO_ARCH]
+    if unknown:
+        raise ValueError(f"Unknown coordination labels: {', '.join(unknown)}")
+    if not labels:
+        raise ValueError("At least one coordination label is required.")
+    return labels
+
+
 def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
+    coord_labels = selected_coord_labels(args)
     if args.quick:
         item_spawning_times = [120]
         n_robots_values = [20]
-        coord_labels = DEFAULT_COORD_LABELS
         repetitions = 1 if args.repetitions == 5 else args.repetitions
     else:
         item_spawning_times = DEFAULT_ITEM_SPAWNING_TIMES
         n_robots_values = DEFAULT_N_ROBOTS
-        coord_labels = DEFAULT_COORD_LABELS
         repetitions = args.repetitions
 
     rows: list[dict[str, Any]] = []
@@ -149,7 +167,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "sim_days": args.sim_days,
         "repetitions": args.repetitions,
         "total_runs": len(combos),
-        "coordination_mechanisms": DEFAULT_COORD_LABELS,
+        "coordination_mechanisms": selected_coord_labels(args),
         "item_spawning_times": [120] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "n_robots": [20] if args.quick else DEFAULT_N_ROBOTS,
         "malicious_ratio": args.malicious_ratio,

@@ -6,9 +6,12 @@ RQ4 focuses on execution time, memory usage, event throughput, and trace size as
 simulation duration, fleet size, and workload increase. Each run is executed in
 an isolated Python subprocess so peak RSS can be measured per simulation.
 
-Default campaign:
-    3 durations x 3 workload levels x 3 fleet sizes x 2 mechanisms x
+Default campaign per hardware profile:
+    3 durations x 3 workload levels x 3 fleet sizes x 2 mechanisms (CE, DA) x
     5 repetitions = 270 runs.
+
+    Running the same campaign on workstation and commodity hardware produces
+    the full 2 x 2 hardware/mechanism matrix used for RQ4.
 
 Run examples:
     python "Paper Results/run_rq4_experiments.py" --dry-run
@@ -25,6 +28,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import platform
+import re
 import subprocess
 import sys
 import time
@@ -73,6 +79,13 @@ def parse_args() -> argparse.Namespace:
         default=",".join(DEFAULT_COORD_LABELS),
         help="Comma-separated mechanisms to include, usually CE,DA for scalability.",
     )
+    parser.add_argument(
+        "--machine-label",
+        default=None,
+        help="Short label for the computer running this shard, e.g. mac or workstation.",
+    )
+    parser.add_argument("--shard-count", type=int, default=1, help="Number of machines/shards used for RQ4.")
+    parser.add_argument("--shard-index", type=int, default=1, help="1-based index of the shard to run on this machine.")
     parser.add_argument("--quick", action="store_true", help="Small smoke campaign for checking the runner.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
     parser.add_argument("--force", action="store_true", help="Re-run even if the raw log already exists.")
@@ -81,15 +94,57 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def sanitize_label(value: str) -> str:
+    label = re.sub(r"[^A-Za-z0-9_-]+", "-", value.strip().lower()).strip("-_")
+    return label or "machine"
+
+
+def default_machine_label() -> str:
+    system = platform.system().lower()
+    if system == "darwin":
+        return "mac"
+    if system == "windows":
+        return "windows"
+    if system == "linux":
+        return "linux"
+    return sanitize_label(platform.node() or system or "machine")
+
+
+def machine_label(args: argparse.Namespace) -> str:
+    return sanitize_label(args.machine_label or default_machine_label())
+
+
+def hardware_metadata(label: str) -> dict[str, Any]:
+    return {
+        "machine_label": label,
+        "machine_node": platform.node(),
+        "machine_system": platform.system(),
+        "machine_release": platform.release(),
+        "machine_platform": platform.platform(),
+        "machine_processor": platform.processor(),
+        "machine_cpu_count": os.cpu_count(),
+        "python_version": platform.python_version(),
+    }
+
+
 def selected_coord_labels(args: argparse.Namespace) -> list[str]:
-    labels = [label.strip() for label in args.coord_labels.split(",") if label.strip()]
+    labels = [label.strip().upper() for label in args.coord_labels.split(",") if label.strip()]
     unknown = [label for label in labels if label not in COORD_TO_ARCH]
     if unknown:
         raise ValueError(f"Unknown coordination labels: {', '.join(unknown)}")
+    if not labels:
+        raise ValueError("At least one coordination label is required.")
     return labels
 
 
-def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
+def validate_shard_args(args: argparse.Namespace) -> None:
+    if args.shard_count < 1:
+        raise ValueError("--shard-count must be >= 1")
+    if args.shard_index < 1 or args.shard_index > args.shard_count:
+        raise ValueError("--shard-index must be between 1 and --shard-count")
+
+
+def build_campaign_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.quick:
         sim_days_values = [1]
         item_spawning_times = [150]
@@ -105,6 +160,7 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     combo_idx = 0
+    label = machine_label(args)
     for sim_days, item_spawn, n_robots, coord_label in product(
         sim_days_values,
         item_spawning_times,
@@ -117,6 +173,7 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "combo_idx": combo_idx,
                 "rep": rep,
                 "seed": args.base_seed + combo_idx * 1000 + rep,
+                "machine_label": label,
                 "coord_label": coord_label,
                 "architecture": COORD_TO_ARCH[coord_label],
                 "sim_days": sim_days,
@@ -127,12 +184,29 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "fail_prob": args.fail_prob,
                 "msg_loss_prob": args.msg_loss,
             })
+    return rows
+
+
+def shard_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[dict[str, Any]]:
+    validate_shard_args(args)
+    if args.shard_count == 1:
+        return rows
+    shard_offset = args.shard_index - 1
+    return [
+        row
+        for idx, row in enumerate(rows)
+        if idx % args.shard_count == shard_offset
+    ]
+
+
+def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
+    rows = shard_rows(build_campaign_rows(args), args)
     return rows[: args.limit] if args.limit else rows
 
 
 def run_id(params: dict[str, Any]) -> str:
     return (
-        f"c{params['combo_idx']:03d}_r{params['rep']:02d}_"
+        f"{params['machine_label']}_c{params['combo_idx']:03d}_r{params['rep']:02d}_"
         f"{params['coord_label']}_days{params['sim_days']}_"
         f"spawn{params['item_spawning_time']}_bots{params['n_robots']}"
     )
@@ -180,11 +254,23 @@ print("{SUBPROCESS_MARKER}" + json.dumps({{
 
 def run_campaign(args: argparse.Namespace) -> None:
     raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
-    combos = campaign(args)
+    label = machine_label(args)
+    hardware = hardware_metadata(label)
+    all_combos = build_campaign_rows(args)
+    shard_combos = shard_rows(all_combos, args)
+    combos = shard_combos[: args.limit] if args.limit else shard_combos
+    machine_raw_logs_dir = raw_logs_dir / label
+    machine_configs_dir = configs_dir / label
     design = {
         "research_question": "RQ4",
         "repetitions": args.repetitions,
         "total_runs": len(combos),
+        "full_campaign_runs": len(all_combos),
+        "shard_runs_before_limit": len(shard_combos),
+        "machine_label": label,
+        "machine_metadata": hardware,
+        "shard_count": args.shard_count,
+        "shard_index": args.shard_index,
         "sim_days": [1] if args.quick else DEFAULT_SIM_DAYS,
         "item_spawning_times": [150] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "n_robots": [10] if args.quick else DEFAULT_N_ROBOTS,
@@ -196,8 +282,6 @@ def run_campaign(args: argparse.Namespace) -> None:
         "stress_multiplier": args.stress_multiplier,
         "purpose": "Measure execution time, peak RSS, event throughput, and trace size.",
     }
-    write_json(RESULTS_ROOT / "experiment_design.json", design)
-
     print("=" * 80)
     print("RQ4 SCALABILITY CAMPAIGN")
     print("=" * 80)
@@ -207,6 +291,11 @@ def run_campaign(args: argparse.Namespace) -> None:
     if args.dry_run:
         print("Dry run only. No simulations launched.")
         return
+
+    write_json(RESULTS_ROOT / "experiment_design.json", design)
+
+    machine_raw_logs_dir.mkdir(parents=True, exist_ok=True)
+    machine_configs_dir.mkdir(parents=True, exist_ok=True)
 
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
@@ -219,10 +308,10 @@ def run_campaign(args: argparse.Namespace) -> None:
             print(f"[{idx}/{len(combos)}] {rid} already completed; skipping", flush=True)
             continue
 
-        run_dir = raw_logs_dir / rid
+        run_dir = machine_raw_logs_dir / rid
         run_dir.mkdir(parents=True, exist_ok=True)
         logfile = run_dir / "simulation_log.csv"
-        cfg_path = configs_dir / f"{rid}.json"
+        cfg_path = machine_configs_dir / f"{rid}.json"
         phases = build_paper_daily_phases(
             sim_days=params["sim_days"],
             base_fail_prob=params["fail_prob"],
@@ -239,6 +328,8 @@ def run_campaign(args: argparse.Namespace) -> None:
             seed=params["seed"],
             sim_days=params["sim_days"],
             updates={
+                "MACHINE_LABEL": label,
+                "MACHINE_METADATA": hardware,
                 "N_ROBOTS": params["n_robots"],
                 "N_MALICIOUS": params["n_malicious"],
                 "FAIL_PROB": params["fail_prob"],
@@ -294,6 +385,10 @@ def run_campaign(args: argparse.Namespace) -> None:
             "error": error_message,
             "config_path": str(cfg_path),
             "logfile": str(logfile),
+            "machine_label": label,
+            "shard_count": args.shard_count,
+            "shard_index": args.shard_index,
+            **hardware,
             "coord_label": params["coord_label"],
             "architecture": params["architecture"],
             "rep": params["rep"],
@@ -315,14 +410,16 @@ def run_campaign(args: argparse.Namespace) -> None:
             **metrics,
         }
         rows = replace_row(rows, row)
+        machine_rows = [existing for existing in rows if existing.get("machine_label") == label]
 
         write_rows(RESULTS_ROOT / "runs.csv", rows)
+        write_rows(RESULTS_ROOT / f"runs_{label}.csv", machine_rows)
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
 
     summary = summarise_rows(
         rows,
-        group_fields=["coord_label", "architecture", "sim_days", "item_spawning_time", "n_robots"],
+        group_fields=["machine_label", "coord_label", "architecture", "sim_days", "item_spawning_time", "n_robots"],
         metric_fields=[
             "wall_time_s",
             "event_count",
@@ -340,11 +437,33 @@ def run_campaign(args: argparse.Namespace) -> None:
         ],
     )
     write_rows(RESULTS_ROOT / "scalability_summary.csv", summary)
+    machine_summary = summarise_rows(
+        [row for row in rows if row.get("machine_label") == label],
+        group_fields=["machine_label", "coord_label", "architecture", "sim_days", "item_spawning_time", "n_robots"],
+        metric_fields=[
+            "wall_time_s",
+            "event_count",
+            "events_per_wall_s",
+            "max_rss_mb",
+            "trace_rows",
+            "trace_size_mb",
+            "overhead_trace_size_mb",
+            "total_output_size_mb",
+            "created",
+            "delivered",
+            "avg_latency_s",
+            "p95_latency_s",
+            "adapt_checks",
+        ],
+    )
+    write_rows(RESULTS_ROOT / f"scalability_summary_{label}.csv", machine_summary)
 
     print("=" * 80)
     print(f"RQ4 campaign completed in {time.time() - started_at:.2f}s wall-clock.")
     print(f"Run-level CSV:   {RESULTS_ROOT / 'runs.csv'}")
+    print(f"Machine CSV:     {RESULTS_ROOT / f'runs_{label}.csv'}")
     print(f"Summary CSV:     {RESULTS_ROOT / 'scalability_summary.csv'}")
+    print(f"Machine summary: {RESULTS_ROOT / f'scalability_summary_{label}.csv'}")
     print("=" * 80)
 
 
