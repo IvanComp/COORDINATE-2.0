@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--coord-labels",
         default=None,
-        help="Comma-separated mechanisms to forward to RQ1/RQ3/RQ4, e.g. CE,DA for RQ4.",
+        help="Comma-separated mechanisms to forward to RQ1/RQ3/RQ4. Defaults are DA-only.",
     )
     parser.add_argument("--machine-label", default=None, help="Forward a machine label to RQ4 only.")
     parser.add_argument("--rq4-shard-count", type=int, default=1, help="Forward --shard-count to RQ4 only.")
