@@ -18,7 +18,7 @@ Run examples:
     nohup python "Paper Results/run_rq4_experiments.py" > "Paper Results/RQ4/rq4.log" 2>&1 &
 
 Resume behavior:
-    Completed runs are detected from RQ4/runs.csv and their raw log folders.
+    Completed runs are detected from RQ4/runs.csv.
     Re-launching with more repetitions skips completed repetitions and runs only
     missing or previously failed ones. Use --force to intentionally re-run all.
 """
@@ -44,6 +44,7 @@ from paper_experiment_utils import (
     PROJECT_ROOT,
     analyze_log,
     build_paper_daily_phases,
+    cleanup_transient_artifacts,
     config_with_paths,
     completed_run_ids,
     ensure_result_dirs,
@@ -88,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard-index", type=int, default=1, help="1-based index of the shard to run on this machine.")
     parser.add_argument("--quick", action="store_true", help="Small smoke campaign for checking the runner.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
-    parser.add_argument("--force", action="store_true", help="Re-run even if the raw log already exists.")
+    parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N run instances.")
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately if a run fails.")
     return parser.parse_args()
@@ -253,14 +254,11 @@ print("{SUBPROCESS_MARKER}" + json.dumps({{
 
 
 def run_campaign(args: argparse.Namespace) -> None:
-    raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
     label = machine_label(args)
     hardware = hardware_metadata(label)
     all_combos = build_campaign_rows(args)
     shard_combos = shard_rows(all_combos, args)
     combos = shard_combos[: args.limit] if args.limit else shard_combos
-    machine_raw_logs_dir = raw_logs_dir / label
-    machine_configs_dir = configs_dir / label
     design = {
         "research_question": "RQ4",
         "repetitions": args.repetitions,
@@ -292,8 +290,9 @@ def run_campaign(args: argparse.Namespace) -> None:
         print("Dry run only. No simulations launched.")
         return
 
-    write_json(RESULTS_ROOT / "experiment_design.json", design)
-
+    raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
+    machine_raw_logs_dir = raw_logs_dir / label
+    machine_configs_dir = configs_dir / label
     machine_raw_logs_dir.mkdir(parents=True, exist_ok=True)
     machine_configs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -457,6 +456,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         ],
     )
     write_rows(RESULTS_ROOT / f"scalability_summary_{label}.csv", machine_summary)
+    cleanup_transient_artifacts(RESULTS_ROOT)
 
     print("=" * 80)
     print(f"RQ4 campaign completed in {time.time() - started_at:.2f}s wall-clock.")

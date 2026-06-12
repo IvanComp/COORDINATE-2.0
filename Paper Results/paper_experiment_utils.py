@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import shutil
 import statistics
 import sys
 from pathlib import Path
@@ -99,6 +100,16 @@ def ensure_result_dirs(results_root: Path) -> tuple[Path, Path]:
     for directory in [results_root, raw_logs_dir, configs_dir]:
         directory.mkdir(parents=True, exist_ok=True)
     return raw_logs_dir, configs_dir
+
+
+def cleanup_transient_artifacts(results_root: Path) -> None:
+    for name in ("raw_logs", "configs"):
+        path = results_root / name
+        if path.exists():
+            shutil.rmtree(path)
+    design_path = results_root / "experiment_design.json"
+    if design_path.exists():
+        design_path.unlink()
 
 
 def malicious_count(n_robots: int, malicious_ratio: float) -> int:
@@ -217,11 +228,9 @@ def completed_run_ids(rows: list[dict[str, Any]]) -> set[str]:
     completed: set[str] = set()
     for row in rows:
         run_id = str(row.get("run_id", ""))
-        logfile = str(row.get("logfile", ""))
-        if not run_id or row.get("status") != "ok" or not logfile:
+        if not run_id or row.get("status") != "ok":
             continue
-        if Path(logfile).exists():
-            completed.add(run_id)
+        completed.add(run_id)
     return completed
 
 

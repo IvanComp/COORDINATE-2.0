@@ -9,7 +9,6 @@ such as LEONARDO.
 Examples:
     python "Paper Results/run_full_paper_campaign.py" --dry-run
     python "Paper Results/run_full_paper_campaign.py" --repetitions 10
-    nohup python "Paper Results/run_full_paper_campaign.py" --repetitions 10 > "Paper Results/full_campaign.out" 2>&1 &
 
 By default, RQ2 and RQ3 reuse matching completed RQ1 artifacts when available.
 Use --no-reuse-rq1 to force independent runs for those RQs.
@@ -66,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None, help="Forward --limit to each RQ script.")
     parser.add_argument(
         "--log-file",
-        default=str(PAPER_ROOT / "full_campaign.log"),
+        default=os.devnull,
         help="Master log file path.",
     )
     return parser.parse_args()

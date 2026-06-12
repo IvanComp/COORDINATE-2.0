@@ -19,7 +19,7 @@ Run examples:
     nohup python "Paper Results/run_rq3_experiments.py" > "Paper Results/RQ3/rq3.log" 2>&1 &
 
 Resume behavior:
-    Completed runs are detected from RQ3/runs.csv and their raw log folders.
+    Completed runs are detected from RQ3/runs.csv.
     Re-launching with more repetitions skips completed repetitions and runs only
     missing or previously failed ones. Use --force to intentionally re-run all.
 
@@ -42,6 +42,7 @@ from paper_experiment_utils import (
     COORD_TO_ARCH,
     PAPER_ROOT,
     build_paper_daily_phases,
+    cleanup_transient_artifacts,
     config_with_paths,
     completed_run_ids,
     drop_rows_for_run,
@@ -78,7 +79,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-reuse-rq1", action="store_true", help="Do not import matching completed runs from RQ1.")
     parser.add_argument("--quick", action="store_true", help="Small smoke campaign for checking the runner.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
-    parser.add_argument("--force", action="store_true", help="Re-run even if the raw log already exists.")
+    parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
     parser.add_argument(
         "--coord-labels",
         default=",".join(DEFAULT_COORD_LABELS),
@@ -160,7 +161,6 @@ def overhead_sample_rows(
 
 
 def run_campaign(args: argparse.Namespace) -> None:
-    raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
     combos = campaign(args)
     design = {
         "research_question": "RQ3",
@@ -178,8 +178,6 @@ def run_campaign(args: argparse.Namespace) -> None:
         "reuse_rq1": not args.no_reuse_rq1,
         "purpose": "Measure wall-clock and per-check monitoring/adaptation overhead.",
     }
-    write_json(RESULTS_ROOT / "experiment_design.json", design)
-
     print("=" * 80)
     print("RQ3 MONITORING AND ADAPTATION OVERHEAD CAMPAIGN")
     print("=" * 80)
@@ -190,6 +188,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         print("Dry run only. No simulations launched.")
         return
 
+    raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     overhead_rows = [] if args.force else read_rows(RESULTS_ROOT / "overhead_samples.csv")
@@ -372,6 +371,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     )
     write_rows(RESULTS_ROOT / "overhead_summary.csv", overhead_summary)
     write_rows(RESULTS_ROOT / "wall_time_summary.csv", wall_time_summary)
+    cleanup_transient_artifacts(RESULTS_ROOT)
 
     print("=" * 80)
     print(f"RQ3 campaign completed in {time.time() - started_at:.2f}s wall-clock.")

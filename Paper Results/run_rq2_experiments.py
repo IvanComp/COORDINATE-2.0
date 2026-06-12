@@ -14,7 +14,7 @@ Run examples:
     nohup python "Paper Results/run_rq2_experiments.py" > "Paper Results/RQ2/rq2.log" 2>&1 &
 
 Resume behavior:
-    Completed runs are detected from RQ2/runs.csv and their raw log folders.
+    Completed runs are detected from RQ2/runs.csv.
     Re-launching with more repetitions skips completed repetitions and runs only
     missing or previously failed ones. Use --force to intentionally re-run all.
 
@@ -37,6 +37,7 @@ from paper_experiment_utils import (
     PAPER_ROOT,
     analyze_log,
     config_with_paths,
+    cleanup_transient_artifacts,
     completed_run_ids,
     drop_rows_for_run,
     ensure_result_dirs,
@@ -78,7 +79,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quick", action="store_true", help="Use one profile and one short repetition set.")
     parser.add_argument("--no-reuse-rq1", action="store_true", help="Do not import matching completed DA runs from RQ1.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
-    parser.add_argument("--force", action="store_true", help="Re-run even if the raw log already exists.")
+    parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N run instances.")
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately if a run fails.")
     return parser.parse_args()
@@ -400,7 +401,6 @@ def state_distribution_rows(timeseries_rows: list[dict[str, Any]]) -> list[dict[
 
 
 def run_campaign(args: argparse.Namespace) -> None:
-    raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
     combos = campaign(args)
     design = {
         "research_question": "RQ2",
@@ -412,8 +412,6 @@ def run_campaign(args: argparse.Namespace) -> None:
         "reuse_rq1": not args.no_reuse_rq1,
         "purpose": "Relate DA switches to monitored states and dynamic fault windows.",
     }
-    write_json(RESULTS_ROOT / "experiment_design.json", design)
-
     print("=" * 80)
     print("RQ2 DYNAMIC ADAPTATION REACTION CAMPAIGN")
     print("=" * 80)
@@ -424,6 +422,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         print("Dry run only. No simulations launched.")
         return
 
+    raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     all_timeseries = [] if args.force else read_rows(RESULTS_ROOT / "adaptation_state_timeseries.csv")
@@ -592,6 +591,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     )
     write_rows(RESULTS_ROOT / "summary_by_profile.csv", summary)
     write_rows(RESULTS_ROOT / "state_distribution.csv", state_distribution_rows(all_timeseries))
+    cleanup_transient_artifacts(RESULTS_ROOT)
 
     print("=" * 80)
     print(f"RQ2 campaign completed in {time.time() - started_at:.2f}s wall-clock.")

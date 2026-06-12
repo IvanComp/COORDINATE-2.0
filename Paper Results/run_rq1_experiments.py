@@ -31,7 +31,7 @@ Useful dry checks:
     python "Paper Results/run_rq1_experiments.py" --quick --repetitions 1
 
 Resume behavior:
-    Completed runs are detected from RQ1/runs.csv and their raw log folders.
+    Completed runs are detected from RQ1/runs.csv.
     Re-launching with more repetitions skips completed repetitions and runs only
     missing or previously failed ones. Use --force to intentionally re-run all.
 """
@@ -43,6 +43,7 @@ import csv
 import json
 import math
 import os
+import shutil
 import statistics
 import sys
 import time
@@ -144,7 +145,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stress-end-hour", type=float, default=24.0, help="Daily stress-window end hour.")
     parser.add_argument("--quick", action="store_true", help="Small smoke campaign for checking the runner.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
-    parser.add_argument("--force", action="store_true", help="Re-run even if the raw log already exists.")
+    parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
     parser.add_argument(
         "--coord-labels",
         default=",".join(DEFAULT_COORD_LABELS),
@@ -168,6 +169,15 @@ def selected_coord_labels(args: argparse.Namespace) -> list[str]:
 def ensure_dirs() -> None:
     for directory in [RESULTS_ROOT, RAW_LOGS_DIR, CONFIGS_DIR]:
         directory.mkdir(parents=True, exist_ok=True)
+
+
+def cleanup_transient_artifacts() -> None:
+    for path in (RAW_LOGS_DIR, CONFIGS_DIR):
+        if path.exists():
+            shutil.rmtree(path)
+    design_path = RESULTS_ROOT / "experiment_design.json"
+    if design_path.exists():
+        design_path.unlink()
 
 
 def build_fault_windows(
@@ -429,8 +439,7 @@ def completed_run_ids(rows: list[dict]) -> set[str]:
     completed = set()
     for row in rows:
         run_id = str(row.get("run_id", ""))
-        logfile = str(row.get("logfile", ""))
-        if run_id and row.get("status") == "ok" and logfile and Path(logfile).exists():
+        if run_id and row.get("status") == "ok":
             completed.add(run_id)
     return completed
 
@@ -506,7 +515,6 @@ def summarise_runs(rows: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def run_campaign(args: argparse.Namespace) -> None:
-    ensure_dirs()
     combos = campaign_grid(args)
     total_runs = len(combos)
     design = {
@@ -523,8 +531,6 @@ def run_campaign(args: argparse.Namespace) -> None:
         "daily_stress_window": [args.stress_start_hour, args.stress_end_hour],
         "stress_multiplier": args.stress_multiplier,
     }
-    (RESULTS_ROOT / "experiment_design.json").write_text(json.dumps(design, indent=2))
-
     print("=" * 80)
     print("RQ1 DYNAMIC ADAPTATION EXPERIMENTAL CAMPAIGN")
     print("=" * 80)
@@ -535,6 +541,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         print("Dry run only. No simulations launched.")
         return
 
+    ensure_dirs()
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     completed = completed_run_ids(rows)
@@ -621,6 +628,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     summary, mechanism_summary = summarise_runs(rows)
     write_rows(RESULTS_ROOT / "summary.csv", summary)
     write_rows(RESULTS_ROOT / "summary_by_mechanism.csv", mechanism_summary)
+    cleanup_transient_artifacts()
 
     elapsed = time.time() - started_at
     print("=" * 80)
