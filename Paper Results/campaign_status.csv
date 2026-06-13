@@ -1,0 +1,5 @@
+rq,command,return_code,duration_s,expected_runs,completed,errors,remaining,timestamp
+RQ1,/home/gssi-lab/Desktop/folder/COORDINATE-2.0/.venv/bin/python /home/gssi-lab/Desktop/folder/COORDINATE-2.0/Paper Results/run_rq1_experiments.py --repetitions 5,0,27519.350798606873,,540,0,,2026-06-12T20:45:42
+RQ2,/home/gssi-lab/Desktop/folder/COORDINATE-2.0/.venv/bin/python /home/gssi-lab/Desktop/folder/COORDINATE-2.0/Paper Results/run_rq2_experiments.py --repetitions 5,0,1196.0200293064117,,20,0,,2026-06-12T21:05:38
+RQ3,/home/gssi-lab/Desktop/folder/COORDINATE-2.0/.venv/bin/python /home/gssi-lab/Desktop/folder/COORDINATE-2.0/Paper Results/run_rq3_experiments.py --repetitions 5,0,2326.2747344970703,,45,0,,2026-06-12T21:44:24
+RQ4,/home/gssi-lab/Desktop/folder/COORDINATE-2.0/.venv/bin/python /home/gssi-lab/Desktop/folder/COORDINATE-2.0/Paper Results/run_rq4_experiments.py --repetitions 5,0,2352.813636302948,,135,0,,2026-06-12T22:23:37

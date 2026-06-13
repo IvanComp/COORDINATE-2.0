@@ -58,6 +58,7 @@ from paper_experiment_utils import (
 
 
 RESULTS_ROOT = PAPER_ROOT / "RQ2"
+TIMESERIES_PATH = RESULTS_ROOT / "adaptation_state_timeseries.csv.gz"
 PROFILE_NAMES = [
     "paper_daily_stress",
     "communication_blackout",
@@ -425,7 +426,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
-    all_timeseries = [] if args.force else read_rows(RESULTS_ROOT / "adaptation_state_timeseries.csv")
+    all_timeseries = [] if args.force else read_rows(TIMESERIES_PATH)
     all_switches = [] if args.force else read_rows(RESULTS_ROOT / "switch_timeline.csv")
     all_phases = [] if args.force else read_rows(RESULTS_ROOT / "phase_schedule.csv")
     completed = completed_run_ids(rows)
@@ -568,7 +569,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         rows = replace_row(rows, row)
 
         write_rows(RESULTS_ROOT / "runs.csv", rows)
-        write_rows(RESULTS_ROOT / "adaptation_state_timeseries.csv", all_timeseries)
+        write_rows(TIMESERIES_PATH, all_timeseries)
         write_rows(RESULTS_ROOT / "switch_timeline.csv", all_switches)
         write_rows(RESULTS_ROOT / "phase_schedule.csv", all_phases)
         if errors:
@@ -596,7 +597,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     print("=" * 80)
     print(f"RQ2 campaign completed in {time.time() - started_at:.2f}s wall-clock.")
     print(f"Run-level CSV:       {RESULTS_ROOT / 'runs.csv'}")
-    print(f"Timeseries CSV:      {RESULTS_ROOT / 'adaptation_state_timeseries.csv'}")
+    print(f"Timeseries CSV:      {TIMESERIES_PATH}")
     print(f"Switch timeline CSV: {RESULTS_ROOT / 'switch_timeline.csv'}")
     print(f"Summary CSV:         {RESULTS_ROOT / 'summary_by_profile.csv'}")
     print("=" * 80)

@@ -42,13 +42,11 @@ from paper_experiment_utils import (
     cleanup_transient_artifacts,
     config_with_paths,
     completed_run_ids,
-    drop_rows_for_run,
     ensure_result_dirs,
     find_matching_rq1_row,
     analyze_log,
     malicious_count,
     read_rows,
-    read_overhead_samples,
     replace_row,
     run_or_analyze,
     safe_float,
@@ -139,24 +137,6 @@ def run_id(params: dict[str, Any]) -> str:
     )
 
 
-def overhead_sample_rows(
-    *,
-    run_meta: dict[str, Any],
-    samples: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for sample in samples:
-        sim_time = safe_float(sample.get("sim_time"))
-        rows.append({
-            **run_meta,
-            **sample,
-            "sim_time": sim_time,
-            "sim_day": math.floor(sim_time / (24 * 3600)) + 1 if not math.isnan(sim_time) else math.nan,
-            "sim_hour": (sim_time % (24 * 3600)) / 3600 if not math.isnan(sim_time) else math.nan,
-        })
-    return rows
-
-
 def run_campaign(args: argparse.Namespace) -> None:
     combos = campaign(args)
     design = {
@@ -188,7 +168,6 @@ def run_campaign(args: argparse.Namespace) -> None:
     raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
-    overhead_rows = [] if args.force else read_rows(RESULTS_ROOT / "overhead_samples.csv")
     completed = completed_run_ids(rows)
     started_at = time.time()
 
@@ -302,14 +281,6 @@ def run_campaign(args: argparse.Namespace) -> None:
             "source_logfile": source_logfile,
         }
         rows = [existing for existing in rows if existing.get("run_id") != rid]
-        overhead_rows = drop_rows_for_run(overhead_rows, rid)
-
-        if params["coord_label"] == "DA" and logfile.exists():
-            overhead_rows.extend(overhead_sample_rows(
-                run_meta=run_meta,
-                samples=read_overhead_samples(logfile),
-            ))
-
         row = {
             **run_meta,
             "status": status,
@@ -338,7 +309,6 @@ def run_campaign(args: argparse.Namespace) -> None:
         rows = replace_row(rows, row)
 
         write_rows(RESULTS_ROOT / "runs.csv", rows)
-        write_rows(RESULTS_ROOT / "overhead_samples.csv", overhead_rows)
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
 
@@ -373,7 +343,6 @@ def run_campaign(args: argparse.Namespace) -> None:
     print("=" * 80)
     print(f"RQ3 campaign completed in {time.time() - started_at:.2f}s wall-clock.")
     print(f"Run-level CSV:        {RESULTS_ROOT / 'runs.csv'}")
-    print(f"Overhead samples CSV: {RESULTS_ROOT / 'overhead_samples.csv'}")
     print(f"Summary CSV:          {RESULTS_ROOT / 'overhead_summary.csv'}")
     print("=" * 80)
 

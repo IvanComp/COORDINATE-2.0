@@ -9,6 +9,7 @@ figures can be regenerated from simple, inspectable artifacts.
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 import math
 import shutil
@@ -202,6 +203,12 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2))
 
 
+def _csv_open(path: Path, mode: str):
+    if path.suffix == ".gz":
+        return gzip.open(path, mode, newline="")
+    return path.open(mode, newline="")
+
+
 def write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -211,7 +218,7 @@ def write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
         for key in row.keys():
             if key not in fieldnames:
                 fieldnames.append(key)
-    with path.open("w", newline="") as f:
+    with _csv_open(path, "wt") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
@@ -219,8 +226,11 @@ def write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def read_rows(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
-        return []
-    with path.open(newline="") as f:
+        gz_path = path.with_name(path.name + ".gz")
+        if not gz_path.exists():
+            return []
+        path = gz_path
+    with _csv_open(path, "rt") as f:
         return list(csv.DictReader(f))
 
 
