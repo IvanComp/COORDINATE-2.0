@@ -8,7 +8,7 @@ such as LEONARDO.
 
 Examples:
     python "Paper Results/run_full_paper_campaign.py" --dry-run
-    python "Paper Results/run_full_paper_campaign.py" --repetitions 10
+    python "Paper Results/run_full_paper_campaign.py"
 
 By default, RQ2 and RQ3 reuse matching completed RQ1 artifacts when available.
 Use --no-reuse-rq1 to force independent runs for those RQs.
@@ -39,7 +39,12 @@ RQ_SCRIPTS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run all paper experiment campaigns.")
-    parser.add_argument("--repetitions", type=int, default=5, help="Repetitions per configuration.")
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=10,
+        help="Repetitions per configuration. The default extends the current 5-repetition campaign to 10.",
+    )
     parser.add_argument(
         "--rqs",
         default="RQ1,RQ2,RQ3,RQ4",
@@ -57,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--coord-labels",
         default=None,
-        help="Comma-separated mechanisms to forward to RQ1/RQ3/RQ4. Defaults are DA-only.",
+        help="Comma-separated mechanisms to forward to RQ1/RQ3/RQ4. By default each RQ runner uses its paper campaign defaults.",
     )
     parser.add_argument("--machine-label", default=None, help="Forward a machine label to RQ4 only.")
     parser.add_argument("--rq4-shard-count", type=int, default=1, help="Forward --shard-count to RQ4 only.")

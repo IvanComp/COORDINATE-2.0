@@ -16,11 +16,8 @@ Motivating scenario:
 
 Default campaign:
     3 workload levels x 3 fleet sizes x 4 malicious-agent ratios x
-    3 base fault levels x 1 message-loss level x 1 mechanism (DA) x
-    5 repetitions = 540 runs.
-
-    The fixed-mechanism baselines can still be requested explicitly with
-    --coord-labels CE,SD,FD,DA.
+    3 base fault levels x 1 message-loss level x 4 mechanisms x
+    5 repetitions = 2160 runs.
 
 Run from the project root or from this directory, for example:
     python "Paper Results/run_rq1_experiments.py"
@@ -132,7 +129,7 @@ DEFAULT_N_ROBOTS = [10, 20, 30]
 DEFAULT_MALICIOUS_RATIOS = [0.0, 0.33, 0.66, 1.0]
 DEFAULT_FAIL_PROBS = [0.33, 0.66, 1.0]
 DEFAULT_MSG_LOSS_PROBS = [0.10]
-DEFAULT_COORD_LABELS = ["DA"]
+DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
 
 
 def parse_args() -> argparse.Namespace:

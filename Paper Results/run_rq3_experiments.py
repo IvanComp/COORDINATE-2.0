@@ -8,11 +8,8 @@ the paper's daily stress-window setup and records both simulation wall time and
 per-check adaptation overhead.
 
 Default campaign:
-    3 workload levels x 3 fleet sizes x 1 mechanism (DA) x
-    5 repetitions = 45 runs.
-
-    The fixed-mechanism baselines can still be requested explicitly with
-    --coord-labels CE,SD,FD,DA.
+    3 workload levels x 3 fleet sizes x 4 mechanisms x
+    5 repetitions = 180 runs.
 
 Run examples:
     python "Paper Results/run_rq3_experiments.py" --dry-run
@@ -64,7 +61,7 @@ from paper_experiment_utils import (
 RESULTS_ROOT = PAPER_ROOT / "RQ3"
 DEFAULT_ITEM_SPAWNING_TIMES = [90, 120, 150]
 DEFAULT_N_ROBOTS = [10, 20, 30]
-DEFAULT_COORD_LABELS = ["DA"]
+DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
 
 
 def parse_args() -> argparse.Namespace:

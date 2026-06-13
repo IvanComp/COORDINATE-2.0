@@ -7,11 +7,8 @@ simulation duration, fleet size, and workload increase. Each run is executed in
 an isolated Python subprocess so peak RSS can be measured per simulation.
 
 Default campaign per hardware profile:
-    3 durations x 3 workload levels x 3 fleet sizes x 1 mechanism (DA) x
-    5 repetitions = 135 runs.
-
-    The CE baseline has already been completed. It can still be requested
-    explicitly with --coord-labels CE,DA if the full matrix must be rebuilt.
+    3 durations x 3 workload levels x 3 fleet sizes x 2 mechanisms x
+    5 repetitions = 270 runs.
 
 Run examples:
     python "Paper Results/run_rq4_experiments.py" --dry-run
@@ -63,7 +60,7 @@ RESULTS_ROOT = PAPER_ROOT / "RQ4"
 DEFAULT_SIM_DAYS = [1, 7, 30]
 DEFAULT_ITEM_SPAWNING_TIMES = [150, 120, 90]
 DEFAULT_N_ROBOTS = [10, 20, 30]
-DEFAULT_COORD_LABELS = ["DA"]
+DEFAULT_COORD_LABELS = ["CE", "DA"]
 SUBPROCESS_MARKER = "__RQ4_RESULT__"
 
 
@@ -78,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--coord-labels",
         default=",".join(DEFAULT_COORD_LABELS),
-        help="Comma-separated mechanisms to include. Defaults to DA; use CE,DA only to rebuild the full matrix.",
+        help="Comma-separated mechanisms to include.",
     )
     parser.add_argument(
         "--machine-label",
@@ -107,7 +104,7 @@ def default_machine_label() -> str:
     if system == "windows":
         return "windows"
     if system == "linux":
-        return "linux"
+        return "workstation"
     return sanitize_label(platform.node() or system or "machine")
 
 
