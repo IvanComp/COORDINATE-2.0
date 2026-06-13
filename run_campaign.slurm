@@ -33,7 +33,7 @@ if [[ ! -f ".venv/bin/activate" ]]; then
     echo "  python3.11 -m venv .venv"
     echo "  source .venv/bin/activate"
     echo "  python -m pip install --upgrade pip"
-    echo "  python -m pip install -r requirements-docker.txt matplotlib notebook ipykernel"
+    echo "  python -m pip install -r requirements.txt"
     exit 2
 fi
 

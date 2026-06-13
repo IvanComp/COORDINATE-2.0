@@ -1,5 +1,8 @@
 numpy>=1.26
-PyQt5>=5.15
 flask>=3.0
 flask-cors>=4.0
 pandas>=2.0
+requests>=2.31
+matplotlib>=3.8
+notebook>=7.0
+ipykernel>=6.0

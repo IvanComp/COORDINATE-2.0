@@ -37,7 +37,7 @@ rm -rf .venv
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install -r requirements-docker.txt matplotlib notebook ipykernel
+python -m pip install -r requirements.txt
 
 if ! bash scripts/install_rtlola_venv.sh; then
     echo "[setup] WARNING: RTLola could not be installed automatically."

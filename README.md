@@ -56,7 +56,7 @@ For development or customization:
 # 1. Setup backend
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install flask flask-cors numpy
+python -m pip install -r requirements.txt
 
 # 2. Start backend (Terminal 1)
 python -m backend.app
@@ -97,7 +97,7 @@ If you already recreated and activated the environment manually, run:
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install -r requirements-docker.txt matplotlib notebook ipykernel
+python -m pip install -r requirements.txt
 bash scripts/install_rtlola_venv.sh
 python scripts/check_rtlola.py
 ```
