@@ -54,8 +54,8 @@ For development or customization:
 
 ```bash
 # 1. Setup backend
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install flask flask-cors numpy
 
 # 2. Start backend (Terminal 1)
@@ -70,6 +70,84 @@ npm run dev
 Access the application at **http://localhost:5173**
 
 > **Note:** Backend runs on port 5002, frontend on port 5173
+
+---
+
+## Paper Experiment Campaign
+
+This is the workflow to use on the machines used for the paper experiments.
+The repository tracks the compact CSV files needed for campaign resume, paper
+tables, and notebook figures. Large raw traces and transient logs are not
+tracked.
+
+### First Setup
+
+From the project root, the easiest setup is:
+
+```bash
+bash scripts/setup_experiments.sh
+source .venv/bin/activate
+```
+
+The setup script creates `.venv`, installs the Python dependencies used by the
+experiment runners and notebook, and tries to install `rtlola-cli` inside the
+virtual environment.
+
+If you already recreated and activated the environment manually, run:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements-docker.txt matplotlib notebook ipykernel
+bash scripts/install_rtlola_venv.sh
+python scripts/check_rtlola.py
+```
+
+`python scripts/check_rtlola.py` must find a usable `rtlola-cli` before running
+Dynamic Adaptation experiments.
+
+### After Pulling Results
+
+After a `git pull`, the compact result CSVs in `Paper Results/RQ*` are available
+locally. The runners use those CSVs to resume completed experiments, so already
+completed repetitions are skipped automatically.
+
+To extend the current 5-repetition campaign to 10 repetitions, run:
+
+```bash
+source .venv/bin/activate
+python "Paper Results/run_full_paper_campaign.py"
+```
+
+The default campaign is already configured for the paper:
+
+- RQ1 runs `CE`, `SD`, `FD`, and `DA`.
+- RQ2 runs `DA`.
+- RQ3 runs `CE`, `SD`, `FD`, and `DA`.
+- RQ4 runs `CE` and `DA` for the current hardware profile.
+
+On Linux, RQ4 is labeled as `workstation`. On macOS, RQ4 is labeled as `mac`.
+Therefore, to complete both RQ4 hardware profiles, run the same command once on
+the workstation and once on the Mac.
+
+To leave the campaign running after closing the terminal:
+
+```bash
+nohup python -u "Paper Results/run_full_paper_campaign.py" >/dev/null 2>&1 &
+```
+
+To check progress:
+
+```bash
+tail -f "Paper Results/campaign_status.csv"
+```
+
+To regenerate the paper figures from the committed CSVs:
+
+```bash
+jupyter notebook "Paper Results/paper_results_plots.ipynb"
+```
+
+The notebook writes PDF figures to `Paper Results/paper_figures/`.
 
 ---
 
