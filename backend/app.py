@@ -21,9 +21,7 @@ app = Flask(__name__, static_folder=STATIC_FOLDER)
 CORS(app)
 
 RESULTS_DIR = os.path.join(BASE_DIR, 'results')
-RTLOLA_SPECS_DIR = os.path.join(BASE_DIR, 'rtlola_specs')
 os.makedirs(RESULTS_DIR, exist_ok=True)
-os.makedirs(RTLOLA_SPECS_DIR, exist_ok=True)
 
 
 def _summarize_log_csv(path):
@@ -253,7 +251,7 @@ def download_log(filename):
 @app.route('/api/rtlola/spec', methods=['GET'])
 def get_rtlola_spec():
     """Get the current RTLola specification content."""
-    default_spec = 'spec2.rtlola'
+    default_spec = os.path.join(BASE_DIR, 'spec2.rtlola')
     
     if not os.path.exists(default_spec):
         return jsonify({'error': 'RTLola spec file not found'}), 404
@@ -261,30 +259,25 @@ def get_rtlola_spec():
     try:
         with open(default_spec, 'r') as f:
             content = f.read()
-        return jsonify({'content': content, 'path': default_spec})
+        return jsonify({'content': content, 'path': 'spec2.rtlola'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/rtlola/spec', methods=['POST'])
 def save_rtlola_spec():
-    """Save a custom RTLola specification."""
+    """Save the active RTLola specification without creating per-run copies."""
     try:
         data = request.json
         content = data.get('content', '')
         
         if not content:
             return jsonify({'error': 'No content provided'}), 400
-        
-        # Create a timestamped filename for the custom spec
-        timestamp = int(time.time() * 1000)
-        spec_filename = f'spec_custom_{timestamp}.rtlola'
-        spec_path = os.path.join(RTLOLA_SPECS_DIR, spec_filename)
-        
-        # Save the custom spec
+
+        spec_path = os.path.join(BASE_DIR, 'spec2.rtlola')
         with open(spec_path, 'w') as f:
             f.write(content)
         
-        return jsonify({'success': True, 'specFile': spec_path})
+        return jsonify({'success': True, 'specFile': 'spec2.rtlola'})
     except Exception as e:
         print(f"Error saving RTLola spec: {e}")
         return jsonify({'error': str(e)}), 500
