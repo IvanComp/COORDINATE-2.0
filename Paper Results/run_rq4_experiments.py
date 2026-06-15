@@ -50,7 +50,6 @@ from paper_experiment_utils import (
     read_rows,
     replace_row,
     safe_float,
-    summarise_rows,
     write_json,
     write_rows,
 )
@@ -423,61 +422,16 @@ def run_campaign(args: argparse.Namespace) -> None:
             **metrics,
         }
         rows = replace_row(rows, row)
-        machine_rows = [existing for existing in rows if existing.get("machine_label") == label]
 
         write_rows(RESULTS_ROOT / "runs.csv", rows)
-        write_rows(RESULTS_ROOT / f"runs_{label}.csv", machine_rows)
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
 
-    summary = summarise_rows(
-        rows,
-        group_fields=["machine_label", "coord_label", "architecture", "sim_days", "item_spawning_time", "n_robots"],
-        metric_fields=[
-            "wall_time_s",
-            "event_count",
-            "events_per_wall_s",
-            "max_rss_mb",
-            "trace_rows",
-            "trace_size_mb",
-            "overhead_trace_size_mb",
-            "total_output_size_mb",
-            "created",
-            "delivered",
-            "avg_latency_s",
-            "p95_latency_s",
-            "adapt_checks",
-        ],
-    )
-    write_rows(RESULTS_ROOT / "scalability_summary.csv", summary)
-    machine_summary = summarise_rows(
-        [row for row in rows if row.get("machine_label") == label],
-        group_fields=["machine_label", "coord_label", "architecture", "sim_days", "item_spawning_time", "n_robots"],
-        metric_fields=[
-            "wall_time_s",
-            "event_count",
-            "events_per_wall_s",
-            "max_rss_mb",
-            "trace_rows",
-            "trace_size_mb",
-            "overhead_trace_size_mb",
-            "total_output_size_mb",
-            "created",
-            "delivered",
-            "avg_latency_s",
-            "p95_latency_s",
-            "adapt_checks",
-        ],
-    )
-    write_rows(RESULTS_ROOT / f"scalability_summary_{label}.csv", machine_summary)
     cleanup_transient_artifacts(RESULTS_ROOT)
 
     print("=" * 80)
     print(f"RQ4 campaign completed in {time.time() - started_at:.2f}s wall-clock.")
     print(f"Run-level CSV:   {RESULTS_ROOT / 'runs.csv'}")
-    print(f"Machine CSV:     {RESULTS_ROOT / f'runs_{label}.csv'}")
-    print(f"Summary CSV:     {RESULTS_ROOT / 'scalability_summary.csv'}")
-    print(f"Machine summary: {RESULTS_ROOT / f'scalability_summary_{label}.csv'}")
     print("=" * 80)
 
 

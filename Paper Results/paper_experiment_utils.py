@@ -186,7 +186,7 @@ def config_with_paths(
     cfg = dict(BASE_CONFIG)
     cfg.update({
         "RESULTS_DIR": str(logfile.parent),
-        "SIMTIME_LOGFILE": str(results_root / "sim_time.csv"),
+        "SIMTIME_LOGFILE": str(logfile.parent / "sim_time.csv"),
         "LOGFILE": str(logfile),
         "SIM_TIME": sim_days * 24 * 3600,
         "ARCHITECTURE": architecture,

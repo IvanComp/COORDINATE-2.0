@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import math
 import time
-from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +50,6 @@ from paper_experiment_utils import (
     replace_row,
     run_or_analyze,
     safe_float,
-    summarise_rows,
     write_json,
     write_rows,
 )
@@ -353,54 +351,6 @@ def switch_rows(
     return rows
 
 
-def phase_schedule_rows(
-    *,
-    run_meta: dict[str, Any],
-    phases: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for idx, phase in enumerate(phases, start=1):
-        rows.append({
-            **run_meta,
-            "phase_idx": idx,
-            "phase_label": phase.get("label", "unknown"),
-            "start": phase["start"],
-            "end": phase["end"],
-            "start_day": math.floor(float(phase["start"]) / (24 * 3600)) + 1,
-            "start_hour": (float(phase["start"]) % (24 * 3600)) / 3600,
-            "end_hour": (float(phase["end"]) % (24 * 3600)) / 3600,
-            "N_MALICIOUS": phase.get("N_MALICIOUS"),
-            "FAIL_PROB": phase.get("FAIL_PROB"),
-            "COMM_FAIL_PROB": phase.get("COMM_FAIL_PROB"),
-            "RECOVERY_TIME": phase.get("RECOVERY_TIME"),
-            "ITEM_SPAWNING_TIME": phase.get("ITEM_SPAWNING_TIME"),
-        })
-    return rows
-
-
-def state_distribution_rows(timeseries_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, int], Counter] = defaultdict(Counter)
-    totals: Counter = Counter()
-    for row in timeseries_rows:
-        key = (row["profile"], int(row["rep"]))
-        state = row.get("performance_state") or "unknown"
-        grouped[key][state] += 1
-        totals[key] += 1
-
-    rows: list[dict[str, Any]] = []
-    for (profile, rep), counts in sorted(grouped.items()):
-        total = totals[(profile, rep)]
-        for state, count in sorted(counts.items()):
-            rows.append({
-                "profile": profile,
-                "rep": rep,
-                "performance_state": state,
-                "checks": count,
-                "fraction": count / total if total else 0.0,
-            })
-    return rows
-
-
 def run_campaign(args: argparse.Namespace) -> None:
     combos = campaign(args)
     design = {
@@ -428,7 +378,6 @@ def run_campaign(args: argparse.Namespace) -> None:
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     all_timeseries = [] if args.force else read_rows(TIMESERIES_PATH)
     all_switches = [] if args.force else read_rows(RESULTS_ROOT / "switch_timeline.csv")
-    all_phases = [] if args.force else read_rows(RESULTS_ROOT / "phase_schedule.csv")
     completed = completed_run_ids(rows)
     started_at = time.time()
 
@@ -535,7 +484,6 @@ def run_campaign(args: argparse.Namespace) -> None:
         rows = [existing for existing in rows if existing.get("run_id") != rid]
         all_timeseries = drop_rows_for_run(all_timeseries, rid)
         all_switches = drop_rows_for_run(all_switches, rid)
-        all_phases = drop_rows_for_run(all_phases, rid)
 
         all_timeseries.extend(annotate_overhead_rows(
             run_meta=run_meta,
@@ -548,7 +496,6 @@ def run_campaign(args: argparse.Namespace) -> None:
             samples=samples,
             phases=definition["phases"],
         ))
-        all_phases.extend(phase_schedule_rows(run_meta=run_meta, phases=definition["phases"]))
 
         row = {
             **run_meta,
@@ -571,27 +518,9 @@ def run_campaign(args: argparse.Namespace) -> None:
         write_rows(RESULTS_ROOT / "runs.csv", rows)
         write_rows(TIMESERIES_PATH, all_timeseries)
         write_rows(RESULTS_ROOT / "switch_timeline.csv", all_switches)
-        write_rows(RESULTS_ROOT / "phase_schedule.csv", all_phases)
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
 
-    summary = summarise_rows(
-        rows,
-        group_fields=["profile", "coord_label"],
-        metric_fields=[
-            "created",
-            "delivered",
-            "pending",
-            "success_rate",
-            "avg_latency_s",
-            "p95_latency_s",
-            "switch_count",
-            "adapt_checks",
-            "adapt_overhead_ms_mean",
-        ],
-    )
-    write_rows(RESULTS_ROOT / "summary_by_profile.csv", summary)
-    write_rows(RESULTS_ROOT / "state_distribution.csv", state_distribution_rows(all_timeseries))
     cleanup_transient_artifacts(RESULTS_ROOT)
 
     print("=" * 80)
@@ -599,7 +528,6 @@ def run_campaign(args: argparse.Namespace) -> None:
     print(f"Run-level CSV:       {RESULTS_ROOT / 'runs.csv'}")
     print(f"Timeseries CSV:      {TIMESERIES_PATH}")
     print(f"Switch timeline CSV: {RESULTS_ROOT / 'switch_timeline.csv'}")
-    print(f"Summary CSV:         {RESULTS_ROOT / 'summary_by_profile.csv'}")
     print("=" * 80)
 
 

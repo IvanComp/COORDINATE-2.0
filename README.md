@@ -227,40 +227,56 @@ Architecture switches are logged in the CSV output with event type `switch_archi
 - **Docker** (optional, for containerized deployment)
 - **Rust & RTLola** (required for Dynamic Adaptation)
 
-### Installing RTLola
+### RTLola Setup
 
-To use the **Dynamic-Adaptation** architecture, you need the `rtlola-cli` binary.
-
-**Option 1: Install via Cargo (Recommended)**
-
-1. **Install Rust** (if not already installed):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-
-2. **Install RTLola CLI**:
-   ```bash
-   cargo install rtlola-cli
-   ```
-
-3. **Verify Installation**:
-   ```bash
-   rtlola-cli --version
-   ```
-
-**Option 2: Copy Binary (No Installation Required)**
-
-If you have `rtlola-cli` on another machine, simply copy it to the project directory:
+Dynamic Adaptation requires the `rtlola-cli` binary because runtime monitoring
+is implemented through the RTLola specification in `spec2.rtlola`. The normal
+setup path installs RTLola inside the project virtual environment:
 
 ```bash
-# Copy the binary to the COORDINATE-2.0 folder
-cp /path/to/rtlola-cli /path/to/COORDINATE-2.0/
-
-# Make it executable (Linux/Mac)
-chmod +x rtlola-cli
+bash scripts/setup_experiments.sh
+source .venv/bin/activate
+python scripts/check_rtlola.py
 ```
 
-The system will automatically detect the binary in the project directory.
+If the virtual environment already exists, install or repair only RTLola with:
+
+```bash
+bash scripts/install_rtlola_venv.sh
+python scripts/check_rtlola.py
+```
+
+The installer uses Rust/Cargo when needed and installs `rtlola-cli` version
+`0.1.2` into `.venv/bin/rtlola-cli`. The checker reports the candidate binaries
+considered by the simulator and the selected executable. A working setup should
+show:
+
+```bash
+rtlola-cli 0.1.2
+```
+
+The simulator uses `spec2.rtlola` by default through the `RTLOLA_SPEC_FILE`
+configuration parameter. The UI RTLola editor also reads and writes this file
+directly, so it does not create timestamped custom specification files.
+
+Useful Dynamic Adaptation parameters are:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `RTLOLA_SPEC_FILE` | `spec2.rtlola` | RTLola specification used by the monitor |
+| `RTLOLA_BINARY_PATH` | auto-detected | Optional explicit path to `rtlola-cli` |
+| `INITIAL_ARCHITECTURE` | `semi-decentralized` | Coordination mechanism active at startup |
+| `ADAPTATION_CHECK_INTERVAL` | `300.0` | Simulated seconds between adaptation decisions |
+| `ADAPTATION_POLICY` | `contextual-bandit` | Online adaptation policy |
+
+For debugging, the monitor can be invoked manually:
+
+```bash
+.venv/bin/rtlola-cli monitor --stdin spec2.rtlola --online -v outputs
+```
+
+If Dynamic Adaptation fails with a missing RTLola error, rerun
+`bash scripts/install_rtlola_venv.sh` and then `python scripts/check_rtlola.py`.
 
 ### Docker Options
 

@@ -6,32 +6,19 @@ __pycache__/
 .Python
 *.csv
 
-# Compact paper result CSVs kept in git for campaign resume and paper tables.
-# Large derived traces such as RQ2/adaptation_state_timeseries.csv and
-# RQ3/overhead_samples.csv stay ignored by the global *.csv rule above.
+# Compact paper result CSVs kept in git for campaign resume, paper tables, and
+# notebook figures. Other generated CSV files stay ignored by the global *.csv
+# rule above.
 !Paper Results/campaign_status.csv
 !Paper Results/RQ1/runs.csv
-!Paper Results/RQ1/sim_time.csv
-!Paper Results/RQ1/summary.csv
 !Paper Results/RQ1/summary_by_mechanism.csv
 !Paper Results/RQ2/runs.csv
-!Paper Results/RQ2/sim_time.csv
 !Paper Results/RQ2/adaptation_state_timeseries.csv.gz
-!Paper Results/RQ2/summary_by_profile.csv
-!Paper Results/RQ2/state_distribution.csv
 !Paper Results/RQ2/switch_timeline.csv
-!Paper Results/RQ2/phase_schedule.csv
 !Paper Results/RQ3/runs.csv
-!Paper Results/RQ3/sim_time.csv
 !Paper Results/RQ3/overhead_summary.csv
 !Paper Results/RQ3/wall_time_summary.csv
 !Paper Results/RQ4/runs.csv
-!Paper Results/RQ4/runs_mac.csv
-!Paper Results/RQ4/runs_workstation.csv
-!Paper Results/RQ4/sim_time.csv
-!Paper Results/RQ4/scalability_summary.csv
-!Paper Results/RQ4/scalability_summary_mac.csv
-!Paper Results/RQ4/scalability_summary_workstation.csv
 Paper Results/**/raw_logs/
 Paper Results/**/configs/
 

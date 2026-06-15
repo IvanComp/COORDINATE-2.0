@@ -289,7 +289,7 @@ def config_for(params: dict, args: argparse.Namespace, logfile: Path) -> dict:
     cfg = dict(BASE_CONFIG)
     cfg.update({
         "RESULTS_DIR": str(logfile.parent),
-        "SIMTIME_LOGFILE": str(RESULTS_ROOT / "sim_time.csv"),
+        "SIMTIME_LOGFILE": str(logfile.parent / "sim_time.csv"),
         "LOGFILE": str(logfile),
         "SIM_TIME": args.sim_days * 24 * 3600,
         "ARCHITECTURE": params["architecture"],
@@ -622,8 +622,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
 
-    summary, mechanism_summary = summarise_runs(rows)
-    write_rows(RESULTS_ROOT / "summary.csv", summary)
+    _, mechanism_summary = summarise_runs(rows)
     write_rows(RESULTS_ROOT / "summary_by_mechanism.csv", mechanism_summary)
     cleanup_transient_artifacts()
 
@@ -631,7 +630,6 @@ def run_campaign(args: argparse.Namespace) -> None:
     print("=" * 80)
     print(f"RQ1 campaign completed in {elapsed:.2f}s wall-clock.")
     print(f"Run-level CSV:      {RESULTS_ROOT / 'runs.csv'}")
-    print(f"Summary CSV:        {RESULTS_ROOT / 'summary.csv'}")
     print(f"Mechanism summary:  {RESULTS_ROOT / 'summary_by_mechanism.csv'}")
     if errors:
         print(f"Errors CSV:         {RESULTS_ROOT / 'errors.csv'}")
