@@ -7,8 +7,8 @@ simulation duration, fleet size, and workload increase. Each run is executed in
 an isolated Python subprocess so peak RSS can be measured per simulation.
 
 Default campaign per hardware profile:
-    3 durations x 3 workload levels x 3 fleet sizes x 2 mechanisms x
-    5 repetitions = 270 runs.
+    4 durations x 3 workload levels x 3 fleet sizes x 2 mechanisms x
+    5 repetitions = 360 runs.
 
 Run examples:
     python "Paper Results/run_rq4_experiments.py" --dry-run
@@ -57,7 +57,7 @@ from paper_experiment_utils import (
 
 
 RESULTS_ROOT = PAPER_ROOT / "RQ4"
-DEFAULT_SIM_DAYS = [1, 7, 30]
+DEFAULT_SIM_DAYS = [1, 7, 30, 90]
 DEFAULT_ITEM_SPAWNING_TIMES = [150, 120, 90]
 DEFAULT_N_ROBOTS = [10, 20, 30]
 DEFAULT_COORD_LABELS = ["CE", "DA"]
@@ -67,6 +67,11 @@ SUBPROCESS_MARKER = "__RQ4_RESULT__"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RQ4 scalability experiments.")
     parser.add_argument("--repetitions", type=int, default=5, help="Repetitions per configuration.")
+    parser.add_argument(
+        "--sim-days",
+        default=None,
+        help="Comma-separated simulation durations in days. Defaults to the full RQ4 duration set.",
+    )
     parser.add_argument("--base-seed", type=int, default=20260604, help="Base random seed.")
     parser.add_argument("--fail-prob", type=float, default=0.66, help="Baseline agent failure probability.")
     parser.add_argument("--msg-loss", type=float, default=0.10, help="Baseline message loss probability.")
@@ -135,6 +140,18 @@ def selected_coord_labels(args: argparse.Namespace) -> list[str]:
     return labels
 
 
+def selected_sim_days(args: argparse.Namespace) -> list[int]:
+    if args.sim_days is None:
+        return DEFAULT_SIM_DAYS
+    values = [value.strip() for value in args.sim_days.split(",") if value.strip()]
+    if not values:
+        raise ValueError("At least one simulation duration is required.")
+    days = [int(value) for value in values]
+    if any(day <= 0 for day in days):
+        raise ValueError("Simulation durations must be positive integers.")
+    return days
+
+
 def validate_shard_args(args: argparse.Namespace) -> None:
     if args.shard_count < 1:
         raise ValueError("--shard-count must be >= 1")
@@ -150,7 +167,7 @@ def build_campaign_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         coord_labels = selected_coord_labels(args)
         repetitions = 1 if args.repetitions == 5 else args.repetitions
     else:
-        sim_days_values = DEFAULT_SIM_DAYS
+        sim_days_values = selected_sim_days(args)
         item_spawning_times = DEFAULT_ITEM_SPAWNING_TIMES
         n_robots_values = DEFAULT_N_ROBOTS
         coord_labels = selected_coord_labels(args)
@@ -266,7 +283,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "machine_metadata": hardware,
         "shard_count": args.shard_count,
         "shard_index": args.shard_index,
-        "sim_days": [1] if args.quick else DEFAULT_SIM_DAYS,
+        "sim_days": [1] if args.quick else selected_sim_days(args),
         "item_spawning_times": [150] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "n_robots": [10] if args.quick else DEFAULT_N_ROBOTS,
         "coordination_mechanisms": selected_coord_labels(args),
@@ -353,9 +370,9 @@ def run_campaign(args: argparse.Namespace) -> None:
 
         try:
             if logfile.exists() and not args.force:
-                print("  existing log found; analysing without re-running", flush=True)
-            else:
-                subprocess_metrics = run_subprocess(cfg_path)
+                print("  stale log without completed run found; removing and re-running", flush=True)
+                logfile.unlink()
+            subprocess_metrics = run_subprocess(cfg_path)
             metrics = analyze_log(logfile, cfg["SIM_TIME"])
         except BaseException as exc:
             if isinstance(exc, KeyboardInterrupt):
