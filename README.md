@@ -317,15 +317,16 @@ docker run -d -p 5002:5002 \
 
 ### Command-Line Simulation
 
-#### Method 1: Benchmark Experiments
+#### Method 1: Paper Campaign
 
-Run the predefined experiments from the research paper:
+Run the current paper campaign through the maintained RQ runners:
 
 ```bash
-python -m experiments.run_all_experiments
+python "Paper Results/run_full_paper_campaign.py"
 ```
 
-This executes multiple simulations with varying parameters for comparative analysis.
+This resumes from the compact CSV files in `Paper Results/RQ*` and skips runs
+that are already completed.
 
 #### Method 2: Custom Configuration File
 

@@ -32,6 +32,8 @@ __pycache__/
 !Paper Results/RQ4/scalability_summary.csv
 !Paper Results/RQ4/scalability_summary_mac.csv
 !Paper Results/RQ4/scalability_summary_workstation.csv
+Paper Results/**/raw_logs/
+Paper Results/**/configs/
 
 # Virtual environments
 venv/
