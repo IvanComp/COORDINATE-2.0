@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sim import simulator  # noqa: E402
+from sim.rtlola_monitor import _rtlola_candidates, _usable_rtlola_binary  # noqa: E402
 
 
 COORD_TO_ARCH = {
@@ -193,6 +194,13 @@ def config_with_paths(
         "RANDOM_SEED": seed,
     })
     cfg.update(updates)
+    if architecture == "dynamic-adaptation" and "RTLOLA_BINARY_PATH" not in cfg:
+        script_dir = PROJECT_ROOT / "sim"
+        for candidate in _rtlola_candidates(str(PROJECT_ROOT), str(script_dir)):
+            resolved = _usable_rtlola_binary(candidate)
+            if resolved:
+                cfg["RTLOLA_BINARY_PATH"] = resolved
+                break
     if phases is not None:
         cfg["PHASES"] = phases
     return cfg
