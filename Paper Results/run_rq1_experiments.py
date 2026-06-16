@@ -58,6 +58,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sim import simulator  # noqa: E402
+from sim.rtlola_monitor import resolve_rtlola_binary  # noqa: E402
 
 
 COORD_TO_ARCH = {
@@ -311,6 +312,16 @@ def config_for(params: dict, args: argparse.Namespace, logfile: Path) -> dict:
         stress_start_hour=args.stress_start_hour,
         stress_end_hour=args.stress_end_hour,
     )
+    if params["architecture"] == "dynamic-adaptation":
+        resolved = resolve_rtlola_binary(str(PROJECT_ROOT), str(PROJECT_ROOT / "sim"))
+        if not resolved:
+            raise RuntimeError(
+                "No usable RTLola binary found for dynamic adaptation. "
+                f"python={sys.executable}. "
+                "Run 'bash scripts/install_rtlola_venv.sh' in the same environment "
+                "or export RTLOLA_BINARY_PATH=/absolute/path/to/rtlola-cli."
+            )
+        cfg["RTLOLA_BINARY_PATH"] = resolved
     return cfg
 
 
@@ -449,12 +460,23 @@ def replace_row(rows: list[dict], row: dict) -> list[dict]:
 def run_campaign(args: argparse.Namespace) -> None:
     combos = campaign_grid(args)
     total_runs = len(combos)
+    coord_labels = selected_coord_labels(args)
+    if not args.dry_run and "DA" in coord_labels:
+        resolved = resolve_rtlola_binary(str(PROJECT_ROOT), str(PROJECT_ROOT / "sim"))
+        if not resolved:
+            raise RuntimeError(
+                "No usable RTLola binary found for dynamic adaptation. "
+                f"python={sys.executable}. "
+                "Run 'bash scripts/install_rtlola_venv.sh' in the same environment "
+                "or export RTLOLA_BINARY_PATH=/absolute/path/to/rtlola-cli."
+            )
+        print(f"[preflight] RTLola binary: {resolved}")
     design = {
         "research_question": "RQ1",
         "sim_days": args.sim_days,
         "repetitions": args.repetitions,
         "total_runs": total_runs,
-        "coordination_mechanisms": selected_coord_labels(args),
+        "coordination_mechanisms": coord_labels,
         "item_spawning_times": [120] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "n_robots": [20] if args.quick else DEFAULT_N_ROBOTS,
         "malicious_ratios": [0.33] if args.quick else DEFAULT_MALICIOUS_RATIOS,

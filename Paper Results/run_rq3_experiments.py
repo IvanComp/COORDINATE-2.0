@@ -42,6 +42,7 @@ from paper_experiment_utils import (
     cleanup_transient_artifacts,
     config_with_paths,
     completed_run_ids,
+    ensure_rtlola_available,
     ensure_result_dirs,
     find_matching_rq1_row,
     analyze_log,
@@ -137,13 +138,17 @@ def run_id(params: dict[str, Any]) -> str:
 
 
 def run_campaign(args: argparse.Namespace) -> None:
+    coord_labels = selected_coord_labels(args)
+    if not args.dry_run and "DA" in coord_labels:
+        rtlola_binary = ensure_rtlola_available()
+        print(f"[preflight] RTLola binary: {rtlola_binary}")
     combos = campaign(args)
     design = {
         "research_question": "RQ3",
         "sim_days": args.sim_days,
         "repetitions": args.repetitions,
         "total_runs": len(combos),
-        "coordination_mechanisms": selected_coord_labels(args),
+        "coordination_mechanisms": coord_labels,
         "item_spawning_times": [120] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "n_robots": [20] if args.quick else DEFAULT_N_ROBOTS,
         "malicious_ratio": args.malicious_ratio,

@@ -12,6 +12,7 @@ import csv
 import gzip
 import json
 import math
+import os
 import shutil
 import statistics
 import sys
@@ -26,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sim import simulator  # noqa: E402
-from sim.rtlola_monitor import _rtlola_candidates, _usable_rtlola_binary  # noqa: E402
+from sim.rtlola_monitor import resolve_rtlola_binary  # noqa: E402
 
 
 COORD_TO_ARCH = {
@@ -94,6 +95,20 @@ BASE_CONFIG = {
     "LATENCY_THRESHOLD_HIGH": 40 * 60.0,
     "RTLOLA_METRIC_TIMEOUT": 0.05,
 }
+
+
+def ensure_rtlola_available() -> str:
+    script_dir = PROJECT_ROOT / "sim"
+    resolved = resolve_rtlola_binary(str(PROJECT_ROOT), str(script_dir))
+    if not resolved:
+        raise RuntimeError(
+            "No usable RTLola binary found for dynamic adaptation. "
+            f"python={sys.executable} "
+            f"VIRTUAL_ENV={os.environ.get('VIRTUAL_ENV', '')} "
+            "Run 'bash scripts/install_rtlola_venv.sh' inside the same environment "
+            "or export RTLOLA_BINARY_PATH=/absolute/path/to/rtlola-cli."
+        )
+    return resolved
 
 
 def ensure_result_dirs(results_root: Path) -> tuple[Path, Path]:
@@ -195,12 +210,7 @@ def config_with_paths(
     })
     cfg.update(updates)
     if architecture == "dynamic-adaptation" and "RTLOLA_BINARY_PATH" not in cfg:
-        script_dir = PROJECT_ROOT / "sim"
-        for candidate in _rtlola_candidates(str(PROJECT_ROOT), str(script_dir)):
-            resolved = _usable_rtlola_binary(candidate)
-            if resolved:
-                cfg["RTLOLA_BINARY_PATH"] = resolved
-                break
+        cfg["RTLOLA_BINARY_PATH"] = ensure_rtlola_available()
     if phases is not None:
         cfg["PHASES"] = phases
     return cfg

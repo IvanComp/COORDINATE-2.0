@@ -44,6 +44,7 @@ from paper_experiment_utils import (
     cleanup_transient_artifacts,
     config_with_paths,
     completed_run_ids,
+    ensure_rtlola_available,
     ensure_result_dirs,
     file_size_mb,
     malicious_count,
@@ -269,6 +270,10 @@ print("{SUBPROCESS_MARKER}" + json.dumps({{
 def run_campaign(args: argparse.Namespace) -> None:
     label = machine_label(args)
     hardware = hardware_metadata(label)
+    coord_labels = selected_coord_labels(args)
+    if not args.dry_run and "DA" in coord_labels:
+        rtlola_binary = ensure_rtlola_available()
+        print(f"[preflight] RTLola binary: {rtlola_binary}")
     all_combos = build_campaign_rows(args)
     shard_combos = shard_rows(all_combos, args)
     combos = shard_combos[: args.limit] if args.limit else shard_combos
@@ -285,7 +290,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "sim_days": [1] if args.quick else selected_sim_days(args),
         "item_spawning_times": [150] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "n_robots": [10] if args.quick else DEFAULT_N_ROBOTS,
-        "coordination_mechanisms": selected_coord_labels(args),
+        "coordination_mechanisms": coord_labels,
         "malicious_ratio": args.malicious_ratio,
         "fail_prob": args.fail_prob,
         "msg_loss": args.msg_loss,

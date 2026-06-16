@@ -94,12 +94,18 @@ def _platform_rtlola_names() -> list[str]:
 
 def _venv_bin_dirs(project_root: str) -> list[str]:
     venvs = []
+    python_bin_dir = os.path.dirname(os.path.abspath(sys.executable))
+    if python_bin_dir:
+        dirs = [python_bin_dir]
+    else:
+        dirs = []
+
     env_venv = os.environ.get("VIRTUAL_ENV")
     if env_venv:
         venvs.append(env_venv)
-    venvs.append(os.path.join(project_root, ".venv"))
+    for name in (".venv", "venv", "env"):
+        venvs.append(os.path.join(project_root, name))
 
-    dirs = []
     for venv in venvs:
         dirs.append(os.path.join(venv, "Scripts" if sys.platform == "win32" else "bin"))
     return list(dict.fromkeys(dirs))
@@ -108,6 +114,10 @@ def _venv_bin_dirs(project_root: str) -> list[str]:
 def _rtlola_candidates(project_root: str, script_dir: str) -> list[Optional[str]]:
     names = _platform_rtlola_names()
     candidates: list[Optional[str]] = []
+
+    env_binary = os.environ.get("RTLOLA_BINARY_PATH") or os.environ.get("COORDINATE_RTLOLA_BINARY")
+    if env_binary:
+        candidates.append(env_binary)
 
     for bin_dir in _venv_bin_dirs(project_root):
         for name in names:
@@ -138,6 +148,16 @@ def _rtlola_candidates(project_root: str, script_dir: str) -> list[Optional[str]
     return unique
 
 
+def resolve_rtlola_binary(project_root: str, script_dir: str, explicit: Optional[str] = None) -> Optional[str]:
+    if explicit:
+        return _usable_rtlola_binary(explicit)
+    for candidate in _rtlola_candidates(project_root, script_dir):
+        resolved = _usable_rtlola_binary(candidate)
+        if resolved is not None:
+            return resolved
+    return None
+
+
 class RTLolaMonitor:
     """
     Manages RTLola CLI process for monitoring simulation events and extracting metrics.
@@ -151,16 +171,9 @@ class RTLolaMonitor:
             spec_file: Path to RTLola specification file
             rtlola_binary: Path to rtlola-cli binary (default: searches PATH, then ~/.cargo/bin/rtlola-cli)
         """
-        if rtlola_binary is None:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(script_dir)
-
-            for candidate in _rtlola_candidates(project_root, script_dir):
-                rtlola_binary = _usable_rtlola_binary(candidate)
-                if rtlola_binary is not None:
-                    break
-        else:
-            rtlola_binary = _usable_rtlola_binary(rtlola_binary)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+        rtlola_binary = resolve_rtlola_binary(project_root, script_dir, explicit=rtlola_binary)
         
         self.spec_file = spec_file
         self.rtlola_binary = rtlola_binary

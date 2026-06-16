@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import platform
@@ -10,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sim.rtlola_monitor import _rtlola_candidates, _usable_rtlola_binary
+from sim.rtlola_monitor import _rtlola_candidates, _usable_rtlola_binary, resolve_rtlola_binary
 
 
 def main() -> int:
@@ -20,17 +21,17 @@ def main() -> int:
 
     print(f"[rtlola-check] Project: {root}")
     print(f"[rtlola-check] Platform: {platform.system()} {platform.machine()}")
+    print(f"[rtlola-check] Python:   {sys.executable}")
+    print(f"[rtlola-check] VIRTUAL_ENV={os.environ.get('VIRTUAL_ENV', '')}")
+    print(f"[rtlola-check] PATH={os.environ.get('PATH', '')}")
+    print(f"[rtlola-check] RTLOLA_BINARY_PATH={os.environ.get('RTLOLA_BINARY_PATH', '')}")
     print("[rtlola-check] Candidate order:")
     for index, candidate in enumerate(candidates, start=1):
         exists = Path(candidate).exists()
         marker = "exists" if exists else "missing"
         print(f"  {index:02d}. {candidate} [{marker}]")
 
-    selected = None
-    for candidate in candidates:
-        selected = _usable_rtlola_binary(candidate)
-        if selected:
-            break
+    selected = resolve_rtlola_binary(str(root), str(script_dir))
 
     if not selected:
         print("[rtlola-check] ERROR: no usable rtlola-cli binary found.")

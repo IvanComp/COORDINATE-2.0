@@ -39,6 +39,7 @@ from paper_experiment_utils import (
     cleanup_transient_artifacts,
     completed_run_ids,
     drop_rows_for_run,
+    ensure_rtlola_available,
     ensure_result_dirs,
     extract_switches,
     find_matching_rq1_row,
@@ -352,6 +353,9 @@ def switch_rows(
 
 
 def run_campaign(args: argparse.Namespace) -> None:
+    if not args.dry_run:
+        rtlola_binary = ensure_rtlola_available()
+        print(f"[preflight] RTLola binary: {rtlola_binary}")
     combos = campaign(args)
     design = {
         "research_question": "RQ2",
