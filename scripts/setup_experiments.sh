@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+DEFAULT_VENV="$ROOT_DIR/.venv"
+TARGET_VENV="${VENV_DIR:-${VIRTUAL_ENV:-$DEFAULT_VENV}}"
+if [[ "$TARGET_VENV" != /* ]]; then
+    TARGET_VENV="$ROOT_DIR/$TARGET_VENV"
+fi
+TARGET_BIN="$TARGET_VENV/bin"
+
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [[ -z "$PYTHON_BIN" ]]; then
     if command -v python3.12 >/dev/null 2>&1; then
@@ -29,10 +36,20 @@ if sys.version_info < (3, 10):
 print(f"[setup] Python: {sys.version.split()[0]}")
 PY
 
-echo "[setup] Creating .venv with $PYTHON_BIN"
-rm -rf .venv
-"$PYTHON_BIN" -m venv .venv
-source .venv/bin/activate
+if [[ -x "$TARGET_BIN/python" ]]; then
+    echo "[setup] Reusing existing virtual environment at $TARGET_VENV"
+else
+    echo "[setup] Creating virtual environment at $TARGET_VENV with $PYTHON_BIN"
+    rm -rf "$TARGET_VENV"
+    "$PYTHON_BIN" -m venv "$TARGET_VENV"
+fi
+
+if [[ "$TARGET_VENV" != "$DEFAULT_VENV" ]] && [[ ! -e "$DEFAULT_VENV" ]]; then
+    ln -s "$TARGET_VENV" "$DEFAULT_VENV"
+    echo "[setup] Linked $DEFAULT_VENV -> $TARGET_VENV"
+fi
+
+source "$TARGET_BIN/activate"
 
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -43,9 +60,10 @@ if ! bash scripts/install_rtlola_venv.sh; then
 fi
 
 echo "[setup] Ready."
-echo "  Python: $(.venv/bin/python --version)"
-if [[ -x ".venv/bin/rtlola-cli" ]] && .venv/bin/rtlola-cli --version >/dev/null 2>&1; then
-    echo "  RTLola: $(.venv/bin/rtlola-cli --version)"
+echo "  Venv:   $TARGET_VENV"
+echo "  Python: $("$TARGET_BIN/python" --version)"
+if [[ -x "$TARGET_BIN/rtlola-cli" ]] && "$TARGET_BIN/rtlola-cli" --version >/dev/null 2>&1; then
+    echo "  RTLola: $("$TARGET_BIN/rtlola-cli" --version)"
 else
     echo "  RTLola: missing or unusable"
 fi

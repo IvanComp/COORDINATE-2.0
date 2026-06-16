@@ -90,8 +90,18 @@ source .venv/bin/activate
 ```
 
 The setup script creates `.venv`, installs the Python dependencies used by the
-experiment runners and notebook, and tries to install `rtlola-cli` inside the
-virtual environment.
+experiment runners and notebook, and tries to install a machine-compatible
+`rtlola-cli` inside the virtual environment. If a compatible bundled binary is
+already present in the repository, it is reused; otherwise the installer falls
+back to Cargo.
+
+If you prefer a different environment name such as `venv`, the setup script can
+reuse or create it directly:
+
+```bash
+VENV_DIR=venv bash scripts/setup_experiments.sh
+source venv/bin/activate
+```
 
 If you already recreated and activated the environment manually, run:
 

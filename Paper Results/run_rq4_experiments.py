@@ -227,6 +227,71 @@ def run_id(params: dict[str, Any]) -> str:
     )
 
 
+def normalize_machine_label(value: Any) -> str:
+    label = sanitize_label(str(value or ""))
+    if label in {"linux", "workstation"}:
+        return "workstation"
+    if label in {"darwin", "macos", "mac"}:
+        return "mac"
+    return label or "workstation"
+
+
+def legacy_machine_label_from_run_id(run_id_value: str) -> str:
+    if run_id_value.startswith("mac_"):
+        return "mac"
+    if run_id_value.startswith("linux_") or run_id_value.startswith("workstation_"):
+        return "workstation"
+    return "workstation"
+
+
+def resume_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        normalize_machine_label(params.get("machine_label")),
+        str(params.get("coord_label", "")),
+        str(params.get("architecture", "")),
+        int(params.get("rep", 0)),
+        int(params.get("sim_days", 0)),
+        int(params.get("item_spawning_time", 0)),
+        int(params.get("n_robots", 0)),
+        int(params.get("n_malicious", 0)),
+        round(float(params.get("malicious_ratio", 0.0)), 6),
+        round(float(params.get("fail_prob", 0.0)), 6),
+        round(float(params.get("msg_loss_prob", 0.0)), 6),
+    )
+
+
+def resume_key_from_row(row: dict[str, Any]) -> tuple[Any, ...]:
+    run_id_value = str(row.get("run_id", ""))
+    machine = row.get("machine_label") or legacy_machine_label_from_run_id(run_id_value)
+    return (
+        normalize_machine_label(machine),
+        str(row.get("coord_label", "")),
+        str(row.get("architecture", "")),
+        int(float(row.get("rep", 0) or 0)),
+        int(float(row.get("sim_days", 0) or 0)),
+        int(float(row.get("item_spawning_time", 0) or 0)),
+        int(float(row.get("n_robots", 0) or 0)),
+        int(float(row.get("n_malicious", 0) or 0)),
+        round(float(row.get("malicious_ratio", 0.0) or 0.0), 6),
+        round(float(row.get("fail_prob", 0.0) or 0.0), 6),
+        round(float(row.get("msg_loss_prob", 0.0) or 0.0), 6),
+    )
+
+
+def completed_resume_keys(rows: list[dict[str, Any]]) -> set[tuple[Any, ...]]:
+    keys: set[tuple[Any, ...]] = set()
+    for row in rows:
+        if row.get("status") != "ok":
+            continue
+        keys.add(resume_key_from_row(row))
+    return keys
+
+
+def replace_row_by_resume_key(rows: list[dict[str, Any]], row: dict[str, Any]) -> list[dict[str, Any]]:
+    key = resume_key_from_row(row)
+    return [existing for existing in rows if resume_key_from_row(existing) != key] + [row]
+
+
 def run_subprocess(cfg_path: Path) -> dict[str, Any]:
     code = f"""
 import json
@@ -317,11 +382,13 @@ def run_campaign(args: argparse.Namespace) -> None:
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     completed = completed_run_ids(rows)
+    completed_keys = completed_resume_keys(rows)
     started_at = time.time()
 
     for idx, params in enumerate(combos, start=1):
         rid = run_id(params)
-        if rid in completed and not args.force:
+        resume_key = resume_key_from_params(params)
+        if (rid in completed or resume_key in completed_keys) and not args.force:
             print(f"[{idx}/{len(combos)}] {rid} already completed; skipping", flush=True)
             continue
 
@@ -426,7 +493,9 @@ def run_campaign(args: argparse.Namespace) -> None:
             + file_size_mb(logfile.with_name(logfile.stem + "_overhead.csv")),
             **metrics,
         }
-        rows = replace_row(rows, row)
+        rows = replace_row_by_resume_key(rows, row)
+        completed.add(rid)
+        completed_keys.add(resume_key)
 
         write_rows(RESULTS_ROOT / "runs.csv", rows)
         if errors:
