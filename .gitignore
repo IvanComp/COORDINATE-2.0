@@ -16,8 +16,6 @@ __pycache__/
 !Paper Results/RQ2/adaptation_state_timeseries.csv.gz
 !Paper Results/RQ2/switch_timeline.csv
 !Paper Results/RQ3/runs.csv
-!Paper Results/RQ3/overhead_summary.csv
-!Paper Results/RQ3/wall_time_summary.csv
 !Paper Results/RQ4/runs.csv
 Paper Results/**/raw_logs/
 Paper Results/**/configs/

@@ -446,71 +446,6 @@ def replace_row(rows: list[dict], row: dict) -> list[dict]:
     return [existing for existing in rows if existing.get("run_id") != run_id] + [row]
 
 
-def summarise_runs(rows: list[dict]) -> tuple[list[dict], list[dict]]:
-    ok_rows = [row for row in rows if row.get("status") == "ok"]
-    group_fields = [
-        "coord_label",
-        "architecture",
-        "item_spawning_time",
-        "n_robots",
-        "malicious_ratio",
-        "n_malicious",
-        "fail_prob",
-        "msg_loss_prob",
-    ]
-    metric_fields = [
-        "created",
-        "delivered",
-        "pending",
-        "success_rate",
-        "completion_rate",
-        "throughput_per_hour",
-        "avg_latency_s",
-        "median_latency_s",
-        "p95_latency_s",
-        "max_latency_s",
-        "switch_count",
-        "adapt_overhead_ms_mean",
-        "rtlola_query_ms_mean",
-        "scoring_ms_mean",
-    ]
-
-    grouped = {}
-    for row in ok_rows:
-        key = tuple(row[field] for field in group_fields)
-        grouped.setdefault(key, []).append(row)
-
-    summary = []
-    for key, group in sorted(grouped.items()):
-        record = dict(zip(group_fields, key))
-        record["runs"] = len(group)
-        for metric in metric_fields:
-            values = [
-                float(row[metric])
-                for row in group
-                if row.get(metric) not in (None, "", "nan") and not math.isnan(float(row[metric]))
-            ]
-            record[f"{metric}_mean"] = statistics.mean(values) if values else math.nan
-            record[f"{metric}_std"] = statistics.stdev(values) if len(values) > 1 else 0.0
-        summary.append(record)
-
-    mechanism_summary = []
-    for coord_label in sorted({row["coord_label"] for row in ok_rows}):
-        group = [row for row in ok_rows if row["coord_label"] == coord_label]
-        record = {"coord_label": coord_label, "architecture": COORD_TO_ARCH[coord_label], "runs": len(group)}
-        for metric in metric_fields:
-            values = [
-                float(row[metric])
-                for row in group
-                if row.get(metric) not in (None, "", "nan") and not math.isnan(float(row[metric]))
-            ]
-            record[f"{metric}_mean"] = statistics.mean(values) if values else math.nan
-            record[f"{metric}_std"] = statistics.stdev(values) if len(values) > 1 else 0.0
-        mechanism_summary.append(record)
-
-    return summary, mechanism_summary
-
-
 def run_campaign(args: argparse.Namespace) -> None:
     combos = campaign_grid(args)
     total_runs = len(combos)
@@ -622,15 +557,12 @@ def run_campaign(args: argparse.Namespace) -> None:
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
 
-    _, mechanism_summary = summarise_runs(rows)
-    write_rows(RESULTS_ROOT / "summary_by_mechanism.csv", mechanism_summary)
     cleanup_transient_artifacts()
 
     elapsed = time.time() - started_at
     print("=" * 80)
     print(f"RQ1 campaign completed in {elapsed:.2f}s wall-clock.")
     print(f"Run-level CSV:      {RESULTS_ROOT / 'runs.csv'}")
-    print(f"Mechanism summary:  {RESULTS_ROOT / 'summary_by_mechanism.csv'}")
     if errors:
         print(f"Errors CSV:         {RESULTS_ROOT / 'errors.csv'}")
     print("=" * 80)

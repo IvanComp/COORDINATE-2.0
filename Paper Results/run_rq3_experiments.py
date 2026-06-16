@@ -50,7 +50,6 @@ from paper_experiment_utils import (
     replace_row,
     run_or_analyze,
     safe_float,
-    summarise_rows,
     write_json,
     write_rows,
 )
@@ -312,38 +311,11 @@ def run_campaign(args: argparse.Namespace) -> None:
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
 
-    metric_fields = [
-        "wall_time_s",
-        "event_count",
-        "events_per_wall_s",
-        "adapt_checks",
-        "adapt_overhead_ms_total",
-        "adapt_overhead_ms_mean",
-        "adapt_overhead_ms_p95",
-        "rtlola_query_ms_mean",
-        "scoring_ms_mean",
-        "adapt_overhead_wall_pct",
-        "trace_size_mb",
-        "overhead_trace_size_mb",
-    ]
-    overhead_summary = summarise_rows(
-        rows,
-        group_fields=["coord_label", "architecture", "item_spawning_time", "n_robots"],
-        metric_fields=metric_fields,
-    )
-    wall_time_summary = summarise_rows(
-        rows,
-        group_fields=["coord_label", "architecture"],
-        metric_fields=metric_fields,
-    )
-    write_rows(RESULTS_ROOT / "overhead_summary.csv", overhead_summary)
-    write_rows(RESULTS_ROOT / "wall_time_summary.csv", wall_time_summary)
     cleanup_transient_artifacts(RESULTS_ROOT)
 
     print("=" * 80)
     print(f"RQ3 campaign completed in {time.time() - started_at:.2f}s wall-clock.")
     print(f"Run-level CSV:        {RESULTS_ROOT / 'runs.csv'}")
-    print(f"Summary CSV:          {RESULTS_ROOT / 'overhead_summary.csv'}")
     print("=" * 80)
 
 
