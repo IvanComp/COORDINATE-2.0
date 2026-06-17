@@ -82,7 +82,7 @@ BASE_CONFIG = {
     "LOG_DELIVERY": True,
     "LOG_LOAD": False,
     "LOG_DROP": False,
-    "LOG_EXPIRE": False,
+    "LOG_EXPIRE": True,
     "LOG_MOVE": False,
     "LOG_FAIL": True,
     "LOG_RECOVERY": True,
@@ -253,12 +253,18 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def expiration_metadata(cfg: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    values = (cfg or BASE_CONFIG)["EXPIRATION_TIME"]
+    source = cfg or BASE_CONFIG
+    values = source["EXPIRATION_TIME"]
     return {
         "expiration_time_low_s": values[0],
         "expiration_time_medium_s": values[1],
         "expiration_time_high_s": values[2],
+        "log_expire": bool(source.get("LOG_EXPIRE", False)),
     }
+
+
+def row_logs_expiration(row: dict[str, Any]) -> bool:
+    return str(row.get("log_expire", "")).lower() == "true"
 
 
 def row_matches_current_expiration(row: dict[str, Any]) -> bool:
@@ -326,6 +332,8 @@ def find_matching_rq1_row(
         if row.get("status") != "ok" or not logfile.exists():
             continue
         if not row_matches_current_expiration(row):
+            continue
+        if not row_logs_expiration(row):
             continue
         if row.get("coord_label") != coord_label:
             continue

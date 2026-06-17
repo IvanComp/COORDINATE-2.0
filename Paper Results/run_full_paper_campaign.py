@@ -115,6 +115,11 @@ def rq_status(rq: str) -> dict[str, Any]:
     design = read_design(rq)
     rows = read_rows(PAPER_ROOT / rq / "runs.csv")
     scoped_rows = filter_rows_for_design(rows, design)
+    if rq in {"RQ1", "RQ2"}:
+        scoped_rows = [
+            row for row in scoped_rows
+            if str(row.get("log_expire", "")).lower() == "true"
+        ]
     completed = completed_run_ids(scoped_rows)
     errors = [row for row in scoped_rows if row.get("status") == "error"]
     total = design_total(design)

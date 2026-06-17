@@ -110,7 +110,7 @@ BASE_CONFIG = {
     "LOG_DELIVERY": True,
     "LOG_LOAD": False,
     "LOG_DROP": False,
-    "LOG_EXPIRE": False,
+    "LOG_EXPIRE": True,
     "LOG_MOVE": False,
     "LOG_FAIL": True,
     "LOG_RECOVERY": True,
@@ -228,13 +228,13 @@ def build_fault_windows(
                 "ITEM_SPAWNING_TIME": spawn(0.75 * item_spawning_time),
             },
             {
-                "label": "communication_degradation",
+                "label": "baseline",
                 "start_hour": 10,
                 "end_hour": 14,
                 "N_MALICIOUS": n_malicious,
                 "FAIL_PROB": base_fail_prob,
-                "COMM_FAIL_PROB": prob(max(stress_multiplier * base_msg_loss, 4.5 * base_msg_loss)),
-                "RECOVERY_TIME": 1.5 * base_recovery_time,
+                "COMM_FAIL_PROB": base_msg_loss,
+                "RECOVERY_TIME": base_recovery_time,
                 "ITEM_SPAWNING_TIME": item_spawning_time,
             },
             {
@@ -494,6 +494,8 @@ def completed_run_ids(rows: list[dict]) -> set[str]:
         if run_id and row.get("status") == "ok":
             if not row_matches_current_expiration(row):
                 continue
+            if str(row.get("log_expire", "")).lower() != "true":
+                continue
             completed.add(run_id)
     return completed
 
@@ -553,7 +555,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "daily_fault_windows": [
             "nominal: 00h-06h",
             "load_failure_surge: 06h-10h",
-            "communication_degradation: 10h-14h",
+            "baseline: 10h-14h",
             "malicious_surge: 14h-18h",
             "recovery: 18h-24h",
         ],
@@ -594,9 +596,18 @@ def run_campaign(args: argparse.Namespace) -> None:
         wall_time = math.nan
         event_count = math.nan
         had_previous_error = any(error.get("run_id") == rid for error in errors)
+        had_stale_expire_log = any(
+            row.get("run_id") == rid
+            and row.get("status") == "ok"
+            and str(row.get("log_expire", "")).lower() != "true"
+            for row in rows
+        )
         errors = [error for error in errors if error.get("run_id") != rid]
         if had_previous_error and logfile.exists() and not args.force:
             print("  previous error found; removing stale log and re-running", flush=True)
+            logfile.unlink()
+        if had_stale_expire_log and logfile.exists() and not args.force:
+            print("  old log lacks expire events; removing stale log and re-running", flush=True)
             logfile.unlink()
 
         try:
@@ -642,6 +653,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "expiration_time_low_s": cfg["EXPIRATION_TIME"][0],
             "expiration_time_medium_s": cfg["EXPIRATION_TIME"][1],
             "expiration_time_high_s": cfg["EXPIRATION_TIME"][2],
+            "log_expire": cfg["LOG_EXPIRE"],
             "sim_days": args.sim_days,
             "stress_multiplier": args.stress_multiplier,
             "stress_start_hour": args.stress_start_hour,

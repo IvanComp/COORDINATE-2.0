@@ -151,8 +151,8 @@ def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
             n_robots=n_robots,
             malicious_ratio=0.33,
             fail_prob=0.33,
-            msg_loss=0.45,
-            recovery_time=1.5 * recovery,
+            msg_loss=0.10,
+            recovery_time=recovery,
             item_spawning_time=120,
         )
         malicious = phase_params(
@@ -175,7 +175,7 @@ def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
         segments = [
             {"label": "nominal", "start_hour": 0, "end_hour": 6, "params": nominal},
             {"label": "load_failure_surge", "start_hour": 6, "end_hour": 10, "params": load_failure},
-            {"label": "communication_degradation", "start_hour": 10, "end_hour": 14, "params": communication},
+            {"label": "baseline", "start_hour": 10, "end_hour": 14, "params": communication},
             {"label": "malicious_surge", "start_hour": 14, "end_hour": 18, "params": malicious},
             {"label": "recovery", "start_hour": 18, "end_hour": 24, "params": recovery_phase},
         ]
@@ -411,7 +411,10 @@ def run_campaign(args: argparse.Namespace) -> None:
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     all_timeseries = [] if args.force else read_rows(TIMESERIES_PATH)
     all_switches = [] if args.force else read_rows(RESULTS_ROOT / "switch_timeline.csv")
-    completed = completed_run_ids(rows)
+    completed = completed_run_ids([
+        row for row in rows
+        if str(row.get("log_expire", "")).lower() == "true"
+    ])
     started_at = time.time()
 
     for idx, params in enumerate(combos, start=1):
@@ -447,9 +450,18 @@ def run_campaign(args: argparse.Namespace) -> None:
         source_run_id = rid
         source_logfile = str(planned_logfile)
         had_previous_error = any(error.get("run_id") == rid for error in errors)
+        had_stale_expire_log = any(
+            row.get("run_id") == rid
+            and row.get("status") == "ok"
+            and str(row.get("log_expire", "")).lower() != "true"
+            for row in rows
+        )
         errors = [error for error in errors if error.get("run_id") != rid]
         if had_previous_error and planned_logfile.exists() and not args.force:
             print("  previous error found; removing stale log and re-running", flush=True)
+            planned_logfile.unlink()
+        if had_stale_expire_log and planned_logfile.exists() and not args.force:
+            print("  old log lacks expire events; removing stale log and re-running", flush=True)
             planned_logfile.unlink()
 
         try:
