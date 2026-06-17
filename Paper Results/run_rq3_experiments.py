@@ -9,7 +9,7 @@ per-check adaptation overhead.
 
 Default campaign:
     3 workload levels x 3 fleet sizes x 4 mechanisms x
-    5 repetitions = 180 runs.
+    10 repetitions = 360 runs.
 
 Run examples:
     python "Paper Results/run_rq3_experiments.py" --dry-run
@@ -44,6 +44,7 @@ from paper_experiment_utils import (
     completed_run_ids,
     ensure_rtlola_available,
     ensure_result_dirs,
+    expiration_metadata,
     find_matching_rq1_row,
     analyze_log,
     malicious_count,
@@ -64,7 +65,7 @@ DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RQ3 overhead experiments.")
-    parser.add_argument("--repetitions", type=int, default=5, help="Repetitions per configuration.")
+    parser.add_argument("--repetitions", type=int, default=10, help="Repetitions per configuration.")
     parser.add_argument("--sim-days", type=int, default=30, help="Number of simulated days.")
     parser.add_argument("--base-seed", type=int, default=20260603, help="Base random seed.")
     parser.add_argument("--fail-prob", type=float, default=0.66, help="Baseline agent failure probability.")
@@ -100,7 +101,7 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.quick:
         item_spawning_times = [120]
         n_robots_values = [20]
-        repetitions = 1 if args.repetitions == 5 else args.repetitions
+        repetitions = 1 if args.repetitions == 10 else args.repetitions
     else:
         item_spawning_times = DEFAULT_ITEM_SPAWNING_TIMES
         n_robots_values = DEFAULT_N_ROBOTS
@@ -156,6 +157,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "msg_loss": args.msg_loss,
         "daily_stress_window": [12, 24],
         "stress_multiplier": args.stress_multiplier,
+        "expiration_time": expiration_metadata(),
         "reuse_rq1": not args.no_reuse_rq1,
         "purpose": "Measure wall-clock and per-check monitoring/adaptation overhead.",
     }
@@ -283,6 +285,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "source_rq": source_rq,
             "source_run_id": source_run_id,
             "source_logfile": source_logfile,
+            **expiration_metadata(cfg),
         }
         rows = [existing for existing in rows if existing.get("run_id") != rid]
         row = {

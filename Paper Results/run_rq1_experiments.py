@@ -17,7 +17,7 @@ Motivating scenario:
 Default campaign:
     3 workload levels x 3 fleet sizes x 4 malicious-agent ratios x
     3 base fault levels x 1 message-loss level x 4 mechanisms x
-    5 repetitions = 2160 runs.
+    10 repetitions = 4320 runs.
 
 Run from the project root or from this directory, for example:
     python "Paper Results/run_rq1_experiments.py"
@@ -81,7 +81,7 @@ BASE_CONFIG = {
     "ITEM_SPAWNING_DISTR": "exponential",
     "ITEM_SPAWNING_TRACE": "_",
     "IMPORTANCE_PROBABILITIES": [0.50, 0.10, 0.40],
-    "EXPIRATION_TIME": [-1, -1, -1],
+    "EXPIRATION_TIME": [28800, 7200, 3600],
     "EXPIRATION_DISTR": ["exponential", "exponential", "exponential"],
     "N_ROBOTS": 20,
     "N_MALICIOUS": 0,
@@ -135,7 +135,7 @@ DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RQ1 paper experiments.")
-    parser.add_argument("--repetitions", type=int, default=5, help="Repetitions per configuration.")
+    parser.add_argument("--repetitions", type=int, default=10, help="Repetitions per configuration.")
     parser.add_argument("--sim-days", type=int, default=30, help="Number of simulated days.")
     parser.add_argument("--base-seed", type=int, default=20260527, help="Base random seed.")
     parser.add_argument("--stress-multiplier", type=float, default=1.2, help="Fault multiplier in stress windows.")
@@ -394,7 +394,6 @@ def analyze_log(logfile: Path, sim_time: float) -> dict:
     delivered = events.get("deliver", 0)
     expired = events.get("expire", 0)
     pending = max(0, created - delivered - expired)
-    completed_or_expired = delivered + expired
 
     metrics = {
         "created": created,
@@ -404,7 +403,9 @@ def analyze_log(logfile: Path, sim_time: float) -> dict:
         "failed": events.get("fail", 0),
         "recovered": events.get("recover", 0) + events.get("recovery", 0),
         "success_rate": delivered / created if created else 0.0,
-        "completion_rate": completed_or_expired / created if created else 0.0,
+        "completion_rate": delivered / created if created else 0.0,
+        "expiration_rate": expired / created if created else 0.0,
+        "terminal_rate": (delivered + expired) / created if created else 0.0,
         "throughput_per_hour": delivered / (sim_time / 3600.0) if sim_time else 0.0,
         "avg_latency_s": statistics.mean(delivery_latencies) if delivery_latencies else math.nan,
         "median_latency_s": statistics.median(delivery_latencies) if delivery_latencies else math.nan,
@@ -448,8 +449,31 @@ def completed_run_ids(rows: list[dict]) -> set[str]:
     for row in rows:
         run_id = str(row.get("run_id", ""))
         if run_id and row.get("status") == "ok":
+            if not row_matches_current_expiration(row):
+                continue
             completed.add(run_id)
     return completed
+
+
+def expiration_metadata(cfg=None) -> dict:
+    values = (cfg or BASE_CONFIG)["EXPIRATION_TIME"]
+    return {
+        "expiration_time_low_s": values[0],
+        "expiration_time_medium_s": values[1],
+        "expiration_time_high_s": values[2],
+    }
+
+
+def row_matches_current_expiration(row: dict) -> bool:
+    expected = expiration_metadata()
+    for key, expected_value in expected.items():
+        try:
+            actual_value = float(row.get(key, ""))
+        except (TypeError, ValueError):
+            return False
+        if int(round(actual_value)) != int(round(float(expected_value))):
+            return False
+    return True
 
 
 def replace_row(rows: list[dict], row: dict) -> list[dict]:
@@ -482,6 +506,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "malicious_ratios": [0.33] if args.quick else DEFAULT_MALICIOUS_RATIOS,
         "fail_probs": [0.33] if args.quick else DEFAULT_FAIL_PROBS,
         "msg_loss_probs": DEFAULT_MSG_LOSS_PROBS,
+        "expiration_time": BASE_CONFIG["EXPIRATION_TIME"],
         "daily_stress_window": [args.stress_start_hour, args.stress_end_hour],
         "stress_multiplier": args.stress_multiplier,
     }
@@ -565,6 +590,9 @@ def run_campaign(args: argparse.Namespace) -> None:
             "n_malicious": params["n_malicious"],
             "fail_prob": params["fail_prob"],
             "msg_loss_prob": params["msg_loss_prob"],
+            "expiration_time_low_s": cfg["EXPIRATION_TIME"][0],
+            "expiration_time_medium_s": cfg["EXPIRATION_TIME"][1],
+            "expiration_time_high_s": cfg["EXPIRATION_TIME"][2],
             "sim_days": args.sim_days,
             "stress_multiplier": args.stress_multiplier,
             "stress_start_hour": args.stress_start_hour,

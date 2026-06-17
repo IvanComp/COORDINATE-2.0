@@ -52,7 +52,7 @@ BASE_CONFIG = {
     "ITEM_SPAWNING_DISTR": "exponential",
     "ITEM_SPAWNING_TRACE": "_",
     "IMPORTANCE_PROBABILITIES": [0.50, 0.10, 0.40],
-    "EXPIRATION_TIME": [-1, -1, -1],
+    "EXPIRATION_TIME": [28800, 7200, 3600],
     "EXPIRATION_DISTR": ["exponential", "exponential", "exponential"],
     "N_ROBOTS": 20,
     "N_MALICIOUS": 0,
@@ -252,11 +252,34 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
         return list(csv.DictReader(f))
 
 
+def expiration_metadata(cfg: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    values = (cfg or BASE_CONFIG)["EXPIRATION_TIME"]
+    return {
+        "expiration_time_low_s": values[0],
+        "expiration_time_medium_s": values[1],
+        "expiration_time_high_s": values[2],
+    }
+
+
+def row_matches_current_expiration(row: dict[str, Any]) -> bool:
+    expected = expiration_metadata()
+    for key, expected_value in expected.items():
+        try:
+            actual_value = float(row.get(key, ""))
+        except (TypeError, ValueError):
+            return False
+        if int(round(actual_value)) != int(round(float(expected_value))):
+            return False
+    return True
+
+
 def completed_run_ids(rows: list[dict[str, Any]]) -> set[str]:
     completed: set[str] = set()
     for row in rows:
         run_id = str(row.get("run_id", ""))
         if not run_id or row.get("status") != "ok":
+            continue
+        if not row_matches_current_expiration(row):
             continue
         completed.add(run_id)
     return completed
@@ -301,6 +324,8 @@ def find_matching_rq1_row(
     for row in rq1_runs:
         logfile = Path(str(row.get("logfile", "")))
         if row.get("status") != "ok" or not logfile.exists():
+            continue
+        if not row_matches_current_expiration(row):
             continue
         if row.get("coord_label") != coord_label:
             continue
@@ -413,7 +438,6 @@ def analyze_log(logfile: Path, sim_time: float) -> dict[str, Any]:
     delivered = events.get("deliver", 0)
     expired = events.get("expire", 0)
     pending = max(0, created - delivered - expired)
-    completed_or_expired = delivered + expired
 
     metrics = {
         "created": created,
@@ -423,7 +447,9 @@ def analyze_log(logfile: Path, sim_time: float) -> dict[str, Any]:
         "failed": events.get("fail", 0),
         "recovered": events.get("recover", 0) + events.get("recovery", 0),
         "success_rate": delivered / created if created else 0.0,
-        "completion_rate": completed_or_expired / created if created else 0.0,
+        "completion_rate": delivered / created if created else 0.0,
+        "expiration_rate": expired / created if created else 0.0,
+        "terminal_rate": (delivered + expired) / created if created else 0.0,
         "throughput_per_hour": delivered / (sim_time / 3600.0) if sim_time else 0.0,
         "avg_latency_s": statistics.mean(delivery_latencies) if delivery_latencies else math.nan,
         "median_latency_s": statistics.median(delivery_latencies) if delivery_latencies else math.nan,

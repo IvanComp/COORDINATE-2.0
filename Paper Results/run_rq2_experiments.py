@@ -7,7 +7,7 @@ RQ1, but to inspect when DA switches, which monitored state caused the switch,
 and whether switches align with persistent fault windows.
 
 Default campaign:
-    4 dynamic profiles x 5 repetitions = 20 runs.
+    4 dynamic profiles x 10 repetitions = 40 runs.
 
 Run examples:
     python "Paper Results/run_rq2_experiments.py" --dry-run
@@ -41,6 +41,7 @@ from paper_experiment_utils import (
     drop_rows_for_run,
     ensure_rtlola_available,
     ensure_result_dirs,
+    expiration_metadata,
     extract_switches,
     find_matching_rq1_row,
     malicious_count,
@@ -68,7 +69,7 @@ PROFILE_NAMES = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RQ2 dynamic adaptation experiments.")
-    parser.add_argument("--repetitions", type=int, default=5, help="Repetitions per dynamic profile.")
+    parser.add_argument("--repetitions", type=int, default=10, help="Repetitions per dynamic profile.")
     parser.add_argument("--sim-days", type=int, default=30, help="Number of simulated days.")
     parser.add_argument("--base-seed", type=int, default=20260602, help="Base random seed.")
     parser.add_argument(
@@ -275,7 +276,7 @@ def selected_profiles(args: argparse.Namespace) -> list[str]:
 def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     profiles = selected_profiles(args)
-    repetitions = 1 if args.quick and args.repetitions == 5 else args.repetitions
+    repetitions = 1 if args.quick and args.repetitions == 10 else args.repetitions
     for profile_idx, profile in enumerate(profiles, start=1):
         definition = profile_definition(profile, args.sim_days)
         for rep in range(1, repetitions + 1):
@@ -364,6 +365,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "profiles": selected_profiles(args),
         "total_runs": len(combos),
         "coordination_mechanisms": ["DA"],
+        "expiration_time": expiration_metadata(),
         "reuse_rq1": not args.no_reuse_rq1,
         "purpose": "Relate DA switches to monitored states and dynamic fault windows.",
     }
@@ -483,6 +485,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "source_rq": source_rq,
             "source_run_id": source_run_id,
             "source_logfile": source_logfile,
+            **expiration_metadata(cfg),
         }
         samples = read_overhead_samples(logfile) if logfile.exists() else []
         rows = [existing for existing in rows if existing.get("run_id") != rid]

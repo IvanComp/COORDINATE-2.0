@@ -47,7 +47,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--rqs",
-        default="RQ1,RQ2,RQ3,RQ4",
+        # Temporary pre-submission rerun: refresh only effectiveness/reaction
+        # results after enabling task expiration. Re-enable RQ3,RQ4 after
+        # submission if the overhead/scalability campaigns should be refreshed.
+        # default="RQ1,RQ2,RQ3,RQ4",
+        default="RQ1,RQ2",
         help="Comma-separated list of RQs to run, e.g. RQ1,RQ3.",
     )
     parser.add_argument("--python", default=sys.executable, help="Python executable to use.")

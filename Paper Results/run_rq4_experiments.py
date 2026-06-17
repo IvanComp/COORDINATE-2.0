@@ -8,7 +8,7 @@ an isolated Python subprocess so peak RSS can be measured per simulation.
 
 Default campaign per hardware profile:
     4 durations x 3 workload levels x 3 fleet sizes x 2 mechanisms x
-    5 repetitions = 360 runs.
+    10 repetitions = 720 runs.
 
 Run examples:
     python "Paper Results/run_rq4_experiments.py" --dry-run
@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from paper_experiment_utils import (
+    BASE_CONFIG,
     COORD_TO_ARCH,
     PAPER_ROOT,
     PROJECT_ROOT,
@@ -46,6 +47,7 @@ from paper_experiment_utils import (
     completed_run_ids,
     ensure_rtlola_available,
     ensure_result_dirs,
+    expiration_metadata,
     file_size_mb,
     malicious_count,
     read_rows,
@@ -66,7 +68,7 @@ SUBPROCESS_MARKER = "__RQ4_RESULT__"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RQ4 scalability experiments.")
-    parser.add_argument("--repetitions", type=int, default=5, help="Repetitions per configuration.")
+    parser.add_argument("--repetitions", type=int, default=10, help="Repetitions per configuration.")
     parser.add_argument(
         "--sim-days",
         default=None,
@@ -165,7 +167,7 @@ def build_campaign_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         item_spawning_times = [150]
         n_robots_values = [10]
         coord_labels = selected_coord_labels(args)
-        repetitions = 1 if args.repetitions == 5 else args.repetitions
+        repetitions = 1 if args.repetitions == 10 else args.repetitions
     else:
         sim_days_values = selected_sim_days(args)
         item_spawning_times = DEFAULT_ITEM_SPAWNING_TIMES
@@ -245,6 +247,7 @@ def legacy_machine_label_from_run_id(run_id_value: str) -> str:
 
 
 def resume_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
+    expiration = tuple(int(round(float(value))) for value in BASE_CONFIG["EXPIRATION_TIME"])
     return (
         normalize_machine_label(params.get("machine_label")),
         str(params.get("coord_label", "")),
@@ -257,6 +260,7 @@ def resume_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
         round(float(params.get("malicious_ratio", 0.0)), 6),
         round(float(params.get("fail_prob", 0.0)), 6),
         round(float(params.get("msg_loss_prob", 0.0)), 6),
+        *expiration,
     )
 
 
@@ -275,6 +279,9 @@ def resume_key_from_row(row: dict[str, Any]) -> tuple[Any, ...]:
         round(float(row.get("malicious_ratio", 0.0) or 0.0), 6),
         round(float(row.get("fail_prob", 0.0) or 0.0), 6),
         round(float(row.get("msg_loss_prob", 0.0) or 0.0), 6),
+        int(float(row.get("expiration_time_low_s", 0) or 0)),
+        int(float(row.get("expiration_time_medium_s", 0) or 0)),
+        int(float(row.get("expiration_time_high_s", 0) or 0)),
     )
 
 
@@ -289,7 +296,12 @@ def completed_resume_keys(rows: list[dict[str, Any]]) -> set[tuple[Any, ...]]:
 
 def replace_row_by_resume_key(rows: list[dict[str, Any]], row: dict[str, Any]) -> list[dict[str, Any]]:
     key = resume_key_from_row(row)
-    return [existing for existing in rows if resume_key_from_row(existing) != key] + [row]
+    run_id_value = row.get("run_id")
+    return [
+        existing
+        for existing in rows
+        if existing.get("run_id") != run_id_value and resume_key_from_row(existing) != key
+    ] + [row]
 
 
 def run_subprocess(cfg_path: Path) -> dict[str, Any]:
@@ -361,6 +373,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "msg_loss": args.msg_loss,
         "daily_stress_window": [12, 24],
         "stress_multiplier": args.stress_multiplier,
+        "expiration_time": expiration_metadata(),
         "purpose": "Measure execution time, peak RSS, event throughput, and trace size.",
     }
     print("=" * 80)
@@ -484,6 +497,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "n_malicious": params["n_malicious"],
             "fail_prob": params["fail_prob"],
             "msg_loss_prob": params["msg_loss_prob"],
+            **expiration_metadata(cfg),
             "wall_time_s": wall_time,
             "event_count": event_count,
             "events_per_wall_s": event_count / wall_time if wall_time and not math.isnan(wall_time) else math.nan,
