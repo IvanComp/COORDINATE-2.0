@@ -7,10 +7,9 @@ Research question:
     coordination mechanisms?
 
 Motivating scenario:
-    Ghent hospital logistics with recurring daily stress windows. Each simulated
-    day starts with regular operating conditions and moves into a stressed
-    interval in the second half of the day, where failure probability,
-    communication loss, and recovery time are increased. The stress schedule is
+    Ghent hospital logistics with recurring multi-regime daily fault windows.
+    Each simulated day alternates nominal operation, load/failure surge,
+    communication degradation, malicious surge, and recovery. The schedule is
     identical for every coordination mechanism and repetition, so RQ1 compares
     DA against CE, SD, and FD under the same dynamic conditions.
 
@@ -139,8 +138,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sim-days", type=int, default=30, help="Number of simulated days.")
     parser.add_argument("--base-seed", type=int, default=20260527, help="Base random seed.")
     parser.add_argument("--stress-multiplier", type=float, default=1.2, help="Fault multiplier in stress windows.")
-    parser.add_argument("--stress-start-hour", type=float, default=12.0, help="Daily stress-window start hour.")
-    parser.add_argument("--stress-end-hour", type=float, default=24.0, help="Daily stress-window end hour.")
+    parser.add_argument("--stress-start-hour", type=float, default=12.0, help="Legacy single-window start hour.")
+    parser.add_argument("--stress-end-hour", type=float, default=24.0, help="Legacy single-window end hour.")
     parser.add_argument("--quick", action="store_true", help="Small smoke campaign for checking the runner.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
     parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
@@ -184,6 +183,7 @@ def build_fault_windows(
     base_fail_prob: float,
     base_msg_loss: float,
     base_recovery_time: float,
+    n_robots: int,
     n_malicious: int,
     item_spawning_time: float,
     stress_multiplier: float,
@@ -192,39 +192,81 @@ def build_fault_windows(
 ) -> list[dict]:
     phases = []
     day_seconds = 24 * 3600
+
+    def prob(value: float) -> float:
+        return max(0.0, min(1.0, value))
+
+    def malicious(value: float) -> int:
+        return max(0, min(n_robots, int(round(value))))
+
+    def spawn(value: float) -> float:
+        return max(30.0, float(value))
+
     for day in range(sim_days):
         day_start = day * day_seconds
         day_end = day_start + day_seconds
-        stress_start = min(max(day_start + stress_start_hour * 3600, day_start), day_end)
-        stress_end = min(max(day_start + stress_end_hour * 3600, stress_start), day_end)
 
-        phases.append({
-            "start": day_start,
-            "end": stress_start,
-            "N_MALICIOUS": n_malicious,
-            "FAIL_PROB": base_fail_prob,
-            "COMM_FAIL_PROB": base_msg_loss,
-            "RECOVERY_TIME": base_recovery_time,
-            "ITEM_SPAWNING_TIME": item_spawning_time,
-        })
-        phases.append({
-            "start": stress_start,
-            "end": min(stress_end, day_end),
-            "N_MALICIOUS": n_malicious,
-            "FAIL_PROB": min(1.0, stress_multiplier * base_fail_prob),
-            "COMM_FAIL_PROB": min(1.0, stress_multiplier * base_msg_loss),
-            "RECOVERY_TIME": stress_multiplier * base_recovery_time,
-            "ITEM_SPAWNING_TIME": item_spawning_time,
-        })
-        phases.append({
-            "start": stress_end,
-            "end": day_end,
-            "N_MALICIOUS": n_malicious,
-            "FAIL_PROB": base_fail_prob,
-            "COMM_FAIL_PROB": base_msg_loss,
-            "RECOVERY_TIME": base_recovery_time,
-            "ITEM_SPAWNING_TIME": item_spawning_time,
-        })
+        daily_segments = [
+            {
+                "label": "nominal",
+                "start_hour": 0,
+                "end_hour": 6,
+                "N_MALICIOUS": malicious(0.25 * n_malicious),
+                "FAIL_PROB": prob(0.50 * base_fail_prob),
+                "COMM_FAIL_PROB": prob(0.50 * base_msg_loss),
+                "RECOVERY_TIME": base_recovery_time,
+                "ITEM_SPAWNING_TIME": spawn(1.50 * item_spawning_time),
+            },
+            {
+                "label": "load_failure_surge",
+                "start_hour": 6,
+                "end_hour": 10,
+                "N_MALICIOUS": n_malicious,
+                "FAIL_PROB": prob(stress_multiplier * base_fail_prob),
+                "COMM_FAIL_PROB": base_msg_loss,
+                "RECOVERY_TIME": stress_multiplier * base_recovery_time,
+                "ITEM_SPAWNING_TIME": spawn(0.75 * item_spawning_time),
+            },
+            {
+                "label": "communication_degradation",
+                "start_hour": 10,
+                "end_hour": 14,
+                "N_MALICIOUS": n_malicious,
+                "FAIL_PROB": base_fail_prob,
+                "COMM_FAIL_PROB": prob(max(stress_multiplier * base_msg_loss, 4.5 * base_msg_loss)),
+                "RECOVERY_TIME": 1.5 * base_recovery_time,
+                "ITEM_SPAWNING_TIME": item_spawning_time,
+            },
+            {
+                "label": "malicious_surge",
+                "start_hour": 14,
+                "end_hour": 18,
+                "N_MALICIOUS": malicious(n_malicious + 0.33 * n_robots),
+                "FAIL_PROB": prob(stress_multiplier * base_fail_prob),
+                "COMM_FAIL_PROB": prob(2.0 * base_msg_loss),
+                "RECOVERY_TIME": stress_multiplier * base_recovery_time,
+                "ITEM_SPAWNING_TIME": spawn(0.90 * item_spawning_time),
+            },
+            {
+                "label": "recovery",
+                "start_hour": 18,
+                "end_hour": 24,
+                "N_MALICIOUS": malicious(0.25 * n_malicious),
+                "FAIL_PROB": prob(max(0.03, 0.25 * base_fail_prob)),
+                "COMM_FAIL_PROB": prob(max(0.02, 0.30 * base_msg_loss)),
+                "RECOVERY_TIME": base_recovery_time,
+                "ITEM_SPAWNING_TIME": spawn(1.50 * item_spawning_time),
+            },
+        ]
+
+        for segment in daily_segments:
+            start = min(max(day_start + segment["start_hour"] * 3600, day_start), day_end)
+            end = min(max(day_start + segment["end_hour"] * 3600, start), day_end)
+            phase = dict(segment)
+            phase.update({"start": start, "end": end})
+            phase.pop("start_hour")
+            phase.pop("end_hour")
+            phases.append(phase)
 
     return [phase for phase in phases if phase["end"] > phase["start"]]
 
@@ -306,6 +348,7 @@ def config_for(params: dict, args: argparse.Namespace, logfile: Path) -> dict:
         base_fail_prob=params["fail_prob"],
         base_msg_loss=params["msg_loss_prob"],
         base_recovery_time=cfg["RECOVERY_TIME"],
+        n_robots=params["n_robots"],
         n_malicious=params["n_malicious"],
         item_spawning_time=params["item_spawning_time"],
         stress_multiplier=args.stress_multiplier,
@@ -507,7 +550,13 @@ def run_campaign(args: argparse.Namespace) -> None:
         "fail_probs": [0.33] if args.quick else DEFAULT_FAIL_PROBS,
         "msg_loss_probs": DEFAULT_MSG_LOSS_PROBS,
         "expiration_time": BASE_CONFIG["EXPIRATION_TIME"],
-        "daily_stress_window": [args.stress_start_hour, args.stress_end_hour],
+        "daily_fault_windows": [
+            "nominal: 00h-06h",
+            "load_failure_surge: 06h-10h",
+            "communication_degradation: 10h-14h",
+            "malicious_surge: 14h-18h",
+            "recovery: 18h-24h",
+        ],
         "stress_multiplier": args.stress_multiplier,
     }
     print("=" * 80)

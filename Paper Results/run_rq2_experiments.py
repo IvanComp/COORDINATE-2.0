@@ -131,26 +131,53 @@ def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
     recovery = 1800.0
 
     if profile_name == "paper_daily_stress":
-        base = phase_params(
+        nominal = phase_params(
+            n_robots=n_robots,
+            malicious_ratio=0.10,
+            fail_prob=0.10,
+            msg_loss=0.03,
+            recovery_time=recovery,
+            item_spawning_time=150,
+        )
+        load_failure = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.33,
             fail_prob=0.66,
             msg_loss=0.10,
-            recovery_time=recovery,
-            item_spawning_time=120,
+            recovery_time=1.2 * recovery,
+            item_spawning_time=90,
         )
-        stress = phase_params(
+        communication = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.33,
-            fail_prob=min(1.0, 1.2 * 0.66),
-            msg_loss=min(1.0, 1.2 * 0.10),
-            recovery_time=1.2 * recovery,
+            fail_prob=0.33,
+            msg_loss=0.45,
+            recovery_time=1.5 * recovery,
             item_spawning_time=120,
         )
-        description = "Paper baseline: one daily stress window from 12h to 24h."
+        malicious = phase_params(
+            n_robots=n_robots,
+            malicious_ratio=0.66,
+            fail_prob=0.66,
+            msg_loss=0.20,
+            recovery_time=1.2 * recovery,
+            item_spawning_time=90,
+        )
+        recovery_phase = phase_params(
+            n_robots=n_robots,
+            malicious_ratio=0.0,
+            fail_prob=0.08,
+            msg_loss=0.03,
+            recovery_time=recovery,
+            item_spawning_time=150,
+        )
+        description = "Multi-regime daily profile alternating nominal, load/failure, communication, malicious, and recovery phases."
         segments = [
-            {"label": "normal", "start_hour": 0, "end_hour": 12, "params": base},
-            {"label": "paper_stress", "start_hour": 12, "end_hour": 24, "params": stress},
+            {"label": "nominal", "start_hour": 0, "end_hour": 6, "params": nominal},
+            {"label": "load_failure_surge", "start_hour": 6, "end_hour": 10, "params": load_failure},
+            {"label": "communication_degradation", "start_hour": 10, "end_hour": 14, "params": communication},
+            {"label": "malicious_surge", "start_hour": 14, "end_hour": 18, "params": malicious},
+            {"label": "recovery", "start_hour": 18, "end_hour": 24, "params": recovery_phase},
         ]
 
     elif profile_name == "communication_blackout":
