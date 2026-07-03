@@ -1,2 +1,4 @@
 arch,space,Nrooms,Nbot,Nmal,failProb,commFailProb,arrival,loadItem,moveItem,dropItem,comp,comm,recovery,simTime
 semi-decentralized,mesh25,25,12,0,2,3,90,1,5,1,0,0,300,0.025924205780029297
+semi-decentralized,mesh25,25,12,0,2,3,90,1,5,1,0,0,300,0.027360916137695312
+semi-decentralized,mesh25,25,12,0,2,3,90,1,5,1,0,0,300,0.03319120407104492

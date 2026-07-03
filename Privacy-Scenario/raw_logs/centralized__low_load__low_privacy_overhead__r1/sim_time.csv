@@ -1,2 +1,4 @@
 arch,space,Nrooms,Nbot,Nmal,failProb,commFailProb,arrival,loadItem,moveItem,dropItem,comp,comm,recovery,simTime
 centralized-impprox,mesh25,25,12,0,2,3,180,1,5,1,0,0,300,0.012005090713500977
+centralized-impprox,mesh25,25,12,0,2,3,180,1,5,1,0,0,300,0.009392976760864258
+centralized-impprox,mesh25,25,12,0,2,3,180,1,5,1,0,0,300,0.012910842895507812

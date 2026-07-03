@@ -1,4 +1,5 @@
 import csv
+import argparse
 import json
 import math
 import subprocess
@@ -11,11 +12,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent
-PROJECT_ROOT = ROOT.parent
+# Standalone-first: if this folder contains its own `sim/` package, use it.
+PROJECT_ROOT = ROOT if (ROOT / 'sim').exists() else ROOT.parent
 CONFIGS_DIR = ROOT / 'configs'
 RAW_LOGS_DIR = ROOT / 'raw_logs'
 RESULTS_DIR = ROOT / 'results'
 PLOTS_DIR = ROOT / 'plots'
+FIGSIZE = (3.0, 2.0)
 
 for d in [CONFIGS_DIR, RAW_LOGS_DIR, RESULTS_DIR, PLOTS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
@@ -34,20 +37,20 @@ WORKLOAD_LEVELS = {
 
 PRIVACY_LEVELS = {
     'Low Privacy Overhead': {
-        'privacy_comm_bonus': [0.0, 0.20, 0.50],
-        'privacy_comp_bonus': [0.0, 0.02, 0.05],
-    },
-    'Medium Privacy Overhead': {
         'privacy_comm_bonus': [0.0, 1.00, 2.00],
         'privacy_comp_bonus': [0.0, 0.05, 0.10],
     },
+    'Medium Privacy Overhead': {
+        'privacy_comm_bonus': [0.0, 5.00, 10.00],
+        'privacy_comp_bonus': [0.0, 0.20, 0.50],
+    },
     'High Privacy Overhead': {
-        'privacy_comm_bonus': [0.0, 3.00, 6.00],
-        'privacy_comp_bonus': [0.0, 0.10, 0.20],
+        'privacy_comm_bonus': [0.0, 20.00, 40.00],
+        'privacy_comp_bonus': [0.0, 0.50, 1.00],
     },
 }
 
-REPETITIONS = 5
+DEFAULT_REPETITIONS = 5
 SENSITIVE_IMPORTANCES = [1, 2]
 
 BASE_CONFIG = {
@@ -222,15 +225,15 @@ def analyze_log(csv_path: Path, arch_label: str, privacy_label: str) -> RunMetri
     )
 
 
-def run_all():
+def run_all(repetitions=DEFAULT_REPETITIONS, generate_plots=True, generate_report=True):
     records = []
-    total_runs = len(ARCHITECTURES) * len(WORKLOAD_LEVELS) * len(PRIVACY_LEVELS) * REPETITIONS
+    total_runs = len(ARCHITECTURES) * len(WORKLOAD_LEVELS) * len(PRIVACY_LEVELS) * repetitions
     run_idx = 0
 
     for workload_label in WORKLOAD_LEVELS:
         for privacy_label in PRIVACY_LEVELS:
             for arch_label in ARCHITECTURES:
-                for repetition in range(1, REPETITIONS + 1):
+                for repetition in range(1, repetitions + 1):
                     run_idx += 1
                     cfg, cfg_path = build_config(arch_label, workload_label, privacy_label, repetition)
                     print(f'[{run_idx}/{total_runs}] {arch_label} | {workload_label} | {privacy_label} | rep {repetition}')
@@ -279,51 +282,91 @@ def run_all():
     winners = pd.concat([winners_latency, winners_success], ignore_index=True)
     winners.to_csv(RESULTS_DIR / 'privacy_scenario_winners.csv', index=False)
 
-    build_plots(summary)
-    build_report(summary, winners)
+    if generate_plots:
+        build_plots(summary)
+    if generate_report:
+        build_report(summary, winners, repetitions)
 
 
 def build_plots(summary: pd.DataFrame):
     privacy_order = list(PRIVACY_LEVELS.keys())
     workload_order = list(WORKLOAD_LEVELS.keys())
     arch_order = list(ARCHITECTURES.keys())
-    colors = {
-        'Centralized': '#A7C7FF',
-        'Semi-Decentralized': '#FFF59D',
-        'Decentralized': '#A5D6A7',
+    arch_labels = {
+        'Centralized': 'CE',
+        'Semi-Decentralized': 'SD',
+        'Decentralized': 'FD',
     }
+    colors = {
+        'Decentralized': '#666666',
+        'Semi-Decentralized': '#999999',
+        'Centralized': '#b3b3b3',
+    }
+    hatches = {
+        'Decentralized': '',
+        'Semi-Decentralized': '',
+        'Centralized': '',
+    }
+    privacy_tick_labels = ['Low', 'Medium', 'High']
 
-    for metric, ylabel, filename in [
+    plot_specs = [
         ('avg_latency_s', 'Average Delivery Latency (s)', 'latency_by_privacy.png'),
         ('avg_success_rate', 'Delivery Success Rate', 'success_rate_by_privacy.png'),
         ('avg_privacy_comm_burden_s', 'Estimated Privacy Communication Burden (s)', 'privacy_burden_by_privacy.png'),
-    ]:
-        fig, axes = plt.subplots(1, len(workload_order), figsize=(16, 4.8), sharey=False)
+        ('avg_expiration_rate', 'Item Expiration Rate', 'expiration_rate_by_privacy.png'),
+    ]
+
+    for plot_idx, (metric, ylabel, filename) in enumerate(plot_specs):
+        fig, axes = plt.subplots(1, len(workload_order), figsize=(FIGSIZE[0] * len(workload_order), FIGSIZE[1]), sharey=False)
         if len(workload_order) == 1:
             axes = [axes]
         for ax, workload in zip(axes, workload_order):
             subset = summary[summary['workload_label'] == workload].copy()
             x = range(len(privacy_order))
-            width = 0.22
+            width = 0.23
+            ax.set_axisbelow(True)
+            ax.grid(axis='y', linestyle=':', linewidth=0.5)
             for idx, arch in enumerate(arch_order):
                 vals = []
                 for privacy in privacy_order:
                     row = subset[(subset['privacy_label'] == privacy) & (subset['architecture_label'] == arch)]
                     vals.append(float(row[metric].iloc[0]))
-                ax.bar([i + (idx - 1) * width for i in x], vals, width=width, label=arch, color=colors[arch])
+                ax.bar(
+                    [i + (idx - 1) * width for i in x],
+                    vals,
+                    width=width,
+                    label=arch_labels[arch],
+                    color=colors[arch],
+                    hatch=hatches[arch],
+                    edgecolor='black',
+                    linewidth=0.4,
+                )
             ax.set_title(workload)
             ax.set_xticks(list(x))
-            ax.set_xticklabels(['Low', 'Medium', 'High'])
+            ax.set_xticklabels(privacy_tick_labels)
             ax.set_xlabel('Privacy Overhead')
-            ax.grid(axis='y', linestyle='--', alpha=0.3)
+            ax.tick_params(axis='both', labelsize=8)
+            if metric == 'avg_success_rate':
+                ax.set_ylim(0.90, 1.00)
         axes[0].set_ylabel(ylabel)
-        axes[-1].legend(frameon=False)
+        if plot_idx == 0:
+            handles, labels = axes[0].get_legend_handles_labels()
+            fig.legend(
+                handles,
+                labels,
+                title='Coordination',
+                loc='lower center',
+                bbox_to_anchor=(0.5, 1.02),
+                ncol=len(arch_order),
+                frameon=False,
+            )
         fig.tight_layout()
         fig.savefig(PLOTS_DIR / filename, dpi=200, bbox_inches='tight')
+        fig.savefig(PLOTS_DIR / filename.replace('.png', '.pdf'), bbox_inches='tight')
         plt.close(fig)
 
 
-def build_report(summary: pd.DataFrame, winners: pd.DataFrame):
+def build_report(summary: pd.DataFrame, winners: pd.DataFrame, repetitions: int):
     def make_table(metric_col: str, value_fmt: str):
         lines = []
         for workload in WORKLOAD_LEVELS:
@@ -374,7 +417,7 @@ The campaign varies two dimensions:
 - **Workload**: Low, Medium, High
 - **Privacy Overhead**: Low, Medium, High
 
-Each combination is repeated **{REPETITIONS}** times.
+Each combination is repeated **{repetitions}** times.
 
 ## Fixed Configuration
 
@@ -428,5 +471,18 @@ This scenario is designed to make the privacy trade-off visible without changing
     report_path.write_text(report_md)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Run the standalone privacy scenario replication package.')
+    parser.add_argument('--repetitions', type=int, default=DEFAULT_REPETITIONS, help='Number of repetitions per condition.')
+    parser.add_argument('--skip-plots', action='store_true', help='Skip plot generation.')
+    parser.add_argument('--skip-report', action='store_true', help='Skip markdown report generation.')
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    run_all()
+    args = parse_args()
+    run_all(
+        repetitions=args.repetitions,
+        generate_plots=not args.skip_plots,
+        generate_report=not args.skip_report,
+    )
