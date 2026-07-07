@@ -118,7 +118,7 @@ BASE_CONFIG = {
     "LOG_HELP": False,
     "LOG_FAKE": False,
     "LOG_RESCUE": False,
-    "ADAPTATION_POLICY": "hybrid-score",
+    "ADAPTATION_POLICY": "contextual-bandit",
     "ADAPTATION_CHECK_INTERVAL": 10 * 60.0,
     "LATENCY_THRESHOLD_LOW": 10 * 60.0,
     "LATENCY_THRESHOLD_HIGH": 40 * 60.0,
@@ -322,9 +322,13 @@ def run_id(params: dict) -> str:
     mal_pct = int(round(params["malicious_ratio"] * 100))
     fail_pct = int(round(params["fail_prob"] * 100))
     msg_pct = int(round(params["msg_loss_prob"] * 100))
+    policy_suffix = ""
+    if params["coord_label"] == "DA":
+        policy = str(BASE_CONFIG.get("ADAPTATION_POLICY", "contextual-bandit"))
+        policy_suffix = f"_{policy.replace('-', '')}"
     return (
         f"c{params['combo_idx']:04d}_r{params['rep']:02d}_"
-        f"{params['coord_label']}_spawn{params['item_spawning_time']}_"
+        f"{params['coord_label']}{policy_suffix}_spawn{params['item_spawning_time']}_"
         f"bots{params['n_robots']}_mal{mal_pct}_fail{fail_pct}_msg{msg_pct}"
     )
 
@@ -547,6 +551,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "repetitions": args.repetitions,
         "total_runs": total_runs,
         "coordination_mechanisms": coord_labels,
+        "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
         "item_spawning_times": [210] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "n_robots": [40] if args.quick else DEFAULT_N_ROBOTS,
         "malicious_ratios": [0.33] if args.quick else DEFAULT_MALICIOUS_RATIOS,
@@ -577,6 +582,12 @@ def run_campaign(args: argparse.Namespace) -> None:
     ensure_dirs()
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
+    expected_policy = str(BASE_CONFIG["ADAPTATION_POLICY"]).lower()
+    rows = [
+        row for row in rows
+        if str(row.get("coord_label", "")) != "DA"
+        or str(row.get("adaptation_policy", "")).lower() == expected_policy
+    ]
     completed = completed_run_ids(rows)
     started_at = time.time()
 
@@ -645,6 +656,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "logfile": str(logfile),
             "coord_label": params["coord_label"],
             "architecture": params["architecture"],
+            "adaptation_policy": cfg.get("ADAPTATION_POLICY", ""),
             "rep": params["rep"],
             "seed": params["seed"],
             "item_spawning_time": params["item_spawning_time"],

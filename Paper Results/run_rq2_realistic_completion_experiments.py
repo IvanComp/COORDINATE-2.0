@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from paper_experiment_utils import (
+    BASE_CONFIG,
     COORD_TO_ARCH,
     PAPER_ROOT,
     analyze_log,
@@ -360,7 +361,8 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 
 def run_id(params: dict[str, Any]) -> str:
-    return f"{params['profile_idx']:02d}_{params['profile']}_r{params['rep']:02d}_DA"
+    policy = str(BASE_CONFIG.get("ADAPTATION_POLICY", "contextual-bandit")).replace("-", "")
+    return f"{params['profile_idx']:02d}_{params['profile']}_r{params['rep']:02d}_DA_{policy}"
 
 
 def annotate_overhead_rows(
@@ -434,6 +436,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "profiles": selected_profiles(args),
         "total_runs": len(combos),
         "coordination_mechanisms": ["DA"],
+        "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
         "expiration_time": expiration_metadata(),
         "reuse_rq1": False,
         "purpose": "Relate DA switches to monitored states and dynamic fault windows.",
@@ -453,6 +456,19 @@ def run_campaign(args: argparse.Namespace) -> None:
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     all_timeseries = [] if args.force else read_rows(TIMESERIES_PATH)
     all_switches = [] if args.force else read_rows(RESULTS_ROOT / "switch_timeline.csv")
+    expected_policy = str(BASE_CONFIG["ADAPTATION_POLICY"]).lower()
+    rows = [
+        row for row in rows
+        if str(row.get("adaptation_policy", "")).lower() == expected_policy
+    ]
+    all_timeseries = [
+        row for row in all_timeseries
+        if str(row.get("adaptation_policy", "")).lower() == expected_policy
+    ]
+    all_switches = [
+        row for row in all_switches
+        if str(row.get("adaptation_policy", "")).lower() == expected_policy
+    ]
     completed = completed_run_ids([
         row for row in rows
         if str(row.get("log_expire", "")).lower() == "true"
@@ -537,6 +553,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "seed": params["seed"],
             "coord_label": "DA",
             "architecture": COORD_TO_ARCH["DA"],
+            "adaptation_policy": cfg.get("ADAPTATION_POLICY", ""),
             "source_rq": source_rq,
             "source_run_id": source_run_id,
             "source_logfile": source_logfile,

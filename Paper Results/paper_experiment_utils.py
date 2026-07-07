@@ -89,7 +89,7 @@ BASE_CONFIG = {
     "LOG_HELP": False,
     "LOG_FAKE": False,
     "LOG_RESCUE": False,
-    "ADAPTATION_POLICY": "hybrid-score",
+    "ADAPTATION_POLICY": "contextual-bandit",
     "ADAPTATION_CHECK_INTERVAL": 10 * 60.0,
     "LATENCY_THRESHOLD_LOW": 10 * 60.0,
     "LATENCY_THRESHOLD_HIGH": 40 * 60.0,
