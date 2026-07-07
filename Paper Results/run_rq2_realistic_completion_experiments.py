@@ -28,16 +28,9 @@ from __future__ import annotations
 
 import argparse
 import math
-import sys
 import time
 from pathlib import Path
 from typing import Any
-
-_PAPER_ROOT = Path(__file__).resolve().parent
-_PROJECT_ROOT = _PAPER_ROOT.parent
-for _path in (_PAPER_ROOT, _PROJECT_ROOT):
-    if str(_path) not in sys.path:
-        sys.path.insert(0, str(_path))
 
 from paper_experiment_utils import (
     COORD_TO_ARCH,

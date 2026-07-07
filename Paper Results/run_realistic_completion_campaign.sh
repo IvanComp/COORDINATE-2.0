@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PYTHON_BIN="${PYTHON:-python3}"
+PYTHON_BIN="${PYTHON:-python}"
 RUN_STAMP="$(date +%Y%m%d_%H%M%S)"
 RQ1_DIR="Paper Results/RQ1_realistic_completion"
 RQ2_DIR="Paper Results/RQ2_realistic_completion"
@@ -16,9 +16,11 @@ run_step() {
   local name="$1"
   local script="$2"
   local log_path="$3"
+  local script_name
+  script_name="$(basename "$script")"
 
   echo "[start] ${name}: ${log_path}"
-  if "$PYTHON_BIN" "$script" --repetitions 10 > "$log_path" 2>&1; then
+  if (cd "Paper Results" && "$PYTHON_BIN" "$script_name" --repetitions 10) > "$log_path" 2>&1; then
     echo "[ok] ${name}: ${log_path}"
   else
     echo "[error] ${name}: ${log_path}"
