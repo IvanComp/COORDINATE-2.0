@@ -209,6 +209,12 @@ overrides keep switching conservative.
 - `BANDIT_LEARNING_RATE`: Linear value-estimator update rate (default: 0.05)
 - `BANDIT_IMPROVEMENT_MARGIN`: Minimum estimated reward gain before a non-exploratory switch (default: 0.02)
 - `BANDIT_SWITCH_PENALTY`: Reward penalty applied to unnecessary switching (default: 0.03)
+- `BANDIT_REWARD_VERSION`: Reward configuration tag (default: `completion_v2`)
+- `BANDIT_WEIGHT_LATENCY`: Reward penalty weight for relative latency (default: 0.20)
+- `BANDIT_WEIGHT_PENDING`: Reward penalty weight for backlog pressure (default: 0.30)
+- `BANDIT_WEIGHT_DEADLINE_MISS`: Reward penalty weight for deadline misses (default: 0.30)
+- `BANDIT_WEIGHT_THROUGHPUT_SHORTFALL`: Reward penalty weight for low delivered/created ratio in the current window (default: 0.25)
+- `BANDIT_WEIGHT_THROUGHPUT`: Reward bonus weight for delivered/created ratio in the current window (default: 0.20)
 
 Architecture switches are logged in the CSV output with event type `switch_architecture_{new_arch}`.
 

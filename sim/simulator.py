@@ -71,14 +71,17 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('BANDIT_L2', 0.001)
     d.setdefault('BANDIT_IMPROVEMENT_MARGIN', 0.02)
     d.setdefault('BANDIT_SWITCH_PENALTY', 0.03)
-    d.setdefault('BANDIT_WEIGHT_LATENCY', 0.45)
-    d.setdefault('BANDIT_WEIGHT_PENDING', 0.20)
-    d.setdefault('BANDIT_WEIGHT_FAILURE', 0.10)
+    d.setdefault('BANDIT_REWARD_VERSION', 'completion_v2')
+    d.setdefault('BANDIT_WEIGHT_LATENCY', 0.20)
+    d.setdefault('BANDIT_WEIGHT_PENDING', 0.30)
+    d.setdefault('BANDIT_WEIGHT_FAILURE', 0.05)
     d.setdefault('BANDIT_WEIGHT_MESSAGE_LOSS', 0.10)
-    d.setdefault('BANDIT_WEIGHT_DEADLINE_MISS', 0.10)
+    d.setdefault('BANDIT_WEIGHT_DEADLINE_MISS', 0.30)
+    d.setdefault('BANDIT_WEIGHT_THROUGHPUT_SHORTFALL', 0.25)
     d.setdefault('BANDIT_WEIGHT_IDLE_WHEN_PENDING', 0.05)
-    d.setdefault('BANDIT_WEIGHT_THROUGHPUT', 0.10)
+    d.setdefault('BANDIT_WEIGHT_THROUGHPUT', 0.20)
     d.setdefault('BANDIT_CRITICAL_OVERRIDE', True)
+    d.setdefault('BANDIT_BACKLOG_OVERRIDE_REQUIRES_FAULT', True)
     d.setdefault('LATENCY_THRESHOLD_LOW', 10.0)
     d.setdefault('LATENCY_THRESHOLD_HIGH', 40.0)
     d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.05)
@@ -851,6 +854,7 @@ def run(config_path='config.json'):
                     'bandit_reward_failure': score_details.get('reward_details', {}).get('reward_failure'),
                     'bandit_reward_message_loss': score_details.get('reward_details', {}).get('reward_message_loss'),
                     'bandit_reward_deadline_miss': score_details.get('reward_details', {}).get('reward_deadline_miss'),
+                    'bandit_reward_throughput_shortfall': score_details.get('reward_details', {}).get('reward_throughput_shortfall'),
                     'bandit_reward_idle_when_pending': score_details.get('reward_details', {}).get('reward_idle_when_pending'),
                     'bandit_updated_action': score_details.get('update_details', {}).get('updated_action'),
                     'bandit_prediction_before_update': score_details.get('update_details', {}).get('prediction_before_update'),

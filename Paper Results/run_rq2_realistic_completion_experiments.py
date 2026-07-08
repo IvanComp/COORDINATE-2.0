@@ -362,7 +362,9 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 def run_id(params: dict[str, Any]) -> str:
     policy = str(BASE_CONFIG.get("ADAPTATION_POLICY", "contextual-bandit")).replace("-", "")
-    return f"{params['profile_idx']:02d}_{params['profile']}_r{params['rep']:02d}_DA_{policy}"
+    reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "default"))
+    reward_version = reward_version.replace("-", "").replace("_", "")
+    return f"{params['profile_idx']:02d}_{params['profile']}_r{params['rep']:02d}_DA_{policy}_{reward_version}"
 
 
 def annotate_overhead_rows(
@@ -437,6 +439,14 @@ def run_campaign(args: argparse.Namespace) -> None:
         "total_runs": len(combos),
         "coordination_mechanisms": ["DA"],
         "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
+        "bandit_reward_version": BASE_CONFIG.get("BANDIT_REWARD_VERSION", ""),
+        "bandit_reward_weights": {
+            "latency": BASE_CONFIG.get("BANDIT_WEIGHT_LATENCY"),
+            "pending": BASE_CONFIG.get("BANDIT_WEIGHT_PENDING"),
+            "deadline_miss": BASE_CONFIG.get("BANDIT_WEIGHT_DEADLINE_MISS"),
+            "throughput_shortfall": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT_SHORTFALL"),
+            "throughput": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT"),
+        },
         "expiration_time": expiration_metadata(),
         "reuse_rq1": False,
         "purpose": "Relate DA switches to monitored states and dynamic fault windows.",
@@ -457,17 +467,27 @@ def run_campaign(args: argparse.Namespace) -> None:
     all_timeseries = [] if args.force else read_rows(TIMESERIES_PATH)
     all_switches = [] if args.force else read_rows(RESULTS_ROOT / "switch_timeline.csv")
     expected_policy = str(BASE_CONFIG["ADAPTATION_POLICY"]).lower()
+    expected_reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "")).lower()
     rows = [
         row for row in rows
-        if str(row.get("adaptation_policy", "")).lower() == expected_policy
+        if (
+            str(row.get("adaptation_policy", "")).lower() == expected_policy
+            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+        )
     ]
     all_timeseries = [
         row for row in all_timeseries
-        if str(row.get("adaptation_policy", "")).lower() == expected_policy
+        if (
+            str(row.get("adaptation_policy", "")).lower() == expected_policy
+            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+        )
     ]
     all_switches = [
         row for row in all_switches
-        if str(row.get("adaptation_policy", "")).lower() == expected_policy
+        if (
+            str(row.get("adaptation_policy", "")).lower() == expected_policy
+            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+        )
     ]
     completed = completed_run_ids([
         row for row in rows
@@ -554,6 +574,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "coord_label": "DA",
             "architecture": COORD_TO_ARCH["DA"],
             "adaptation_policy": cfg.get("ADAPTATION_POLICY", ""),
+            "bandit_reward_version": cfg.get("BANDIT_REWARD_VERSION", ""),
             "source_rq": source_rq,
             "source_run_id": source_run_id,
             "source_logfile": source_logfile,

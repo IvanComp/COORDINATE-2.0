@@ -119,6 +119,16 @@ BASE_CONFIG = {
     "LOG_FAKE": False,
     "LOG_RESCUE": False,
     "ADAPTATION_POLICY": "contextual-bandit",
+    "BANDIT_REWARD_VERSION": "completion_v2",
+    "BANDIT_WEIGHT_LATENCY": 0.20,
+    "BANDIT_WEIGHT_PENDING": 0.30,
+    "BANDIT_WEIGHT_FAILURE": 0.05,
+    "BANDIT_WEIGHT_MESSAGE_LOSS": 0.10,
+    "BANDIT_WEIGHT_DEADLINE_MISS": 0.30,
+    "BANDIT_WEIGHT_THROUGHPUT_SHORTFALL": 0.25,
+    "BANDIT_WEIGHT_IDLE_WHEN_PENDING": 0.05,
+    "BANDIT_WEIGHT_THROUGHPUT": 0.20,
+    "BANDIT_BACKLOG_OVERRIDE_REQUIRES_FAULT": True,
     "ADAPTATION_CHECK_INTERVAL": 10 * 60.0,
     "LATENCY_THRESHOLD_LOW": 10 * 60.0,
     "LATENCY_THRESHOLD_HIGH": 40 * 60.0,
@@ -325,7 +335,9 @@ def run_id(params: dict) -> str:
     policy_suffix = ""
     if params["coord_label"] == "DA":
         policy = str(BASE_CONFIG.get("ADAPTATION_POLICY", "contextual-bandit"))
-        policy_suffix = f"_{policy.replace('-', '')}"
+        reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "default"))
+        reward_version = reward_version.replace("-", "").replace("_", "")
+        policy_suffix = f"_{policy.replace('-', '')}_{reward_version}"
     return (
         f"c{params['combo_idx']:04d}_r{params['rep']:02d}_"
         f"{params['coord_label']}{policy_suffix}_spawn{params['item_spawning_time']}_"
@@ -552,6 +564,14 @@ def run_campaign(args: argparse.Namespace) -> None:
         "total_runs": total_runs,
         "coordination_mechanisms": coord_labels,
         "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
+        "bandit_reward_version": BASE_CONFIG.get("BANDIT_REWARD_VERSION", ""),
+        "bandit_reward_weights": {
+            "latency": BASE_CONFIG.get("BANDIT_WEIGHT_LATENCY"),
+            "pending": BASE_CONFIG.get("BANDIT_WEIGHT_PENDING"),
+            "deadline_miss": BASE_CONFIG.get("BANDIT_WEIGHT_DEADLINE_MISS"),
+            "throughput_shortfall": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT_SHORTFALL"),
+            "throughput": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT"),
+        },
         "item_spawning_times": [210] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "n_robots": [40] if args.quick else DEFAULT_N_ROBOTS,
         "malicious_ratios": [0.33] if args.quick else DEFAULT_MALICIOUS_RATIOS,
@@ -583,10 +603,14 @@ def run_campaign(args: argparse.Namespace) -> None:
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     expected_policy = str(BASE_CONFIG["ADAPTATION_POLICY"]).lower()
+    expected_reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "")).lower()
     rows = [
         row for row in rows
         if str(row.get("coord_label", "")) != "DA"
-        or str(row.get("adaptation_policy", "")).lower() == expected_policy
+        or (
+            str(row.get("adaptation_policy", "")).lower() == expected_policy
+            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+        )
     ]
     completed = completed_run_ids(rows)
     started_at = time.time()
@@ -657,6 +681,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "coord_label": params["coord_label"],
             "architecture": params["architecture"],
             "adaptation_policy": cfg.get("ADAPTATION_POLICY", ""),
+            "bandit_reward_version": cfg.get("BANDIT_REWARD_VERSION", ""),
             "rep": params["rep"],
             "seed": params["seed"],
             "item_spawning_time": params["item_spawning_time"],

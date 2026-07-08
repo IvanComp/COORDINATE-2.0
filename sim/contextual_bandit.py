@@ -82,17 +82,18 @@ def safe_float(value, default=0.0):
 
 def normalized_bad_weights(cfg):
     weights = {
-        'latency': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_LATENCY', 0.45)),
-        'pending': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_PENDING', 0.20)),
-        'failure': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_FAILURE', 0.10)),
+        'latency': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_LATENCY', 0.20)),
+        'pending': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_PENDING', 0.30)),
+        'failure': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_FAILURE', 0.05)),
         'message_loss': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_MESSAGE_LOSS', 0.10)),
-        'deadline_miss': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_DEADLINE_MISS', 0.10)),
+        'deadline_miss': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_DEADLINE_MISS', 0.30)),
+        'throughput_shortfall': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_THROUGHPUT_SHORTFALL', 0.25)),
         'idle_when_pending': max(0.0, cfg_float(cfg, 'BANDIT_WEIGHT_IDLE_WHEN_PENDING', 0.05)),
     }
     total = sum(weights.values())
     if total <= 0.0:
         return {'latency': 1.0, 'pending': 0.0, 'failure': 0.0, 'message_loss': 0.0,
-                'deadline_miss': 0.0, 'idle_when_pending': 0.0}
+                'deadline_miss': 0.0, 'throughput_shortfall': 0.0, 'idle_when_pending': 0.0}
     return {name: value / total for name, value in weights.items()}
 
 
@@ -168,6 +169,7 @@ def context_reward(cfg, context, switched):
         'failure': True,
         'message_loss': True,
         'deadline_miss': True,
+        'throughput_shortfall': True,
         'idle_when_pending': True,
     }
     components = {
@@ -176,6 +178,7 @@ def context_reward(cfg, context, switched):
         'failure': context.get('failure_norm', 0.0),
         'message_loss': context.get('message_loss_rate', 0.0),
         'deadline_miss': context.get('deadline_miss_rate', 0.0),
+        'throughput_shortfall': 1.0 - context.get('throughput_norm', 0.0),
         'idle_when_pending': context.get('idle_ratio', 0.0) * context.get('pending_norm', 0.0),
     }
     active_weight = sum(weights[name] for name, enabled in active.items() if enabled)
@@ -184,7 +187,7 @@ def context_reward(cfg, context, switched):
     else:
         badness = sum(weights[name] * components[name] for name, enabled in active.items() if enabled) / active_weight
 
-    throughput_bonus = cfg_float(cfg, 'BANDIT_WEIGHT_THROUGHPUT', 0.10) * context.get('throughput_norm', 0.0)
+    throughput_bonus = cfg_float(cfg, 'BANDIT_WEIGHT_THROUGHPUT', 0.20) * context.get('throughput_norm', 0.0)
     switch_penalty = cfg_float(cfg, 'BANDIT_SWITCH_PENALTY', 0.03) if switched else 0.0
     reward = 1.0 - badness + throughput_bonus - switch_penalty
     reward = clamp(reward, -1.0, 1.0)
@@ -199,6 +202,7 @@ def context_reward(cfg, context, switched):
         'reward_failure': components['failure'],
         'reward_message_loss': components['message_loss'],
         'reward_deadline_miss': components['deadline_miss'],
+        'reward_throughput_shortfall': components['throughput_shortfall'],
         'reward_idle_when_pending': components['idle_when_pending'],
     }
 
@@ -218,11 +222,14 @@ def critical_override_architecture(cfg, context):
     failure_critical = cfg_float(cfg, 'ADAPTATION_FAILURE_CRITICAL_RATE', 1.25)
     message_critical = cfg_float(cfg, 'ADAPTATION_MESSAGE_CRITICAL_LOSS', 0.60)
 
-    critical = (
-        pending_ratio >= pending_critical
-        or failure_rate >= failure_critical
-        or message_loss_rate >= message_critical
-    )
+    pending_is_critical = pending_ratio >= pending_critical
+    failure_is_critical = failure_rate >= failure_critical
+    message_is_critical = message_loss_rate >= message_critical
+    backlog_override_requires_fault = cfg_bool(cfg, 'BANDIT_BACKLOG_OVERRIDE_REQUIRES_FAULT', True)
+    if pending_is_critical and backlog_override_requires_fault:
+        pending_is_critical = failure_is_critical or message_is_critical
+
+    critical = pending_is_critical or failure_is_critical or message_is_critical
     if not critical:
         return None, {
             'critical_override': False,
