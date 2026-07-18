@@ -10,7 +10,7 @@ Examples:
     python "Paper Results/run_full_paper_campaign.py" --dry-run
     python "Paper Results/run_full_paper_campaign.py"
 
-By default, RQ2 and RQ3 reuse matching completed RQ1 artifacts when available.
+By default, RQ3 reuses matching completed RQ1 artifacts when available.
 Use --no-reuse-rq1 to force independent runs for those RQs.
 """
 
@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from paper_experiment_utils import PAPER_ROOT, completed_run_ids, read_rows, write_rows
+from paper_experiment_utils import PAPER_ROOT, read_rows, write_rows
 
 
 RQ_SCRIPTS = {
@@ -34,6 +34,13 @@ RQ_SCRIPTS = {
     "RQ2": PAPER_ROOT / "run_rq2_experiments.py",
     "RQ3": PAPER_ROOT / "run_rq3_experiments.py",
     "RQ4": PAPER_ROOT / "run_rq4_experiments.py",
+}
+
+RQ_RESULT_DIRS = {
+    "RQ1": PAPER_ROOT / "RQ1",
+    "RQ2": PAPER_ROOT / "RQ2",
+    "RQ3": PAPER_ROOT / "RQ3",
+    "RQ4": PAPER_ROOT / "RQ4",
 }
 
 
@@ -47,11 +54,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--rqs",
-        # Temporary pre-submission rerun: refresh only effectiveness/reaction
-        # results after enabling task expiration. Re-enable RQ3,RQ4 after
-        # submission if the overhead/scalability campaigns should be refreshed.
-        # default="RQ1,RQ2,RQ3,RQ4",
-        default="RQ1,RQ2",
+        default="RQ1,RQ2,RQ3,RQ4",
         help="Comma-separated list of RQs to run, e.g. RQ1,RQ3.",
     )
     parser.add_argument("--python", default=sys.executable, help="Python executable to use.")
@@ -62,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--continue-on-error", action="store_true", help="Continue with later RQs if one RQ script fails. This is the default.")
     parser.add_argument("--stop-on-error", action="store_true", help="Stop the campaign when an RQ script fails.")
     parser.add_argument("--strict-rtlola", action="store_true", help="Stop before running if RTLola cannot be initialized.")
-    parser.add_argument("--no-reuse-rq1", action="store_true", help="Disable RQ1 artifact reuse in RQ2/RQ3.")
+    parser.add_argument("--no-reuse-rq1", action="store_true", help="Disable RQ1 artifact reuse in RQ3.")
     parser.add_argument(
         "--coord-labels",
         default=None,
@@ -89,7 +92,7 @@ def selected_rqs(raw: str) -> list[str]:
 
 
 def read_design(rq: str) -> dict[str, Any]:
-    design_path = PAPER_ROOT / rq / "experiment_design.json"
+    design_path = RQ_RESULT_DIRS[rq] / "experiment_design.json"
     if not design_path.exists():
         return {}
     try:
@@ -113,14 +116,18 @@ def filter_rows_for_design(rows: list[dict[str, Any]], design: dict[str, Any]) -
 
 def rq_status(rq: str) -> dict[str, Any]:
     design = read_design(rq)
-    rows = read_rows(PAPER_ROOT / rq / "runs.csv")
+    rows = read_rows(RQ_RESULT_DIRS[rq] / "runs.csv")
     scoped_rows = filter_rows_for_design(rows, design)
     if rq in {"RQ1", "RQ2"}:
         scoped_rows = [
             row for row in scoped_rows
             if str(row.get("log_expire", "")).lower() == "true"
         ]
-    completed = completed_run_ids(scoped_rows)
+    completed = {
+        str(row.get("run_id", ""))
+        for row in scoped_rows
+        if str(row.get("run_id", "")) and row.get("status") == "ok"
+    }
     errors = [row for row in scoped_rows if row.get("status") == "error"]
     total = design_total(design)
     remaining = total - len(completed) if total is not None else None
@@ -154,7 +161,7 @@ def command_for_rq(rq: str, args: argparse.Namespace) -> list[str]:
         if args.rq4_shard_count != 1 or args.rq4_shard_index != 1:
             cmd.extend(["--shard-count", str(args.rq4_shard_count)])
             cmd.extend(["--shard-index", str(args.rq4_shard_index)])
-    if args.no_reuse_rq1 and rq in {"RQ2", "RQ3"}:
+    if args.no_reuse_rq1 and rq == "RQ3":
         cmd.append("--no-reuse-rq1")
     return cmd
 
@@ -250,7 +257,7 @@ def run_campaign(args: argparse.Namespace) -> int:
     print(f"RQs: {', '.join(rqs)}")
     print(f"Repetitions: {args.repetitions}")
     print(f"Master log: {log_file}")
-    print(f"RQ1 reuse enabled for RQ2/RQ3: {not args.no_reuse_rq1}")
+    print(f"RQ1 reuse enabled for RQ3: {not args.no_reuse_rq1}")
     print("Resume is enabled by default in every RQ script.")
 
     if not args.dry_run:

@@ -370,24 +370,7 @@ class Robot:
 
     def _sendMaster(self, itemImportance, position, simTime, strategy, fake=False):
         if self.cfg.LOG_HELP and not fake: self._log(simTime, 'help')
-        bots = self.space.getAllRobots()
-        if strategy == 'proximity':
-            s1 = self.space.getRobotsByProximity(self, bots, position)
-            s2 = s1
-        elif strategy == 'importance':
-            s1 = self.space.getRobotsByImportance(self, bots, itemImportance)
-            s2 = s1
-        elif strategy == 'proximp':
-            s1 = self.space.getRobotsByProximity(self, bots, position)
-            s2 = self.space.getRobotsByImportance(self, s1, itemImportance) if len(s1) > 0 else []
-        elif strategy == 'impprox':
-            s1 = self.space.getRobotsByImportance(self, bots, itemImportance)
-            s2 = self.space.getRobotsByProximity(self, s1, position) if len(s1) > 0 else []
-        else:
-            print('Unsupported centralized strategy'); sys.exit(-1)
-        if len(s2) > 0:
-            helper = random.choice(s2)
-            helper._abortMission(itemImportance, position, simTime)
+        self.space.scheduleCentralRequest(self, itemImportance, position, simTime, strategy, fake=fake)
 
     def _fakeFailure(self, position, simTime):
         if self.cfg.LOG_FAKE: self._log(simTime, 'fakeFailure')
@@ -428,6 +411,16 @@ class Space:
         self.availItems: List[Item] = []
         self.movingItems: List[Item] = []
         self.robotPositionDict: Dict[Robot, Room] = {}
+        self._central_request_idx = 0
+        self._central_requests = {}
+        self._central_commands = {}
+        self._coordinator_available_at = 0.0
+        self.central_coordination_stats = {
+            'requests': 0,
+            'commands_sent': 0,
+            'commands_lost': 0,
+            'queue_delay_s': 0.0,
+        }
 
     def getSource(self): return self.source
     def getRooms(self): return self.rooms
@@ -463,6 +456,96 @@ class Space:
         prox = targetRoom.getProximity()
         minH = min([prox[self.robotPositionDict[b]] for b in bots], default=10**9)
         return [b for b in bots if prox[self.robotPositionDict[b]] == minH]
+
+    def scheduleCentralRequest(self, requester: Robot, itemImportance: int, position: Room,
+                               simTime: float, strategy: str, fake: bool = False):
+        """Schedule the requester-to-coordinator hop before central dispatch."""
+        self._central_request_idx += 1
+        request_id = self._central_request_idx
+        self._central_requests[request_id] = {
+            'requester': requester,
+            'importance': itemImportance,
+            'position': position,
+            'strategy': strategy,
+            'fake': fake,
+        }
+        self.central_coordination_stats['requests'] += 1
+        if self.cfg.LOG_HELP and not fake:
+            requester._log(simTime, 'centralRequest')
+        self.clock.scheduleEvent(
+            f'central-request-{request_id}',
+            [self.cfg.COMM_TIME],
+            [self.cfg.COMM_TRACE],
+            [self.cfg.COMM_DISTR],
+        )
+
+    def _selectCentralHelper(self, requester: Robot, itemImportance: int, position: Room, strategy: str):
+        bots = self.getAllRobots()
+        if strategy == 'proximity':
+            candidates = self.getRobotsByProximity(requester, bots, position)
+        elif strategy == 'importance':
+            candidates = self.getRobotsByImportance(requester, bots, itemImportance)
+        elif strategy == 'proximp':
+            nearby = self.getRobotsByProximity(requester, bots, position)
+            candidates = self.getRobotsByImportance(requester, nearby, itemImportance) if nearby else []
+        elif strategy == 'impprox':
+            lower_priority = self.getRobotsByImportance(requester, bots, itemImportance)
+            candidates = self.getRobotsByProximity(requester, lower_priority, position) if lower_priority else []
+        else:
+            print('Unsupported centralized strategy'); sys.exit(-1)
+        return random.choice(candidates) if candidates else None
+
+    def processCentralRequest(self, request_id: int, simTime: float):
+        """Queue a central decision and schedule its coordinator-to-helper command."""
+        request = self._central_requests.pop(request_id, None)
+        if request is None:
+            return
+        helper = self._selectCentralHelper(
+            request['requester'], request['importance'], request['position'], request['strategy']
+        )
+        if helper is None:
+            return
+
+        service_time = max(0.0, float(getattr(self.cfg, 'COORDINATOR_SERVICE_TIME', 0.0)))
+        service_start = max(simTime, self._coordinator_available_at)
+        queue_delay = service_start - simTime
+        self._coordinator_available_at = service_start + service_time
+        self.central_coordination_stats['queue_delay_s'] += queue_delay
+
+        command_loss_prob = float(getattr(self.cfg, 'COORDINATOR_COMMAND_LOSS_PROB', -1.0))
+        if command_loss_prob < 0.0:
+            command_loss_prob = float(self.cfg.COMM_FAIL_PROB)
+        command_lost = np.random.uniform() < min(1.0, max(0.0, command_loss_prob))
+        if hasattr(self.cfg, 'record_coordination_message'):
+            self.cfg.record_coordination_message(simTime, not command_lost)
+        if command_lost:
+            self.central_coordination_stats['commands_lost'] += 1
+            if self.cfg.LOG_HELP and not request['fake']:
+                request['requester']._log(simTime, 'centralCommandLost')
+            return
+
+        self._central_commands[request_id] = {
+            'helper': helper,
+            'importance': request['importance'],
+            'position': request['position'],
+            'requester': request['requester'],
+            'fake': request['fake'],
+        }
+        self.central_coordination_stats['commands_sent'] += 1
+        self.clock.scheduleEvent(
+            f'central-command-{request_id}',
+            [queue_delay + service_time, self.cfg.COMM_TIME],
+            ['_', self.cfg.COMM_TRACE],
+            ['deterministic', self.cfg.COMM_DISTR],
+        )
+
+    def processCentralCommand(self, request_id: int, simTime: float):
+        command = self._central_commands.pop(request_id, None)
+        if command is None:
+            return
+        if self.cfg.LOG_HELP and not command['fake']:
+            command['requester']._log(simTime, 'centralCommand')
+        command['helper']._abortMission(command['importance'], command['position'], simTime)
 
     # items
     def newItem(self, item: Item):

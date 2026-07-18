@@ -216,6 +216,12 @@ overrides keep switching conservative.
 - `BANDIT_WEIGHT_THROUGHPUT_SHORTFALL`: Reward penalty weight for low delivered/created ratio in the current window (default: 0.25)
 - `BANDIT_WEIGHT_THROUGHPUT`: Reward bonus weight for delivered/created ratio in the current window (default: 0.20)
 
+**Centralized Coordination Parameters:**
+- `COORDINATOR_SERVICE_TIME`: Deterministic time required by the central coordinator to process one rescue request; concurrent requests wait in a FIFO service queue (default: `0.0`).
+- `COORDINATOR_COMMAND_LOSS_PROB`: Probability that the coordinator-to-helper command is lost. Set to `-1.0` to reuse `COMM_FAIL_PROB` for both communication hops (default: `-1.0`).
+
+Centralized rescue coordination models an agent-to-coordinator message, coordinator service time, and a coordinator-to-helper command. Both communication hops are subject to their configured delay and loss probability.
+
 Architecture switches are logged in the CSV output with event type `switch_architecture_{new_arch}`.
 
 ### 📊 Analytics & Export

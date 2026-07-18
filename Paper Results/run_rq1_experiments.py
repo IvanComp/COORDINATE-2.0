@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-RQ1 overnight runner for the Dynamic Adaptation paper experiments.
+RQ1 overnight runner for the Dynamic Adaptation paper experiments with a
+more realistic task-completion regime.
 
 Research question:
     Does Dynamic Adaptation improve MAS performance compared with fixed
     coordination mechanisms?
 
 Motivating scenario:
-    Ghent hospital logistics with recurring multi-regime daily fault windows.
-    Each simulated day alternates nominal operation, load/failure surge,
-    communication degradation, malicious surge, and recovery. The schedule is
-    identical for every coordination mechanism and repetition, so RQ1 compares
-    DA against CE, SD, and FD under the same dynamic conditions.
+    Ghent hospital logistics with recurring multi-regime dynamic fault windows.
+    Each simulated day alternates nominal operation, load/failure windows,
+    communication degradation, malicious-agent surges, and recovery. The
+    schedule is identical for every coordination mechanism and repetition, so
+    RQ1 compares DA against CE, SD, and FD under the same dynamic conditions.
 
 Default campaign:
-    3 workload levels x 3 fleet sizes x 4 malicious-agent ratios x
+    3 workload levels x 3 numbers of agents x 4 malicious-agent ratios x
     3 base fault levels x 1 message-loss level x 4 mechanisms x
     10 repetitions = 4320 runs.
 
@@ -76,18 +77,18 @@ BASE_CONFIG = {
     "N_ROOMS": 73,
     "SOURCE": 0,
     "TARGETS": -1,
-    "ITEM_SPAWNING_TIME": 120,
+    "ITEM_SPAWNING_TIME": 210,
     "ITEM_SPAWNING_DISTR": "exponential",
     "ITEM_SPAWNING_TRACE": "_",
-    "IMPORTANCE_PROBABILITIES": [0.50, 0.10, 0.40],
-    "EXPIRATION_TIME": [28800, 7200, 3600],
-    "EXPIRATION_DISTR": ["exponential", "exponential", "exponential"],
-    "N_ROBOTS": 20,
+    "IMPORTANCE_PROBABILITIES": [0.55, 0.25, 0.20],
+    "EXPIRATION_TIME": [28800, 14400, 7200],
+    "EXPIRATION_DISTR": ["deterministic", "deterministic", "deterministic"],
+    "N_ROBOTS": 40,
     "N_MALICIOUS": 0,
     "MALICIOUS_FAKE_FAILURES": True,
     "FIND_ROUTE_STRATEGY": "breadth",
-    "FAIL_PROB": 0.33,
-    "COMM_FAIL_PROB": 0.10,
+    "FAIL_PROB": 0.20,
+    "COMM_FAIL_PROB": 0.05,
     "LOAD_TIME": 1.0,
     "LOAD_DISTR": "exponential",
     "LOAD_TRACE": "_",
@@ -117,18 +118,28 @@ BASE_CONFIG = {
     "LOG_HELP": False,
     "LOG_FAKE": False,
     "LOG_RESCUE": False,
-    "ADAPTATION_POLICY": "hybrid-score",
+    "ADAPTATION_POLICY": "contextual-bandit",
+    "BANDIT_REWARD_VERSION": "completion_v2",
+    "BANDIT_WEIGHT_LATENCY": 0.20,
+    "BANDIT_WEIGHT_PENDING": 0.30,
+    "BANDIT_WEIGHT_FAILURE": 0.05,
+    "BANDIT_WEIGHT_MESSAGE_LOSS": 0.10,
+    "BANDIT_WEIGHT_DEADLINE_MISS": 0.30,
+    "BANDIT_WEIGHT_THROUGHPUT_SHORTFALL": 0.25,
+    "BANDIT_WEIGHT_IDLE_WHEN_PENDING": 0.05,
+    "BANDIT_WEIGHT_THROUGHPUT": 0.20,
+    "BANDIT_BACKLOG_OVERRIDE_REQUIRES_FAULT": True,
     "ADAPTATION_CHECK_INTERVAL": 10 * 60.0,
     "LATENCY_THRESHOLD_LOW": 10 * 60.0,
     "LATENCY_THRESHOLD_HIGH": 40 * 60.0,
     "RTLOLA_METRIC_TIMEOUT": 0.05,
 }
 
-DEFAULT_ITEM_SPAWNING_TIMES = [90, 120, 150]
-DEFAULT_N_ROBOTS = [10, 20, 30]
+DEFAULT_ITEM_SPAWNING_TIMES = [180, 210, 240]
+DEFAULT_N_ROBOTS = [30, 40, 50]
 DEFAULT_MALICIOUS_RATIOS = [0.0, 0.33, 0.66, 1.0]
-DEFAULT_FAIL_PROBS = [0.33, 0.66, 1.0]
-DEFAULT_MSG_LOSS_PROBS = [0.10]
+DEFAULT_FAIL_PROBS = [0.10, 0.20, 0.33]
+DEFAULT_MSG_LOSS_PROBS = [0.05]
 DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
 
 
@@ -137,9 +148,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repetitions", type=int, default=10, help="Repetitions per configuration.")
     parser.add_argument("--sim-days", type=int, default=30, help="Number of simulated days.")
     parser.add_argument("--base-seed", type=int, default=20260527, help="Base random seed.")
-    parser.add_argument("--stress-multiplier", type=float, default=1.2, help="Fault multiplier in stress windows.")
-    parser.add_argument("--stress-start-hour", type=float, default=12.0, help="Legacy single-window start hour.")
-    parser.add_argument("--stress-end-hour", type=float, default=24.0, help="Legacy single-window end hour.")
+    parser.add_argument("--fault-window-multiplier", type=float, default=1.15, help="Fault multiplier in dynamic fault windows.")
+    parser.add_argument("--fault-window-start-hour", type=float, default=12.0, help="Legacy single-window start hour.")
+    parser.add_argument("--fault-window-end-hour", type=float, default=24.0, help="Legacy single-window end hour.")
     parser.add_argument("--quick", action="store_true", help="Small smoke campaign for checking the runner.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
     parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
@@ -186,9 +197,9 @@ def build_fault_windows(
     n_robots: int,
     n_malicious: int,
     item_spawning_time: float,
-    stress_multiplier: float,
-    stress_start_hour: float,
-    stress_end_hour: float,
+    fault_window_multiplier: float,
+    fault_window_start_hour: float,
+    fault_window_end_hour: float,
 ) -> list[dict]:
     phases = []
     day_seconds = 24 * 3600
@@ -222,9 +233,9 @@ def build_fault_windows(
                 "start_hour": 6,
                 "end_hour": 10,
                 "N_MALICIOUS": n_malicious,
-                "FAIL_PROB": prob(stress_multiplier * base_fail_prob),
+                "FAIL_PROB": prob(fault_window_multiplier * base_fail_prob),
                 "COMM_FAIL_PROB": base_msg_loss,
-                "RECOVERY_TIME": stress_multiplier * base_recovery_time,
+                "RECOVERY_TIME": fault_window_multiplier * base_recovery_time,
                 "ITEM_SPAWNING_TIME": spawn(0.75 * item_spawning_time),
             },
             {
@@ -242,9 +253,9 @@ def build_fault_windows(
                 "start_hour": 14,
                 "end_hour": 18,
                 "N_MALICIOUS": malicious(n_malicious + 0.33 * n_robots),
-                "FAIL_PROB": prob(stress_multiplier * base_fail_prob),
+                "FAIL_PROB": prob(fault_window_multiplier * base_fail_prob),
                 "COMM_FAIL_PROB": prob(2.0 * base_msg_loss),
-                "RECOVERY_TIME": stress_multiplier * base_recovery_time,
+                "RECOVERY_TIME": fault_window_multiplier * base_recovery_time,
                 "ITEM_SPAWNING_TIME": spawn(0.90 * item_spawning_time),
             },
             {
@@ -274,11 +285,11 @@ def build_fault_windows(
 def campaign_grid(args: argparse.Namespace) -> list[dict]:
     coord_labels = selected_coord_labels(args)
     if args.quick:
-        item_spawning_times = [120]
-        n_robots_values = [20]
+        item_spawning_times = [210]
+        n_robots_values = [40]
         malicious_ratios = [0.33]
-        fail_probs = [0.33]
-        msg_loss_probs = [0.10]
+        fail_probs = [0.20]
+        msg_loss_probs = [0.05]
     else:
         item_spawning_times = DEFAULT_ITEM_SPAWNING_TIMES
         n_robots_values = DEFAULT_N_ROBOTS
@@ -321,9 +332,15 @@ def run_id(params: dict) -> str:
     mal_pct = int(round(params["malicious_ratio"] * 100))
     fail_pct = int(round(params["fail_prob"] * 100))
     msg_pct = int(round(params["msg_loss_prob"] * 100))
+    policy_suffix = ""
+    if params["coord_label"] == "DA":
+        policy = str(BASE_CONFIG.get("ADAPTATION_POLICY", "contextual-bandit"))
+        reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "default"))
+        reward_version = reward_version.replace("-", "").replace("_", "")
+        policy_suffix = f"_{policy.replace('-', '')}_{reward_version}"
     return (
         f"c{params['combo_idx']:04d}_r{params['rep']:02d}_"
-        f"{params['coord_label']}_spawn{params['item_spawning_time']}_"
+        f"{params['coord_label']}{policy_suffix}_spawn{params['item_spawning_time']}_"
         f"bots{params['n_robots']}_mal{mal_pct}_fail{fail_pct}_msg{msg_pct}"
     )
 
@@ -351,9 +368,9 @@ def config_for(params: dict, args: argparse.Namespace, logfile: Path) -> dict:
         n_robots=params["n_robots"],
         n_malicious=params["n_malicious"],
         item_spawning_time=params["item_spawning_time"],
-        stress_multiplier=args.stress_multiplier,
-        stress_start_hour=args.stress_start_hour,
-        stress_end_hour=args.stress_end_hour,
+        fault_window_multiplier=args.fault_window_multiplier,
+        fault_window_start_hour=args.fault_window_start_hour,
+        fault_window_end_hour=args.fault_window_end_hour,
     )
     if params["architecture"] == "dynamic-adaptation":
         resolved = resolve_rtlola_binary(str(PROJECT_ROOT), str(PROJECT_ROOT / "sim"))
@@ -546,12 +563,23 @@ def run_campaign(args: argparse.Namespace) -> None:
         "repetitions": args.repetitions,
         "total_runs": total_runs,
         "coordination_mechanisms": coord_labels,
-        "item_spawning_times": [120] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
-        "n_robots": [20] if args.quick else DEFAULT_N_ROBOTS,
+        "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
+        "bandit_reward_version": BASE_CONFIG.get("BANDIT_REWARD_VERSION", ""),
+        "bandit_reward_weights": {
+            "latency": BASE_CONFIG.get("BANDIT_WEIGHT_LATENCY"),
+            "pending": BASE_CONFIG.get("BANDIT_WEIGHT_PENDING"),
+            "deadline_miss": BASE_CONFIG.get("BANDIT_WEIGHT_DEADLINE_MISS"),
+            "throughput_shortfall": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT_SHORTFALL"),
+            "throughput": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT"),
+        },
+        "item_spawning_times": [210] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
+        "n_robots": [40] if args.quick else DEFAULT_N_ROBOTS,
         "malicious_ratios": [0.33] if args.quick else DEFAULT_MALICIOUS_RATIOS,
-        "fail_probs": [0.33] if args.quick else DEFAULT_FAIL_PROBS,
+        "fail_probs": [0.20] if args.quick else DEFAULT_FAIL_PROBS,
         "msg_loss_probs": DEFAULT_MSG_LOSS_PROBS,
         "expiration_time": BASE_CONFIG["EXPIRATION_TIME"],
+        "expiration_distribution": BASE_CONFIG["EXPIRATION_DISTR"],
+        "importance_probabilities": BASE_CONFIG["IMPORTANCE_PROBABILITIES"],
         "daily_fault_windows": [
             "nominal: 00h-06h",
             "load_failure_surge: 06h-10h",
@@ -559,7 +587,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "malicious_surge: 14h-18h",
             "recovery: 18h-24h",
         ],
-        "stress_multiplier": args.stress_multiplier,
+        "fault_window_multiplier": args.fault_window_multiplier,
     }
     print("=" * 80)
     print("RQ1 DYNAMIC ADAPTATION EXPERIMENTAL CAMPAIGN")
@@ -574,6 +602,16 @@ def run_campaign(args: argparse.Namespace) -> None:
     ensure_dirs()
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
+    expected_policy = str(BASE_CONFIG["ADAPTATION_POLICY"]).lower()
+    expected_reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "")).lower()
+    rows = [
+        row for row in rows
+        if str(row.get("coord_label", "")) != "DA"
+        or (
+            str(row.get("adaptation_policy", "")).lower() == expected_policy
+            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+        )
+    ]
     completed = completed_run_ids(rows)
     started_at = time.time()
 
@@ -642,6 +680,8 @@ def run_campaign(args: argparse.Namespace) -> None:
             "logfile": str(logfile),
             "coord_label": params["coord_label"],
             "architecture": params["architecture"],
+            "adaptation_policy": cfg.get("ADAPTATION_POLICY", ""),
+            "bandit_reward_version": cfg.get("BANDIT_REWARD_VERSION", ""),
             "rep": params["rep"],
             "seed": params["seed"],
             "item_spawning_time": params["item_spawning_time"],
@@ -655,9 +695,9 @@ def run_campaign(args: argparse.Namespace) -> None:
             "expiration_time_high_s": cfg["EXPIRATION_TIME"][2],
             "log_expire": cfg["LOG_EXPIRE"],
             "sim_days": args.sim_days,
-            "stress_multiplier": args.stress_multiplier,
-            "stress_start_hour": args.stress_start_hour,
-            "stress_end_hour": args.stress_end_hour,
+            "fault_window_multiplier": args.fault_window_multiplier,
+            "fault_window_start_hour": args.fault_window_start_hour,
+            "fault_window_end_hour": args.fault_window_end_hour,
             "wall_time_s": wall_time,
             "event_count": event_count,
             **metrics,

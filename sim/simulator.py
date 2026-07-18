@@ -118,6 +118,8 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('EXPIRATION_DISTR', ['exponential', 'exponential', 'exponential'])
     d.setdefault('PRIVACY_COMM_TIME_BONUS', [0.0, 0.0, 0.0])
     d.setdefault('PRIVACY_COMP_TIME_BONUS', [0.0, 0.0, 0.0])
+    d.setdefault('COORDINATOR_SERVICE_TIME', 0.0)
+    d.setdefault('COORDINATOR_COMMAND_LOSS_PROB', -1.0)
     # booleans default
     for k in ['LOG_ITEM','LOG_DELIVERY','LOG_LOAD','LOG_DROP','LOG_EXPIRE','LOG_MOVE','LOG_FAIL','LOG_RECOVERY','LOG_HELP','LOG_FAKE','LOG_RESCUE']:
         d.setdefault(k, True if k in ['LOG_ITEM','LOG_DELIVERY','LOG_EXPIRE'] else False)
@@ -614,6 +616,10 @@ def run(config_path='config.json'):
                             print(f"[RTLola] Error sending delivery event: {e}")
             elif event.startswith('recovery-'):
                 idx = int(event.split('-')[1]); bots[idx].recovery(ts)
+            elif event.startswith('central-request-'):
+                request_id = int(event.split('-')[2]); space.processCentralRequest(request_id, ts)
+            elif event.startswith('central-command-'):
+                request_id = int(event.split('-')[2]); space.processCentralCommand(request_id, ts)
             elif event.startswith('expire-'):
                 idx = int(event.split('-')[1]); item = space.getItembyId(idx); space.expireItem(item, ts)
                 expired_window.append(ts)

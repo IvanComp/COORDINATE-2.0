@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-RQ2 runner: Dynamic Adaptation reaction to evolving operating conditions.
+RQ2 runner: Dynamic Adaptation reaction to evolving operating conditions with
+a more realistic task-completion regime.
 
 RQ2 is deliberately DA-only. The goal is not to re-run the full comparison from
 RQ1, but to inspect when DA switches, which monitored state caused the switch,
@@ -19,8 +20,8 @@ Resume behavior:
     missing or previously failed ones. Use --force to intentionally re-run all.
 
 Reuse behavior:
-    The paper_daily_stress profile can reuse matching DA runs from RQ1 when
-    available. Use --no-reuse-rq1 to force independent RQ2 runs.
+    These runs are independent from the original RQ1 campaign because they use
+    different workload, fault, and deadline settings.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from paper_experiment_utils import (
+    BASE_CONFIG,
     COORD_TO_ARCH,
     PAPER_ROOT,
     analyze_log,
@@ -41,9 +43,7 @@ from paper_experiment_utils import (
     drop_rows_for_run,
     ensure_rtlola_available,
     ensure_result_dirs,
-    expiration_metadata,
     extract_switches,
-    find_matching_rq1_row,
     malicious_count,
     nearest_overhead_sample,
     phase_for_time,
@@ -60,11 +60,54 @@ from paper_experiment_utils import (
 RESULTS_ROOT = PAPER_ROOT / "RQ2"
 TIMESERIES_PATH = RESULTS_ROOT / "adaptation_state_timeseries.csv.gz"
 PROFILE_NAMES = [
-    "paper_daily_stress",
-    "communication_blackout",
+    "daily_fault_windows",
+    "communication_degradation",
     "malicious_surge",
-    "load_fault_recovery",
+    "load_failure_recovery",
 ]
+
+COMPLETION_CONFIG_UPDATES = {
+    "IMPORTANCE_PROBABILITIES": [0.55, 0.25, 0.20],
+    "EXPIRATION_TIME": [28800, 14400, 7200],
+    "EXPIRATION_DISTR": ["deterministic", "deterministic", "deterministic"],
+}
+
+
+def expiration_metadata(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    source = cfg or COMPLETION_CONFIG_UPDATES
+    values = source["EXPIRATION_TIME"]
+    return {
+        "expiration_time_low_s": values[0],
+        "expiration_time_medium_s": values[1],
+        "expiration_time_high_s": values[2],
+        "log_expire": bool(source.get("LOG_EXPIRE", True)),
+    }
+
+
+def completed_run_ids(rows: list[dict[str, Any]]) -> set[str]:
+    expected = expiration_metadata()
+    completed: set[str] = set()
+    for row in rows:
+        run_id = str(row.get("run_id", ""))
+        if not run_id or row.get("status") != "ok":
+            continue
+        if str(row.get("log_expire", "")).lower() != "true":
+            continue
+        matches = True
+        for key, expected_value in expected.items():
+            if key == "log_expire":
+                continue
+            try:
+                actual_value = float(row.get(key, ""))
+            except (TypeError, ValueError):
+                matches = False
+                break
+            if int(round(actual_value)) != int(round(float(expected_value))):
+                matches = False
+                break
+        if matches:
+            completed.add(run_id)
+    return completed
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,7 +121,6 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated profile names.",
     )
     parser.add_argument("--quick", action="store_true", help="Use one profile and one short repetition set.")
-    parser.add_argument("--no-reuse-rq1", action="store_true", help="Do not import matching completed DA runs from RQ1.")
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
     parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N run instances.")
@@ -127,144 +169,144 @@ def phase_params(
 
 
 def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
-    n_robots = 20
-    recovery = 1800.0
+    n_robots = 35
+    recovery = 1500.0
 
-    if profile_name == "paper_daily_stress":
+    if profile_name == "daily_fault_windows":
         nominal = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.10,
-            fail_prob=0.10,
+            fail_prob=0.08,
             msg_loss=0.03,
             recovery_time=recovery,
-            item_spawning_time=150,
+            item_spawning_time=240,
         )
         load_failure = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.33,
-            fail_prob=0.66,
-            msg_loss=0.10,
-            recovery_time=1.2 * recovery,
-            item_spawning_time=90,
+            fail_prob=0.25,
+            msg_loss=0.06,
+            recovery_time=1.15 * recovery,
+            item_spawning_time=150,
         )
         communication = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.33,
-            fail_prob=0.33,
-            msg_loss=0.10,
+            fail_prob=0.15,
+            msg_loss=0.06,
             recovery_time=recovery,
-            item_spawning_time=120,
+            item_spawning_time=210,
         )
         malicious = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.66,
-            fail_prob=0.66,
-            msg_loss=0.20,
-            recovery_time=1.2 * recovery,
-            item_spawning_time=90,
+            fail_prob=0.30,
+            msg_loss=0.10,
+            recovery_time=1.15 * recovery,
+            item_spawning_time=150,
         )
         recovery_phase = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.0,
-            fail_prob=0.08,
+            fail_prob=0.05,
             msg_loss=0.03,
             recovery_time=recovery,
-            item_spawning_time=150,
+            item_spawning_time=240,
         )
-        description = "Multi-regime daily profile alternating nominal, load/failure, communication, malicious, and recovery phases."
+        description = "Multi-regime daily profile alternating nominal, load/failure, communication degradation, malicious-agent surge, and recovery phases."
         segments = [
             {"label": "nominal", "start_hour": 0, "end_hour": 6, "params": nominal},
-            {"label": "load_failure_surge", "start_hour": 6, "end_hour": 10, "params": load_failure},
+            {"label": "load_failure_window", "start_hour": 6, "end_hour": 10, "params": load_failure},
             {"label": "baseline", "start_hour": 10, "end_hour": 14, "params": communication},
             {"label": "malicious_surge", "start_hour": 14, "end_hour": 18, "params": malicious},
             {"label": "recovery", "start_hour": 18, "end_hour": 24, "params": recovery_phase},
         ]
 
-    elif profile_name == "communication_blackout":
+    elif profile_name == "communication_degradation":
         normal = phase_params(
             n_robots=n_robots,
-            malicious_ratio=0.33,
-            fail_prob=0.33,
-            msg_loss=0.10,
+            malicious_ratio=0.10,
+            fail_prob=0.15,
+            msg_loss=0.06,
             recovery_time=recovery,
-            item_spawning_time=120,
+            item_spawning_time=210,
         )
-        blackout = phase_params(
+        degraded = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.33,
-            fail_prob=0.66,
-            msg_loss=0.45,
-            recovery_time=1.5 * recovery,
-            item_spawning_time=90,
+            fail_prob=0.30,
+            msg_loss=0.20,
+            recovery_time=1.15 * recovery,
+            item_spawning_time=150,
         )
         recovery_phase = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.0,
-            fail_prob=0.08,
+            fail_prob=0.05,
             msg_loss=0.03,
             recovery_time=recovery,
-            item_spawning_time=150,
+            item_spawning_time=240,
         )
-        description = "Communication-heavy stress period designed to make FD pressure observable."
+        description = "Communication degradation period designed to make FD pressure observable."
         segments = [
             {"label": "normal", "start_hour": 0, "end_hour": 8, "params": normal},
-            {"label": "comm_blackout", "start_hour": 8, "end_hour": 16, "params": blackout},
+            {"label": "communication_degradation", "start_hour": 8, "end_hour": 16, "params": degraded},
             {"label": "recovery", "start_hour": 16, "end_hour": 24, "params": recovery_phase},
         ]
 
     elif profile_name == "malicious_surge":
         normal = phase_params(
             n_robots=n_robots,
-            malicious_ratio=0.33,
-            fail_prob=0.33,
-            msg_loss=0.10,
+            malicious_ratio=0.10,
+            fail_prob=0.15,
+            msg_loss=0.06,
             recovery_time=recovery,
-            item_spawning_time=120,
+            item_spawning_time=210,
         )
         surge = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.66,
-            fail_prob=0.66,
-            msg_loss=0.20,
-            recovery_time=1.2 * recovery,
-            item_spawning_time=90,
+            fail_prob=0.35,
+            msg_loss=0.12,
+            recovery_time=1.15 * recovery,
+            item_spawning_time=150,
         )
         calm = phase_params(
             n_robots=n_robots,
-            malicious_ratio=0.33,
-            fail_prob=0.08,
+            malicious_ratio=0.10,
+            fail_prob=0.05,
             msg_loss=0.03,
             recovery_time=recovery,
-            item_spawning_time=150,
+            item_spawning_time=240,
         )
-        description = "Malicious-agent fraction increases during the daily stress interval."
+        description = "Malicious-agent fraction increases during the daily surge interval."
         segments = [
             {"label": "normal", "start_hour": 0, "end_hour": 12, "params": normal},
             {"label": "malicious_surge", "start_hour": 12, "end_hour": 22, "params": surge},
             {"label": "calm", "start_hour": 22, "end_hour": 24, "params": calm},
         ]
 
-    elif profile_name == "load_fault_recovery":
+    elif profile_name == "load_failure_recovery":
         calm = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.0,
-            fail_prob=0.08,
+            fail_prob=0.05,
             msg_loss=0.03,
             recovery_time=recovery,
-            item_spawning_time=150,
+            item_spawning_time=240,
         )
-        stress = phase_params(
+        load_failure = phase_params(
             n_robots=n_robots,
             malicious_ratio=0.33,
-            fail_prob=0.80,
-            msg_loss=0.35,
-            recovery_time=1.5 * recovery,
-            item_spawning_time=90,
+            fail_prob=0.35,
+            msg_loss=0.18,
+            recovery_time=1.25 * recovery,
+            item_spawning_time=150,
         )
-        description = "Low-risk period, intense combined stress, and explicit recovery period each day."
+        description = "Low-fault period, combined load/failure window, and explicit recovery period each day."
         segments = [
             {"label": "calm", "start_hour": 0, "end_hour": 8, "params": calm},
-            {"label": "load_fault_stress", "start_hour": 8, "end_hour": 18, "params": stress},
+            {"label": "load_failure_window", "start_hour": 8, "end_hour": 18, "params": load_failure},
             {"label": "recovery", "start_hour": 18, "end_hour": 24, "params": calm},
         ]
 
@@ -278,6 +320,7 @@ def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
         "description": description,
         "n_robots": n_robots,
         "initial_updates": {
+            **COMPLETION_CONFIG_UPDATES,
             "N_ROBOTS": n_robots,
             "N_MALICIOUS": first_phase["N_MALICIOUS"],
             "FAIL_PROB": first_phase["FAIL_PROB"],
@@ -292,7 +335,7 @@ def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
 
 def selected_profiles(args: argparse.Namespace) -> list[str]:
     if args.quick:
-        return ["load_fault_recovery"]
+        return ["load_failure_recovery"]
     profiles = [name.strip() for name in args.profiles.split(",") if name.strip()]
     unknown = [name for name in profiles if name not in PROFILE_NAMES]
     if unknown:
@@ -318,7 +361,10 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 
 def run_id(params: dict[str, Any]) -> str:
-    return f"{params['profile_idx']:02d}_{params['profile']}_r{params['rep']:02d}_DA"
+    policy = str(BASE_CONFIG.get("ADAPTATION_POLICY", "contextual-bandit")).replace("-", "")
+    reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "default"))
+    reward_version = reward_version.replace("-", "").replace("_", "")
+    return f"{params['profile_idx']:02d}_{params['profile']}_r{params['rep']:02d}_DA_{policy}_{reward_version}"
 
 
 def annotate_overhead_rows(
@@ -392,8 +438,17 @@ def run_campaign(args: argparse.Namespace) -> None:
         "profiles": selected_profiles(args),
         "total_runs": len(combos),
         "coordination_mechanisms": ["DA"],
+        "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
+        "bandit_reward_version": BASE_CONFIG.get("BANDIT_REWARD_VERSION", ""),
+        "bandit_reward_weights": {
+            "latency": BASE_CONFIG.get("BANDIT_WEIGHT_LATENCY"),
+            "pending": BASE_CONFIG.get("BANDIT_WEIGHT_PENDING"),
+            "deadline_miss": BASE_CONFIG.get("BANDIT_WEIGHT_DEADLINE_MISS"),
+            "throughput_shortfall": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT_SHORTFALL"),
+            "throughput": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT"),
+        },
         "expiration_time": expiration_metadata(),
-        "reuse_rq1": not args.no_reuse_rq1,
+        "reuse_rq1": False,
         "purpose": "Relate DA switches to monitored states and dynamic fault windows.",
     }
     print("=" * 80)
@@ -411,6 +466,29 @@ def run_campaign(args: argparse.Namespace) -> None:
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
     all_timeseries = [] if args.force else read_rows(TIMESERIES_PATH)
     all_switches = [] if args.force else read_rows(RESULTS_ROOT / "switch_timeline.csv")
+    expected_policy = str(BASE_CONFIG["ADAPTATION_POLICY"]).lower()
+    expected_reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "")).lower()
+    rows = [
+        row for row in rows
+        if (
+            str(row.get("adaptation_policy", "")).lower() == expected_policy
+            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+        )
+    ]
+    all_timeseries = [
+        row for row in all_timeseries
+        if (
+            str(row.get("adaptation_policy", "")).lower() == expected_policy
+            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+        )
+    ]
+    all_switches = [
+        row for row in all_switches
+        if (
+            str(row.get("adaptation_policy", "")).lower() == expected_policy
+            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+        )
+    ]
     completed = completed_run_ids([
         row for row in rows
         if str(row.get("log_expire", "")).lower() == "true"
@@ -465,38 +543,12 @@ def run_campaign(args: argparse.Namespace) -> None:
             planned_logfile.unlink()
 
         try:
-            reuse_row = None
-            if (
-                params["profile"] == "paper_daily_stress"
-                and not args.force
-                and not args.no_reuse_rq1
-            ):
-                reuse_row = find_matching_rq1_row(
-                    coord_label="DA",
-                    rep=params["rep"],
-                    item_spawning_time=120,
-                    n_robots=20,
-                    malicious_ratio=0.33,
-                    fail_prob=0.66,
-                    msg_loss_prob=0.10,
-                )
-
-            if reuse_row:
-                logfile = Path(str(reuse_row["logfile"]))
-                source_rq = "RQ1"
-                source_run_id = str(reuse_row.get("run_id", ""))
-                source_logfile = str(logfile)
-                wall_time = safe_float(reuse_row.get("wall_time_s"))
-                event_count = safe_float(reuse_row.get("event_count"))
-                metrics = analyze_log(logfile, cfg["SIM_TIME"])
-                print(f"  reused from RQ1: {source_run_id}", flush=True)
-            else:
-                metrics, wall_time, event_count = run_or_analyze(
-                    cfg_path=cfg_path,
-                    logfile=planned_logfile,
-                    sim_time=cfg["SIM_TIME"],
-                    force=args.force,
-                )
+            metrics, wall_time, event_count = run_or_analyze(
+                cfg_path=cfg_path,
+                logfile=planned_logfile,
+                sim_time=cfg["SIM_TIME"],
+                force=args.force,
+            )
         except BaseException as exc:
             if isinstance(exc, KeyboardInterrupt):
                 raise
@@ -521,6 +573,8 @@ def run_campaign(args: argparse.Namespace) -> None:
             "seed": params["seed"],
             "coord_label": "DA",
             "architecture": COORD_TO_ARCH["DA"],
+            "adaptation_policy": cfg.get("ADAPTATION_POLICY", ""),
+            "bandit_reward_version": cfg.get("BANDIT_REWARD_VERSION", ""),
             "source_rq": source_rq,
             "source_run_id": source_run_id,
             "source_logfile": source_logfile,
