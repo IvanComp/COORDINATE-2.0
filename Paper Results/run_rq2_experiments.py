@@ -8,7 +8,7 @@ RQ1, but to inspect when DA switches, which monitored state caused the switch,
 and whether switches align with persistent fault windows.
 
 Default campaign:
-    4 dynamic profiles x 10 repetitions = 40 runs.
+    One repeated four-level daily operating cycle x 10 repetitions = 10 runs.
 
 Run examples:
     python "Paper Results/run_rq2_experiments.py" --dry-run
@@ -35,6 +35,7 @@ from typing import Any
 from paper_experiment_utils import (
     BASE_CONFIG,
     COORD_TO_ARCH,
+    FD_POLICY_VERSION,
     PAPER_ROOT,
     analyze_log,
     config_with_paths,
@@ -55,21 +56,39 @@ from paper_experiment_utils import (
     write_json,
     write_rows,
 )
+from sim.contextual_bandit import FEATURE_NAMES
 
 
 RESULTS_ROOT = PAPER_ROOT / "RQ2"
 TIMESERIES_PATH = RESULTS_ROOT / "adaptation_state_timeseries.csv.gz"
-PROFILE_NAMES = [
-    "daily_fault_windows",
-    "communication_degradation",
-    "malicious_surge",
-    "load_failure_recovery",
+PROFILE_NAMES = ["adaptive_operating_cycle"]
+RQ2_EXPERIMENT_PROFILE = "table-aligned-operating-cycle-v1"
+DAILY_OPERATING_SEGMENTS = [
+    ("P1", 0, 6),
+    ("P2", 6, 12),
+    ("P3", 12, 18),
+    ("P4", 18, 24),
 ]
 
 COMPLETION_CONFIG_UPDATES = {
+    "TOPOLOGY_NAME": "ring25",
+    "N_ROOMS": 25,
     "IMPORTANCE_PROBABILITIES": [0.55, 0.25, 0.20],
     "EXPIRATION_TIME": [28800, 14400, 7200],
     "EXPIRATION_DISTR": ["deterministic", "deterministic", "deterministic"],
+    "ADAPTATION_CHECK_INTERVAL": 60 * 60.0,
+    "ADAPTATION_WINDOW": 60 * 60.0,
+    "BANDIT_FEEDBACK_WINDOW": 60 * 60.0,
+    "ADAPTATION_MIN_SWITCH_INTERVAL": 60 * 60.0,
+    "ADAPTATION_PERSISTENCE_CHECKS": 1,
+    "BANDIT_EXPLORATION_EPSILON": 0.02,
+    "BANDIT_MIN_EXPLORATION_EPSILON": 0.0,
+    "BANDIT_EXPLORATION_BYPASS_PERSISTENCE": False,
+    "COORDINATOR_SERVICE_TIME": 0.25,
+    "COORDINATOR_FAKE_REQUEST_SERVICE_TIME": 0.25,
+    "FD_INSPECTION_INTERVAL": 2 * 60.0,
+    "FD_MAX_PATROLLERS": 2,
+    "SD_COORDINATION_HOPS": 1,
 }
 
 
@@ -84,14 +103,21 @@ def expiration_metadata(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
-def completed_run_ids(rows: list[dict[str, Any]]) -> set[str]:
+def completed_run_ids(rows: list[dict[str, Any]], sim_days: int) -> set[str]:
     expected = expiration_metadata()
     completed: set[str] = set()
     for row in rows:
         run_id = str(row.get("run_id", ""))
         if not run_id or row.get("status") != "ok":
             continue
+        try:
+            if int(row.get("sim_days", "")) != sim_days:
+                continue
+        except (TypeError, ValueError):
+            continue
         if str(row.get("log_expire", "")).lower() != "true":
+            continue
+        if str(row.get("fd_policy_version", "")) != FD_POLICY_VERSION:
             continue
         matches = True
         for key, expected_value in expected.items():
@@ -113,7 +139,7 @@ def completed_run_ids(rows: list[dict[str, Any]]) -> set[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RQ2 dynamic adaptation experiments.")
     parser.add_argument("--repetitions", type=int, default=10, help="Repetitions per dynamic profile.")
-    parser.add_argument("--sim-days", type=int, default=30, help="Number of simulated days.")
+    parser.add_argument("--sim-days", type=int, default=90, help="Number of simulated days.")
     parser.add_argument("--base-seed", type=int, default=20260602, help="Base random seed.")
     parser.add_argument(
         "--profiles",
@@ -125,7 +151,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N run instances.")
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately if a run fails.")
+    parser.add_argument(
+        "--bandit-objective",
+        choices=("completion-constrained", "completion-only", "latency-only", "weighted"),
+        default=BASE_CONFIG["BANDIT_OBJECTIVE_MODE"],
+        help="Performance objective used to train DA.",
+    )
+    parser.add_argument(
+        "--bandit-completion-weight",
+        type=float,
+        default=BASE_CONFIG["BANDIT_COMPLETION_WEIGHT"],
+        help="Completion weight in weighted mode (0.0 to 1.0).",
+    )
     return parser.parse_args()
+
+
+def configure_bandit_objective(args: argparse.Namespace) -> None:
+    if not 0.0 <= args.bandit_completion_weight <= 1.0:
+        raise ValueError("--bandit-completion-weight must be between 0.0 and 1.0.")
+    mode = args.bandit_objective
+    version = "completion-constrained-v1"
+    if mode != "completion-constrained":
+        version = f"{mode}-cw{int(round(args.bandit_completion_weight * 100)):02d}-v1"
+    BASE_CONFIG.update({
+        "BANDIT_OBJECTIVE_MODE": mode,
+        "BANDIT_COMPLETION_WEIGHT": args.bandit_completion_weight,
+        "BANDIT_REWARD_VERSION": version,
+    })
 
 
 def day_segments_to_phases(
@@ -158,6 +210,9 @@ def phase_params(
     msg_loss: float,
     recovery_time: float,
     item_spawning_time: float,
+    coordinator_service_time: float = 0.0,
+    coordinator_failure_prob: float = 0.0,
+    coordinator_available: bool = True,
 ) -> dict[str, Any]:
     return {
         "N_MALICIOUS": malicious_count(n_robots, malicious_ratio),
@@ -165,153 +220,46 @@ def phase_params(
         "COMM_FAIL_PROB": msg_loss,
         "RECOVERY_TIME": recovery_time,
         "ITEM_SPAWNING_TIME": item_spawning_time,
+        "COORDINATOR_SERVICE_TIME": coordinator_service_time,
+        "COORDINATOR_FAILURE_PROB": coordinator_failure_prob,
+        "COORDINATOR_AVAILABLE": coordinator_available,
     }
 
 
 def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
-    n_robots = 35
-    recovery = 1500.0
-
-    if profile_name == "daily_fault_windows":
-        nominal = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.10,
-            fail_prob=0.08,
-            msg_loss=0.03,
-            recovery_time=recovery,
-            item_spawning_time=240,
-        )
-        load_failure = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.33,
-            fail_prob=0.25,
-            msg_loss=0.06,
-            recovery_time=1.15 * recovery,
-            item_spawning_time=150,
-        )
-        communication = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.33,
-            fail_prob=0.15,
-            msg_loss=0.06,
-            recovery_time=recovery,
-            item_spawning_time=210,
-        )
-        malicious = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.66,
-            fail_prob=0.30,
-            msg_loss=0.10,
-            recovery_time=1.15 * recovery,
-            item_spawning_time=150,
-        )
-        recovery_phase = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.0,
-            fail_prob=0.05,
-            msg_loss=0.03,
-            recovery_time=recovery,
-            item_spawning_time=240,
-        )
-        description = "Multi-regime daily profile alternating nominal, load/failure, communication degradation, malicious-agent surge, and recovery phases."
-        segments = [
-            {"label": "nominal", "start_hour": 0, "end_hour": 6, "params": nominal},
-            {"label": "load_failure_window", "start_hour": 6, "end_hour": 10, "params": load_failure},
-            {"label": "baseline", "start_hour": 10, "end_hour": 14, "params": communication},
-            {"label": "malicious_surge", "start_hour": 14, "end_hour": 18, "params": malicious},
-            {"label": "recovery", "start_hour": 18, "end_hour": 24, "params": recovery_phase},
-        ]
-
-    elif profile_name == "communication_degradation":
-        normal = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.10,
-            fail_prob=0.15,
-            msg_loss=0.06,
-            recovery_time=recovery,
-            item_spawning_time=210,
-        )
-        degraded = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.33,
-            fail_prob=0.30,
-            msg_loss=0.20,
-            recovery_time=1.15 * recovery,
-            item_spawning_time=150,
-        )
-        recovery_phase = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.0,
-            fail_prob=0.05,
-            msg_loss=0.03,
-            recovery_time=recovery,
-            item_spawning_time=240,
-        )
-        description = "Communication degradation period designed to make FD pressure observable."
-        segments = [
-            {"label": "normal", "start_hour": 0, "end_hour": 8, "params": normal},
-            {"label": "communication_degradation", "start_hour": 8, "end_hour": 16, "params": degraded},
-            {"label": "recovery", "start_hour": 16, "end_hour": 24, "params": recovery_phase},
-        ]
-
-    elif profile_name == "malicious_surge":
-        normal = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.10,
-            fail_prob=0.15,
-            msg_loss=0.06,
-            recovery_time=recovery,
-            item_spawning_time=210,
-        )
-        surge = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.66,
-            fail_prob=0.35,
-            msg_loss=0.12,
-            recovery_time=1.15 * recovery,
-            item_spawning_time=150,
-        )
-        calm = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.10,
-            fail_prob=0.05,
-            msg_loss=0.03,
-            recovery_time=recovery,
-            item_spawning_time=240,
-        )
-        description = "Malicious-agent fraction increases during the daily surge interval."
-        segments = [
-            {"label": "normal", "start_hour": 0, "end_hour": 12, "params": normal},
-            {"label": "malicious_surge", "start_hour": 12, "end_hour": 22, "params": surge},
-            {"label": "calm", "start_hour": 22, "end_hour": 24, "params": calm},
-        ]
-
-    elif profile_name == "load_failure_recovery":
-        calm = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.0,
-            fail_prob=0.05,
-            msg_loss=0.03,
-            recovery_time=recovery,
-            item_spawning_time=240,
-        )
-        load_failure = phase_params(
-            n_robots=n_robots,
-            malicious_ratio=0.33,
-            fail_prob=0.35,
-            msg_loss=0.18,
-            recovery_time=1.25 * recovery,
-            item_spawning_time=150,
-        )
-        description = "Low-fault period, combined load/failure window, and explicit recovery period each day."
-        segments = [
-            {"label": "calm", "start_hour": 0, "end_hour": 8, "params": calm},
-            {"label": "load_failure_window", "start_hour": 8, "end_hour": 18, "params": load_failure},
-            {"label": "recovery", "start_hour": 18, "end_hour": 24, "params": calm},
-        ]
-
-    else:
+    if profile_name != "adaptive_operating_cycle":
         raise ValueError(f"Unknown RQ2 profile: {profile_name}")
+
+    n_robots = 20
+    recovery = 1800.0
+    description = "Repeated four-level daily operating cycle P1--P4."
+    segments = []
+    # P1 is the underlined baseline in Table~\ref{tab:usecase-inputs}. P2--P4
+    # apply the 25%, 50%, and 75% increments of the daily operating profile.
+    # The malicious ratio cannot exceed 100%, hence P4 is capped at 20 agents.
+    mode_settings = {
+        "P1": {"malicious": 0.60, "fail": 0.0900, "comm": 0.0300, "spawn": 120.0},
+        "P2": {"malicious": 0.75, "fail": 0.1125, "comm": 0.0375, "spawn": 90.0},
+        "P3": {"malicious": 0.90, "fail": 0.1350, "comm": 0.0450, "spawn": 60.0},
+        "P4": {"malicious": 1.00, "fail": 0.1575, "comm": 0.0525, "spawn": 30.0},
+    }
+    for label, start_hour, end_hour in DAILY_OPERATING_SEGMENTS:
+        mode = mode_settings[label]
+        segments.append({
+            "label": label,
+            "start_hour": start_hour,
+            "end_hour": end_hour,
+            "params": phase_params(
+                n_robots=n_robots,
+                malicious_ratio=mode["malicious"],
+                fail_prob=mode["fail"],
+                msg_loss=mode["comm"],
+                recovery_time=recovery,
+                item_spawning_time=mode["spawn"],
+                coordinator_service_time=0.25,
+                coordinator_available=True,
+            ),
+        })
 
     phases = day_segments_to_phases(sim_days=sim_days, segments=segments)
     first_phase = phases[0]
@@ -325,6 +273,9 @@ def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
             "N_MALICIOUS": first_phase["N_MALICIOUS"],
             "FAIL_PROB": first_phase["FAIL_PROB"],
             "COMM_FAIL_PROB": first_phase["COMM_FAIL_PROB"],
+            "COORDINATOR_SERVICE_TIME": first_phase["COORDINATOR_SERVICE_TIME"],
+            "COORDINATOR_FAILURE_PROB": first_phase["COORDINATOR_FAILURE_PROB"],
+            "COORDINATOR_AVAILABLE": first_phase["COORDINATOR_AVAILABLE"],
             "RECOVERY_TIME": first_phase["RECOVERY_TIME"],
             "ITEM_SPAWNING_TIME": first_phase["ITEM_SPAWNING_TIME"],
         },
@@ -335,7 +286,7 @@ def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
 
 def selected_profiles(args: argparse.Namespace) -> list[str]:
     if args.quick:
-        return ["load_failure_recovery"]
+        return ["adaptive_operating_cycle"]
     profiles = [name.strip() for name in args.profiles.split(",") if name.strip()]
     unknown = [name for name in profiles if name not in PROFILE_NAMES]
     if unknown:
@@ -346,7 +297,7 @@ def selected_profiles(args: argparse.Namespace) -> list[str]:
 def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     profiles = selected_profiles(args)
-    repetitions = 1 if args.quick and args.repetitions == 10 else args.repetitions
+    repetitions = 1 if args.quick else args.repetitions
     for profile_idx, profile in enumerate(profiles, start=1):
         definition = profile_definition(profile, args.sim_days)
         for rep in range(1, repetitions + 1):
@@ -364,7 +315,10 @@ def run_id(params: dict[str, Any]) -> str:
     policy = str(BASE_CONFIG.get("ADAPTATION_POLICY", "contextual-bandit")).replace("-", "")
     reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "default"))
     reward_version = reward_version.replace("-", "").replace("_", "")
-    return f"{params['profile_idx']:02d}_{params['profile']}_r{params['rep']:02d}_DA_{policy}_{reward_version}"
+    return (
+        f"{params['profile_idx']:02d}_{params['profile']}_r{params['rep']:02d}_"
+        f"DA_{policy}_{reward_version}_{RQ2_EXPERIMENT_PROFILE}"
+    )
 
 
 def annotate_overhead_rows(
@@ -419,20 +373,33 @@ def switch_rows(
             "recovery_mode": sample.get("recovery_mode"),
             "switch_reason": sample.get("switch_reason"),
             "latency": sample.get("latency"),
+            "completion_rate": sample.get("completion_rate"),
+            "terminal_tasks_window": sample.get("terminal_tasks_window"),
+            "bandit_reward": sample.get("bandit_reward"),
+            "bandit_reward_mode": sample.get("bandit_reward_mode"),
             "pending_ratio": sample.get("pending_ratio"),
             "failure_rate": sample.get("failure_rate"),
             "message_loss_rate": sample.get("message_loss_rate"),
+            "network_probe_loss_rate": sample.get("network_probe_loss_rate"),
+            "suspicious_signals_window": sample.get("suspicious_signals_window"),
+            "context_arrival_rate_norm": sample.get("context_arrival_rate_norm"),
+            "context_failure_norm": sample.get("context_failure_norm"),
+            "context_network_probe_loss_rate": sample.get("context_network_probe_loss_rate"),
+            "context_suspicion_norm": sample.get("context_suspicion_norm"),
+            "bandit_context_key": sample.get("bandit_context_key"),
         })
     return rows
 
 
 def run_campaign(args: argparse.Namespace) -> None:
+    configure_bandit_objective(args)
     if not args.dry_run:
         rtlola_binary = ensure_rtlola_available()
         print(f"[preflight] RTLola binary: {rtlola_binary}")
     combos = campaign(args)
     design = {
         "research_question": "RQ2",
+        "experiment_profile": RQ2_EXPERIMENT_PROFILE,
         "sim_days": args.sim_days,
         "repetitions": args.repetitions,
         "profiles": selected_profiles(args),
@@ -440,12 +407,30 @@ def run_campaign(args: argparse.Namespace) -> None:
         "coordination_mechanisms": ["DA"],
         "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
         "bandit_reward_version": BASE_CONFIG.get("BANDIT_REWARD_VERSION", ""),
-        "bandit_reward_weights": {
-            "latency": BASE_CONFIG.get("BANDIT_WEIGHT_LATENCY"),
-            "pending": BASE_CONFIG.get("BANDIT_WEIGHT_PENDING"),
-            "deadline_miss": BASE_CONFIG.get("BANDIT_WEIGHT_DEADLINE_MISS"),
-            "throughput_shortfall": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT_SHORTFALL"),
-            "throughput": BASE_CONFIG.get("BANDIT_WEIGHT_THROUGHPUT"),
+        "fd_policy_version": FD_POLICY_VERSION,
+        "fd_policy": {
+            "inspection_interval_s": COMPLETION_CONFIG_UPDATES["FD_INSPECTION_INTERVAL"],
+            "max_patrollers": COMPLETION_CONFIG_UPDATES["FD_MAX_PATROLLERS"],
+        },
+        "bandit_reward_parameters": {
+            "objective_mode": BASE_CONFIG.get("BANDIT_OBJECTIVE_MODE"),
+            "completion_weight": BASE_CONFIG.get("BANDIT_COMPLETION_WEIGHT"),
+            "completion_target": BASE_CONFIG.get("BANDIT_COMPLETION_TARGET"),
+            "minimum_terminal_outcomes": BASE_CONFIG.get("BANDIT_MIN_TERMINAL_OUTCOMES"),
+            "feedback_window_s": BASE_CONFIG.get("BANDIT_FEEDBACK_WINDOW"),
+            "latency_reference_s": BASE_CONFIG.get("LATENCY_THRESHOLD_HIGH"),
+            "switch_penalty": BASE_CONFIG.get("BANDIT_SWITCH_PENALTY"),
+            "ucb_alpha": BASE_CONFIG.get("BANDIT_UCB_ALPHA"),
+            "initial_samples_per_action": BASE_CONFIG.get("BANDIT_INITIAL_SAMPLES_PER_ACTION"),
+        },
+        "bandit_context_parameters": {
+            "features": list(FEATURE_NAMES),
+            "arrival_reference_tasks_per_hour": BASE_CONFIG.get("BANDIT_CREATED_TASKS_REF"),
+            "failure_reference_per_robot_hour": BASE_CONFIG.get("BANDIT_FAILURE_REF"),
+            "suspicion_reference_signals_per_hour": BASE_CONFIG.get("BANDIT_SUSPICION_REF"),
+            "network_probes_per_check": BASE_CONFIG.get("NETWORK_PROBE_SAMPLES_PER_CHECK"),
+            "warmup_samples_per_action_context": BASE_CONFIG.get("BANDIT_CONTEXT_MIN_SAMPLES_PER_ACTION"),
+            "context_bin_threshold": BASE_CONFIG.get("BANDIT_CONTEXT_BIN_THRESHOLD"),
         },
         "expiration_time": expiration_metadata(),
         "reuse_rq1": False,
@@ -467,32 +452,34 @@ def run_campaign(args: argparse.Namespace) -> None:
     all_timeseries = [] if args.force else read_rows(TIMESERIES_PATH)
     all_switches = [] if args.force else read_rows(RESULTS_ROOT / "switch_timeline.csv")
     expected_policy = str(BASE_CONFIG["ADAPTATION_POLICY"]).lower()
-    expected_reward_version = str(BASE_CONFIG.get("BANDIT_REWARD_VERSION", "")).lower()
     rows = [
         row for row in rows
         if (
             str(row.get("adaptation_policy", "")).lower() == expected_policy
-            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+            and str(row.get("experiment_profile", "")) == RQ2_EXPERIMENT_PROFILE
+            and str(row.get("fd_policy_version", "")) == FD_POLICY_VERSION
         )
     ]
     all_timeseries = [
         row for row in all_timeseries
         if (
             str(row.get("adaptation_policy", "")).lower() == expected_policy
-            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+            and str(row.get("experiment_profile", "")) == RQ2_EXPERIMENT_PROFILE
+            and str(row.get("fd_policy_version", "")) == FD_POLICY_VERSION
         )
     ]
     all_switches = [
         row for row in all_switches
         if (
             str(row.get("adaptation_policy", "")).lower() == expected_policy
-            and str(row.get("bandit_reward_version", "")).lower() == expected_reward_version
+            and str(row.get("experiment_profile", "")) == RQ2_EXPERIMENT_PROFILE
+            and str(row.get("fd_policy_version", "")) == FD_POLICY_VERSION
         )
     ]
     completed = completed_run_ids([
         row for row in rows
         if str(row.get("log_expire", "")).lower() == "true"
-    ])
+    ], args.sim_days)
     started_at = time.time()
 
     for idx, params in enumerate(combos, start=1):
@@ -568,6 +555,7 @@ def run_campaign(args: argparse.Namespace) -> None:
 
         run_meta = {
             "run_id": rid,
+            "experiment_profile": RQ2_EXPERIMENT_PROFILE,
             "profile": params["profile"],
             "rep": params["rep"],
             "seed": params["seed"],
@@ -575,6 +563,11 @@ def run_campaign(args: argparse.Namespace) -> None:
             "architecture": COORD_TO_ARCH["DA"],
             "adaptation_policy": cfg.get("ADAPTATION_POLICY", ""),
             "bandit_reward_version": cfg.get("BANDIT_REWARD_VERSION", ""),
+            "bandit_objective_mode": cfg.get("BANDIT_OBJECTIVE_MODE", ""),
+            "bandit_completion_weight": cfg.get("BANDIT_COMPLETION_WEIGHT", ""),
+            "fd_policy_version": FD_POLICY_VERSION,
+            "fd_inspection_interval_s": cfg["FD_INSPECTION_INTERVAL"],
+            "fd_max_patrollers": cfg["FD_MAX_PATROLLERS"],
             "source_rq": source_rq,
             "source_run_id": source_run_id,
             "source_logfile": source_logfile,

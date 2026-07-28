@@ -7,6 +7,39 @@ input destination: Int
 // Helper streams to simplify event checking
 output created: Bool   := event == "create"
 output delivered: Bool := event == "deliver"
+output expired: Bool   := event == "expire"
+
+// Task-outcome evidence for the completion-constrained performance objective.
+// Completion is formed from delivered and expired task outcomes over the same
+// rolling horizon; pending tasks are kept as context rather than successes.
+output monitor_created_task_event: Float
+    eval when created with 1.0
+output monitor_delivered_task_event: Float
+    eval when delivered with 1.0
+output monitor_expired_task_event: Float
+    eval when expired with 1.0
+
+// Runtime evidence used by Dynamic Adaptation.  These streams are derived
+// exclusively from events observed by the monitor; no simulation parameter is
+// exposed to the adaptation policy.
+output monitor_message_event: Float
+    eval when event == "message_delivered" or event == "message_lost" with 1.0
+output monitor_message_loss_event: Float
+    eval when event == "message_lost" with 1.0
+output monitor_network_probe_event: Float
+    eval when event == "network_probe_delivered" or event == "network_probe_lost" with 1.0
+output monitor_network_probe_loss_event: Float
+    eval when event == "network_probe_lost" with 1.0
+output monitor_failure_event: Float
+    eval when event == "agent_failed" with 1.0
+output monitor_rescue_request_event: Float
+    eval when event == "rescue_request" with 1.0
+output monitor_fake_evidence_event: Float
+    eval when event == "verified_fake_request" with 1.0
+output monitor_suspicious_signal_event: Float
+    eval when event == "suspicious_signal" with 1.0
+output monitor_coordinator_outage_event: Float
+    eval when event == "coordinator_unavailable" with 1.0
 
 // --- Create Event Stream ---
 
@@ -41,7 +74,7 @@ output latency(id)
     eval when id = itemId and delivered with time - create_item(id).hold(or: 0.0) 
     
     // Close the instance once the delivery latency is calculated
-    close when id = itemId and delivered
+    close when id = itemId and (delivered or expired)
 
 // Minimum expected delivery time from the source room to each destination in
 // the GUH73 scenario: loading + shortest-path movement + drop.
@@ -138,3 +171,17 @@ output latest_latency eval @0.1Hz with global_relative_latency.hold(or: 0.0)
 // Calculate mean relative latency over delivered items in the last simulated hour.
 output mean_relative_latency_1h eval @0.1Hz with global_relative_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0)
 output mean_latency_1h eval @0.1Hz with global_relative_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0)
+
+// One-hour evidence windows, sampled at adaptation-check frequency.
+output monitor_created_tasks_1h eval @0.1Hz with monitor_created_task_event.aggregate(over: 3600s, using: count)
+output monitor_delivered_tasks_1h eval @0.1Hz with monitor_delivered_task_event.aggregate(over: 3600s, using: count)
+output monitor_expired_tasks_1h eval @0.1Hz with monitor_expired_task_event.aggregate(over: 3600s, using: count)
+output monitor_message_count_1h eval @0.1Hz with monitor_message_event.aggregate(over: 3600s, using: count)
+output monitor_message_losses_1h eval @0.1Hz with monitor_message_loss_event.aggregate(over: 3600s, using: count)
+output monitor_network_probe_count_1h eval @0.1Hz with monitor_network_probe_event.aggregate(over: 3600s, using: count)
+output monitor_network_probe_losses_1h eval @0.1Hz with monitor_network_probe_loss_event.aggregate(over: 3600s, using: count)
+output monitor_failures_1h eval @0.1Hz with monitor_failure_event.aggregate(over: 3600s, using: count)
+output monitor_rescue_requests_1h eval @0.1Hz with monitor_rescue_request_event.aggregate(over: 3600s, using: count)
+output monitor_fake_evidence_1h eval @0.1Hz with monitor_fake_evidence_event.aggregate(over: 3600s, using: count)
+output monitor_suspicious_signals_1h eval @0.1Hz with monitor_suspicious_signal_event.aggregate(over: 3600s, using: count)
+output monitor_coordinator_outages_1h eval @0.1Hz with monitor_coordinator_outage_event.aggregate(over: 3600s, using: count)

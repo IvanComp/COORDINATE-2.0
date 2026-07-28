@@ -65,23 +65,24 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('BANDIT_EXPLORATION_EPSILON', 0.08)
     d.setdefault('BANDIT_MIN_EXPLORATION_EPSILON', 0.02)
     d.setdefault('BANDIT_EXPLORATION_DECAY', 0.995)
-    d.setdefault('BANDIT_EXPLORATION_VALUE_FLOOR', 0.10)
     d.setdefault('BANDIT_EXPLORATION_BYPASS_PERSISTENCE', True)
-    d.setdefault('BANDIT_LEARNING_RATE', 0.05)
-    d.setdefault('BANDIT_L2', 0.001)
     d.setdefault('BANDIT_IMPROVEMENT_MARGIN', 0.02)
     d.setdefault('BANDIT_SWITCH_PENALTY', 0.03)
-    d.setdefault('BANDIT_REWARD_VERSION', 'completion_v2')
-    d.setdefault('BANDIT_WEIGHT_LATENCY', 0.20)
-    d.setdefault('BANDIT_WEIGHT_PENDING', 0.30)
-    d.setdefault('BANDIT_WEIGHT_FAILURE', 0.05)
-    d.setdefault('BANDIT_WEIGHT_MESSAGE_LOSS', 0.10)
-    d.setdefault('BANDIT_WEIGHT_DEADLINE_MISS', 0.30)
-    d.setdefault('BANDIT_WEIGHT_THROUGHPUT_SHORTFALL', 0.25)
-    d.setdefault('BANDIT_WEIGHT_IDLE_WHEN_PENDING', 0.05)
-    d.setdefault('BANDIT_WEIGHT_THROUGHPUT', 0.20)
-    d.setdefault('BANDIT_CRITICAL_OVERRIDE', True)
-    d.setdefault('BANDIT_BACKLOG_OVERRIDE_REQUIRES_FAULT', True)
+    d.setdefault('BANDIT_REWARD_VERSION', 'completion-constrained-v1')
+    d.setdefault('BANDIT_COMPLETION_TARGET', 0.65)
+    d.setdefault('BANDIT_MIN_TERMINAL_OUTCOMES', 3)
+    # These normalizers preserve useful variation in the one-hour RTLola
+    # evidence. They are not thresholds and do not encode a mechanism prior.
+    d.setdefault('BANDIT_CREATED_TASKS_REF', 40.0)
+    d.setdefault('BANDIT_FAILURE_REF', 2.5)
+    d.setdefault('BANDIT_SUSPICION_REF', 10.0)
+    d.setdefault('NETWORK_PROBE_SAMPLES_PER_CHECK', 5)
+    d.setdefault('BANDIT_RIDGE', 1.0)
+    d.setdefault('BANDIT_UCB_ALPHA', 0.50)
+    d.setdefault('BANDIT_INITIAL_SAMPLES_PER_ACTION', 2)
+    d.setdefault('BANDIT_CONTEXT_MIN_SAMPLES_PER_ACTION', 1)
+    d.setdefault('BANDIT_CONTEXT_BIN_THRESHOLD', 0.5)
+    d.setdefault('BANDIT_INITIAL_SAMPLING_BYPASS_PERSISTENCE', True)
     d.setdefault('LATENCY_THRESHOLD_LOW', 10.0)
     d.setdefault('LATENCY_THRESHOLD_HIGH', 40.0)
     d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.05)
@@ -118,8 +119,19 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('EXPIRATION_DISTR', ['exponential', 'exponential', 'exponential'])
     d.setdefault('PRIVACY_COMM_TIME_BONUS', [0.0, 0.0, 0.0])
     d.setdefault('PRIVACY_COMP_TIME_BONUS', [0.0, 0.0, 0.0])
-    d.setdefault('COORDINATOR_SERVICE_TIME', 0.0)
+    # Centralized coordination has finite decision capacity; FD patrols are a
+    # bounded shared resource rather than a free inspection loop per robot.
+    d.setdefault('COORDINATOR_SERVICE_TIME', 0.25)
+    d.setdefault('COORDINATOR_FAKE_REQUEST_SERVICE_TIME', d['COORDINATOR_SERVICE_TIME'])
     d.setdefault('COORDINATOR_COMMAND_LOSS_PROB', -1.0)
+    d.setdefault('COORDINATOR_FAILURE_PROB', 0.0)
+    d.setdefault('COORDINATOR_AVAILABLE', True)
+    d.setdefault('FD_INSPECTION_INTERVAL', 15 * 60.0)
+    d.setdefault('FD_MAX_PATROLLERS', 6)
+    d.setdefault('SD_COORDINATION_HOPS', 1)
+    # Verifying a received rescue request is a local decision step. By default
+    # it uses the existing per-agent computation cost from the COORDINATE model.
+    d.setdefault('RESCUE_VERIFICATION_TIME', d.get('COMP_TIME', 0.0))
     # booleans default
     for k in ['LOG_ITEM','LOG_DELIVERY','LOG_LOAD','LOG_DROP','LOG_EXPIRE','LOG_MOVE','LOG_FAIL','LOG_RECOVERY','LOG_HELP','LOG_FAKE','LOG_RESCUE']:
         d.setdefault(k, True if k in ['LOG_ITEM','LOG_DELIVERY','LOG_EXPIRE'] else False)
@@ -156,6 +168,82 @@ def _get_rtlola_latency(rtlola_monitor, timeout: float = 0.0):
         if time.time() >= deadline:
             return None, None
         time.sleep(0.001)
+
+
+def _apply_rtlola_context_metrics(cfg: Cfg, metrics: dict, rtlola_monitor) -> dict:
+    """Use RTLola task outcomes and observed runtime evidence when available."""
+    if not rtlola_monitor:
+        return metrics
+
+    observed = rtlola_monitor.get_all_metrics(timeout=0.0)
+
+    def monitor_value(name: str, default: float = 0.0) -> float:
+        try:
+            value = float(observed.get(name, default))
+        except (TypeError, ValueError):
+            return default
+        return value if np.isfinite(value) else default
+
+    def optional_monitor_value(name: str):
+        if name not in observed:
+            return None
+        return monitor_value(name)
+
+    failures = max(0.0, monitor_value('monitor_failures_1h'))
+    messages = max(0.0, monitor_value('monitor_message_count_1h'))
+    losses = max(0.0, monitor_value('monitor_message_losses_1h'))
+    probe_messages = max(0.0, monitor_value('monitor_network_probe_count_1h'))
+    probe_losses = max(0.0, monitor_value('monitor_network_probe_losses_1h'))
+    fake_evidence = max(0.0, monitor_value('monitor_fake_evidence_1h'))
+    suspicious_signals = max(0.0, monitor_value('monitor_suspicious_signals_1h'))
+    rescue_requests = max(0.0, monitor_value('monitor_rescue_requests_1h'))
+    outages = max(0.0, monitor_value('monitor_coordinator_outages_1h'))
+
+    created = optional_monitor_value('monitor_created_tasks_1h')
+    delivered = optional_monitor_value('monitor_delivered_tasks_1h')
+    expired = optional_monitor_value('monitor_expired_tasks_1h')
+
+    metrics.update({
+        'failures_window': failures,
+        'failure_rate': failures / max(1, int(cfg.N_ROBOTS)),
+        'messages_sent': messages,
+        'messages_lost': losses,
+        'message_loss_rate': losses / max(1.0, messages),
+        'network_probe_count': probe_messages,
+        'network_probe_losses': probe_losses,
+        'network_probe_loss_rate': probe_losses / max(1.0, probe_messages),
+        'suspicion_evidence': fake_evidence,
+        'suspicious_signals_window': suspicious_signals,
+        'rescue_requests': rescue_requests,
+        'suspicion_rate': fake_evidence / max(1.0, rescue_requests),
+        'coordinator_outages': outages,
+        'coordinator_outage_rate': outages / max(1.0, rescue_requests),
+    })
+
+    # Completion is a terminal-outcome rate, not delivered/created in the same
+    # rolling window: the latter is distorted by work created before the window
+    # and by tasks that are still pending. All three event counts originate
+    # from RTLola, with the Python event window retained only as startup fallback.
+    if created is not None and delivered is not None and expired is not None:
+        created_count = max(0, int(round(created)))
+        delivered_count = max(0, int(round(delivered)))
+        expired_count = max(0, int(round(expired)))
+        terminal_count = delivered_count + expired_count
+        pending_tasks = max(0, int(metrics.get('pending_tasks', 0)))
+        metrics.update({
+            'created_window': created_count,
+            'delivered_window': delivered_count,
+            'expired_window': expired_count,
+            'terminal_tasks_window': terminal_count,
+            'completion_available': terminal_count > 0,
+            'completion_rate': delivered_count / terminal_count if terminal_count else 0.0,
+            'completion_source': 'rtlola_terminal_outcomes_1h',
+            'pending_ratio': pending_tasks / max(1, created_count),
+            'deadline_miss_rate': expired_count / max(1, created_count),
+            'throughput_rate': delivered_count / max(1e-9, float(getattr(cfg, 'ADAPTATION_WINDOW', 3600.0))),
+            'throughput_norm': min(1.0, delivered_count / max(1, created_count)),
+        })
+    return metrics
 
 
 def _minimum_delivery_time(cfg: Cfg, space: Space, target_room: Room) -> float:
@@ -215,6 +303,7 @@ def _runtime_adaptation_metrics(
     created_count = len(created_window)
     delivered_count = len(delivered_window)
     expired_count = len(expired_window)
+    terminal_count = delivered_count + expired_count
     pending_ratio = pending_tasks / max(1, created_count)
     failure_rate = len(failure_window) / max(1, int(cfg.N_ROBOTS))
     message_loss_rate = messages_lost / max(1, messages_sent)
@@ -234,6 +323,10 @@ def _runtime_adaptation_metrics(
         'created_window': created_count,
         'delivered_window': delivered_count,
         'expired_window': expired_count,
+        'terminal_tasks_window': terminal_count,
+        'completion_available': terminal_count > 0,
+        'completion_rate': delivered_count / terminal_count if terminal_count else 0.0,
+        'completion_source': 'python_terminal_outcomes_window',
         'pending_ratio': pending_ratio,
         'failures_window': len(failure_window),
         'failure_rate': failure_rate,
@@ -448,6 +541,18 @@ def run(config_path='config.json'):
         bots.append(Robot(cfg, i, i < cfg.N_MALICIOUS, space, logfile))
     botsRandomOrder = list(bots)
 
+    # FD has a finite patrol budget. Slots rotate among idle, healthy robots
+    # and are always scheduled so DA can enter FD at any adaptation point.
+    inspection_interval = max(1.0, float(getattr(cfg, 'FD_INSPECTION_INTERVAL', 15 * 60.0)))
+    fd_patroller_count = min(len(bots), max(1, int(getattr(cfg, 'FD_MAX_PATROLLERS', 4))))
+    for slot in range(fd_patroller_count):
+        clock.scheduleEvent(
+            f'fd-inspection-{slot}',
+            [inspection_interval * slot / fd_patroller_count],
+            ['_'],
+            ['deterministic'],
+        )
+
     # schedule first item
     clock.scheduleEvent('item', [cfg.ITEM_SPAWNING_TIME], [cfg.ITEM_SPAWNING_TRACE], [cfg.ITEM_SPAWNING_DISTR])
 
@@ -472,7 +577,11 @@ def run(config_path='config.json'):
     bandit_policy = None
     bandit_pending_action = None
     bandit_pending_context = None
-    bandit_pending_switched = False
+    bandit_pending_started_at = None
+    bandit_feedback_window = max(
+        float(getattr(cfg, 'ADAPTATION_CHECK_INTERVAL', 300.0)),
+        float(getattr(cfg, 'BANDIT_FEEDBACK_WINDOW', getattr(cfg, 'ADAPTATION_WINDOW', 3600.0))),
+    )
     if cfg.ARCHITECTURE == 'dynamic-adaptation':
         try:
             from .contextual_bandit import BANDIT_POLICIES, ConservativeContextualBandit
@@ -513,6 +622,27 @@ def run(config_path='config.json'):
                         if 'COMM_FAIL_PROB' in phase and cfg.COMM_FAIL_PROB != phase['COMM_FAIL_PROB']:
                             cfg.COMM_FAIL_PROB = phase['COMM_FAIL_PROB']
                             # print(f"[Phase] Time {ts:.1f}: Changed COMM_FAIL_PROB to {cfg.COMM_FAIL_PROB}")
+
+                        if (
+                            'COORDINATOR_SERVICE_TIME' in phase
+                            and cfg.COORDINATOR_SERVICE_TIME != phase['COORDINATOR_SERVICE_TIME']
+                        ):
+                            cfg.COORDINATOR_SERVICE_TIME = phase['COORDINATOR_SERVICE_TIME']
+                            # print(f"[Phase] Time {ts:.1f}: Changed coordinator service time")
+
+                        if (
+                            'COORDINATOR_FAILURE_PROB' in phase
+                            and cfg.COORDINATOR_FAILURE_PROB != phase['COORDINATOR_FAILURE_PROB']
+                        ):
+                            cfg.COORDINATOR_FAILURE_PROB = phase['COORDINATOR_FAILURE_PROB']
+                            # print(f"[Phase] Time {ts:.1f}: Changed coordinator failure probability")
+
+                        if (
+                            'COORDINATOR_AVAILABLE' in phase
+                            and cfg.COORDINATOR_AVAILABLE != phase['COORDINATOR_AVAILABLE']
+                        ):
+                            cfg.COORDINATOR_AVAILABLE = phase['COORDINATOR_AVAILABLE']
+                            # print(f"[Phase] Time {ts:.1f}: Changed coordinator availability")
 
                         if 'RECOVERY_TIME' in phase and cfg.RECOVERY_TIME != phase['RECOVERY_TIME']:
                             cfg.RECOVERY_TIME = phase['RECOVERY_TIME']
@@ -556,8 +686,9 @@ def run(config_path='config.json'):
                     item_id = int(event.split('-')[1])
                     event_type = "expire"
                 
-                # Send to RTLola (only send events that RTLola cares about)
-                if event_type in ["create", "deliver"]:
+                # Send task lifecycle events to RTLola. The monitor derives
+                # completion from delivered and expired terminal outcomes.
+                if event_type in ["create", "deliver", "expire"]:
                     try:
                         rtlola_monitor.send_event(ts, -1, item_id, -1, -1, destination, event_type)
                     except Exception as e:
@@ -575,7 +706,14 @@ def run(config_path='config.json'):
                 itemIdx += 1
                 random.shuffle(botsRandomOrder)
                 for bot in botsRandomOrder:
-                    if bot.getLocation() == space.getSource() and bot.isFree() and bot.isHealthy() and not bot.hasOtherTasks():
+                    if (
+                        bot.getLocation() == space.getSource()
+                        and bot.isFree()
+                        and bot.isHealthy()
+                        and not bot.isRescuing()
+                        and not bot.rescueReserved
+                        and not bot.hasOtherTasks()
+                    ):
                         it = space.getMoreImportantItem(room=space.getSource())
                         if it is not None:
                             bot.loadItem(it, clock.getTime())
@@ -595,6 +733,7 @@ def run(config_path='config.json'):
                 if was_healthy and not bot.isHealthy():
                     failure_window.append(ts)
                     failure_window = _prune_times(failure_window, ts, latency_window_duration)
+                    cfg.record_monitor_event(ts, 'agent_failed')
 
                 if item_before_move is not None and bot.getLocation() == delivery_destination:
                     delivered_window.append(ts)
@@ -616,10 +755,28 @@ def run(config_path='config.json'):
                             print(f"[RTLola] Error sending delivery event: {e}")
             elif event.startswith('recovery-'):
                 idx = int(event.split('-')[1]); bots[idx].recovery(ts)
+                cfg.record_monitor_event(ts, 'agent_recovered')
             elif event.startswith('central-request-'):
                 request_id = int(event.split('-')[2]); space.processCentralRequest(request_id, ts)
+            elif event.startswith('central-decision-'):
+                request_id = int(event.split('-')[2]); space.processCentralDecision(request_id, ts)
             elif event.startswith('central-command-'):
                 request_id = int(event.split('-')[2]); space.processCentralCommand(request_id, ts)
+            elif event.startswith('peer-rescue-'):
+                rescue_id = int(event.split('-')[2]); space.processPeerRescue(rescue_id, ts)
+            elif event.startswith('rescue-verification-'):
+                idx = int(event.split('-')[2]); bots[idx].completeRescueVerification(ts)
+            elif event.startswith('fd-inspection-'):
+                if cfg.current_architecture == 'decentralized':
+                    patroller = space.selectFDPatroller()
+                    if patroller is not None:
+                        patroller.beginFDInspection(ts)
+                clock.scheduleEvent(
+                    event,
+                    [inspection_interval],
+                    ['_'],
+                    ['deterministic'],
+                )
             elif event.startswith('expire-'):
                 idx = int(event.split('-')[1]); item = space.getItembyId(idx); space.expireItem(item, ts)
                 expired_window.append(ts)
@@ -632,6 +789,18 @@ def run(config_path='config.json'):
                     rtlola_monitor.send_event(ts, -1, -1, -1, -1, -1, "adaptation_check")
                 except Exception as e:
                     print(f"[RTLola] Error sending adaptation check: {e}")
+                probe_samples = max(1, int(getattr(cfg, 'NETWORK_PROBE_SAMPLES_PER_CHECK', 5)))
+                probe_loss_probability = max(0.0, min(1.0, float(cfg.COMM_FAIL_PROB)))
+                for _ in range(probe_samples):
+                    probe_event = (
+                        'network_probe_lost'
+                        if np.random.uniform() < probe_loss_probability
+                        else 'network_probe_delivered'
+                    )
+                    try:
+                        rtlola_monitor.send_event(ts, -1, -1, -1, -1, -1, probe_event)
+                    except Exception as e:
+                        print(f"[RTLola] Error sending network probe: {e}")
                 
                 # Start overhead measurement
                 adaptation_start_time = time.time()
@@ -660,6 +829,9 @@ def run(config_path='config.json'):
                     failure_window,
                     latency_window_duration,
                 )
+                runtime_metrics = _apply_rtlola_context_metrics(
+                    cfg, runtime_metrics, rtlola_monitor,
+                )
 
                 if raw_latency is not None:
                     if smoothed_latency is None:
@@ -686,49 +858,92 @@ def run(config_path='config.json'):
                 bandit_update_details = {}
                 bandit_reward = None
                 reward_details = {}
+                bandit_feedback_elapsed = None
+                bandit_feedback_ready = False
 
                 if bandit_policy is not None:
                     from .contextual_bandit import build_context, context_reward
 
                     bandit_context = build_context(cfg, runtime_metrics, effective_latency, current_arch)
+                    decision_due = bandit_pending_action is None
 
                     if bandit_pending_action is not None and bandit_pending_context is not None:
-                        bandit_reward, reward_details = context_reward(
-                            cfg,
-                            bandit_context,
-                            bandit_pending_switched,
-                        )
-                        bandit_update_details = bandit_policy.update(
-                            bandit_pending_action,
-                            bandit_pending_context,
-                            bandit_reward,
-                        ) or {}
+                        bandit_feedback_elapsed = max(0.0, ts - float(bandit_pending_started_at or ts))
+                        if bandit_feedback_elapsed >= bandit_feedback_window:
+                            bandit_reward, reward_details = context_reward(
+                                cfg,
+                                bandit_context,
+                            )
+                            if bandit_reward is not None:
+                                bandit_update_details = bandit_policy.update(
+                                    bandit_pending_action,
+                                    bandit_pending_context,
+                                    bandit_reward,
+                                ) or {}
+                                bandit_pending_action = None
+                                bandit_pending_context = None
+                                bandit_pending_started_at = None
+                                decision_due = True
+                                bandit_feedback_ready = True
+                            else:
+                                switch_reason = 'waiting_terminal_outcomes'
+                        else:
+                            switch_reason = 'waiting_feedback_window'
 
-                    decision = bandit_policy.select(bandit_context, current_arch)
-                    candidate_arch = decision['candidate_architecture']
-                    best_arch = candidate_arch
-                    scores = decision.get('scores', {})
-                    switch_reason = decision.get('reason', 'bandit')
-                    selected_value = scores.get(best_arch)
-                    current_value = scores.get(current_arch)
-                    score_details = {
-                        'policy': 'contextual-bandit',
-                        'state': 'online_learning',
-                        'score': selected_value,
-                        'selected_value': selected_value,
-                        'current_value': current_value,
-                        'greedy_architecture': decision.get('greedy_architecture'),
-                        'estimated_values': decision.get('estimated_values', {}),
-                        'epsilon': decision.get('epsilon'),
-                        'explored': decision.get('explored'),
-                        'improvement_margin': decision.get('improvement_margin'),
-                        'critical_override': decision.get('critical_override', False),
-                        'fd_pressure': decision.get('fd_pressure', False),
-                        'critical_reason': decision.get('critical_reason'),
-                        'reward': bandit_reward,
-                        'reward_details': reward_details,
-                        'update_details': bandit_update_details,
-                    }
+                    if decision_due:
+                        decision = bandit_policy.select(bandit_context, current_arch)
+                        candidate_arch = decision['candidate_architecture']
+                        best_arch = candidate_arch
+                        scores = decision.get('scores', {})
+                        switch_reason = decision.get('reason', 'bandit')
+                        selected_value = scores.get(best_arch)
+                        current_value = scores.get(current_arch)
+                        score_details = {
+                            'policy': 'contextual-bandit',
+                            'state': 'online_learning',
+                            'score': selected_value,
+                            'selected_value': selected_value,
+                            'current_value': current_value,
+                            'greedy_architecture': decision.get('greedy_architecture'),
+                            'estimated_values': decision.get('estimated_values', {}),
+                            'confidence_bounds': decision.get('confidence_bounds', {}),
+                            'selection_switch_cost': decision.get('selection_switch_cost'),
+                            'epsilon': decision.get('epsilon'),
+                            'explored': decision.get('explored'),
+                            'initial_sampling': decision.get('initial_sampling', False),
+                            'improvement_margin': decision.get('improvement_margin'),
+                            'critical_override': decision.get('critical_override', False),
+                            'fd_pressure': decision.get('fd_pressure', False),
+                            'critical_reason': decision.get('critical_reason'),
+                            'context_key': decision.get('context_key'),
+                            'reward': bandit_reward,
+                            'reward_details': reward_details,
+                            'update_details': bandit_update_details,
+                        }
+                    else:
+                        _, confidence_bounds, scores = bandit_policy.values(bandit_context)
+                        selected_value = scores.get(current_arch)
+                        score_details = {
+                            'policy': 'contextual-bandit',
+                            'state': 'waiting_feedback',
+                            'score': selected_value,
+                            'selected_value': selected_value,
+                            'current_value': selected_value,
+                            'estimated_values': {},
+                            'confidence_bounds': confidence_bounds,
+                            'selection_switch_cost': bandit_policy.selection_switch_cost,
+                            'epsilon': bandit_policy.epsilon,
+                            'explored': False,
+                            'initial_sampling': False,
+                            'improvement_margin': bandit_policy.improvement_margin,
+                            'critical_override': False,
+                            'fd_pressure': False,
+                            'critical_reason': None,
+                            'context_key': None,
+                            'reward': bandit_reward,
+                            'reward_details': reward_details,
+                            'update_details': bandit_update_details,
+                        }
                 else:
                     from .architecture_scoring import get_latency_thresholds
                     threshold_context = get_latency_thresholds(cfg, adaptation_latency_history)
@@ -766,13 +981,19 @@ def run(config_path='config.json'):
                         best_arch = current_arch
                         switch_reason = 'cooldown'
                     elif adaptation_policy not in {'latency-threshold', 'legacy', 'latency'}:
-                        required_checks = max(1, int(getattr(cfg, 'ADAPTATION_PERSISTENCE_CHECKS', 2)))
+                        required_checks = (
+                            1 if bandit_policy is not None
+                            else max(1, int(getattr(cfg, 'ADAPTATION_PERSISTENCE_CHECKS', 2)))
+                        )
                         bypass_persistence = (
                             score_details.get('critical_override', False)
                             and _cfg_bool(cfg, 'ADAPTATION_CRITICAL_BYPASS_PERSISTENCE', True)
                         ) or (
                             score_details.get('explored', False)
                             and _cfg_bool(cfg, 'BANDIT_EXPLORATION_BYPASS_PERSISTENCE', True)
+                        ) or (
+                            score_details.get('initial_sampling', False)
+                            and _cfg_bool(cfg, 'BANDIT_INITIAL_SAMPLING_BYPASS_PERSISTENCE', True)
                         )
                         persisted, candidate_history = _candidate_persisted(
                             candidate_history,
@@ -794,10 +1015,10 @@ def run(config_path='config.json'):
                     with open(logfile, 'a') as f:
                         f.write(f'{ts},-2,-1,-1,-1,-1,switch_architecture_{best_arch}\n')
 
-                if bandit_policy is not None:
+                if bandit_policy is not None and bandit_pending_action is None:
                     bandit_pending_action = best_arch
                     bandit_pending_context = bandit_context
-                    bandit_pending_switched = switched_now
+                    bandit_pending_started_at = ts
 
                 scoring_time = time.time() - scoring_start
 
@@ -839,22 +1060,46 @@ def run(config_path='config.json'):
                     'created_window': runtime_metrics.get('created_window'),
                     'delivered_window': runtime_metrics.get('delivered_window'),
                     'expired_window': runtime_metrics.get('expired_window'),
+                    'terminal_tasks_window': runtime_metrics.get('terminal_tasks_window'),
+                    'completion_available': runtime_metrics.get('completion_available'),
+                    'completion_rate': runtime_metrics.get('completion_rate'),
                     'pending_ratio': runtime_metrics.get('pending_ratio'),
                     'failures_window': runtime_metrics.get('failures_window'),
                     'failure_rate': runtime_metrics.get('failure_rate'),
                     'messages_sent': runtime_metrics.get('messages_sent'),
                     'messages_lost': runtime_metrics.get('messages_lost'),
                     'message_loss_rate': runtime_metrics.get('message_loss_rate'),
+                    'network_probe_count': runtime_metrics.get('network_probe_count'),
+                    'network_probe_losses': runtime_metrics.get('network_probe_losses'),
+                    'network_probe_loss_rate': runtime_metrics.get('network_probe_loss_rate'),
                     'deadline_miss_rate': runtime_metrics.get('deadline_miss_rate'),
                     'throughput_rate': runtime_metrics.get('throughput_rate'),
                     'throughput_norm': runtime_metrics.get('throughput_norm'),
                     'idle_agents': runtime_metrics.get('idle_agents'),
                     'idle_ratio': runtime_metrics.get('idle_ratio'),
+                    'suspicion_evidence': runtime_metrics.get('suspicion_evidence'),
+                    'suspicious_signals_window': runtime_metrics.get('suspicious_signals_window'),
+                    'rescue_requests': runtime_metrics.get('rescue_requests'),
+                    'suspicion_rate': runtime_metrics.get('suspicion_rate'),
+                    'coordinator_outages': runtime_metrics.get('coordinator_outages'),
+                    'coordinator_outage_rate': runtime_metrics.get('coordinator_outage_rate'),
                     'adaptation_policy': score_details.get('policy'),
                     'bandit_reward': score_details.get('reward'),
+                    'bandit_feedback_window_s': bandit_feedback_window,
+                    'bandit_feedback_elapsed_s': bandit_feedback_elapsed,
+                    'bandit_feedback_ready': bandit_feedback_ready,
+                    'bandit_pending_action': bandit_pending_action,
+                    'bandit_reward_version': score_details.get('reward_details', {}).get('reward_version'),
+                    'bandit_reward_ready': score_details.get('reward_details', {}).get('reward_ready'),
+                    'bandit_reward_mode': score_details.get('reward_details', {}).get('reward_mode'),
+                    'bandit_completion_target': score_details.get('reward_details', {}).get('completion_target'),
+                    'bandit_completion_rate': score_details.get('reward_details', {}).get('completion_rate'),
+                    'bandit_completion_deficit': score_details.get('reward_details', {}).get('completion_deficit'),
+                    'bandit_terminal_tasks_window': score_details.get('reward_details', {}).get('terminal_tasks_window'),
                     'bandit_badness': score_details.get('reward_details', {}).get('badness'),
                     'bandit_throughput_bonus': score_details.get('reward_details', {}).get('throughput_bonus'),
                     'bandit_switch_penalty': score_details.get('reward_details', {}).get('switch_penalty'),
+                    'bandit_selection_switch_cost': score_details.get('selection_switch_cost'),
                     'bandit_reward_latency': score_details.get('reward_details', {}).get('reward_latency'),
                     'bandit_reward_pending': score_details.get('reward_details', {}).get('reward_pending'),
                     'bandit_reward_failure': score_details.get('reward_details', {}).get('reward_failure'),
@@ -865,31 +1110,33 @@ def run(config_path='config.json'):
                     'bandit_updated_action': score_details.get('update_details', {}).get('updated_action'),
                     'bandit_prediction_before_update': score_details.get('update_details', {}).get('prediction_before_update'),
                     'bandit_prediction_error': score_details.get('update_details', {}).get('prediction_error'),
+                    'bandit_confidence_before_update': score_details.get('update_details', {}).get('confidence_before_update'),
                     'bandit_updates_for_action': score_details.get('update_details', {}).get('updates_for_action'),
                     'bandit_epsilon': score_details.get('epsilon'),
                     'bandit_explored': score_details.get('explored'),
+                    'bandit_initial_sampling': score_details.get('initial_sampling'),
                     'bandit_improvement_margin': score_details.get('improvement_margin'),
                     'bandit_current_value': score_details.get('current_value'),
                     'bandit_selected_value': score_details.get('selected_value'),
                     'bandit_value_ce': score_details.get('estimated_values', {}).get('centralized-impprox'),
                     'bandit_value_sd': score_details.get('estimated_values', {}).get('semi-decentralized'),
                     'bandit_value_fd': score_details.get('estimated_values', {}).get('decentralized'),
+                    'bandit_confidence_ce': score_details.get('confidence_bounds', {}).get('centralized-impprox'),
+                    'bandit_confidence_sd': score_details.get('confidence_bounds', {}).get('semi-decentralized'),
+                    'bandit_confidence_fd': score_details.get('confidence_bounds', {}).get('decentralized'),
                     'bandit_greedy_architecture': score_details.get('greedy_architecture'),
                     'bandit_critical_reason': score_details.get('critical_reason'),
+                    'bandit_context_key': score_details.get('context_key'),
+                    'bandit_regime': score_details.get('regime'),
                     'context_latency_norm': bandit_context.get('latency_norm'),
                     'context_latency_missing': bandit_context.get('latency_missing'),
-                    'context_pending_norm': bandit_context.get('pending_norm'),
+                    'context_completion_rate': bandit_context.get('completion_rate'),
+                    'context_terminal_tasks_window': bandit_context.get('terminal_tasks_window'),
+                    'context_arrival_rate_norm': bandit_context.get('arrival_rate_norm'),
                     'context_failure_norm': bandit_context.get('failure_norm'),
-                    'context_message_loss_rate': bandit_context.get('message_loss_rate'),
-                    'context_deadline_miss_rate': bandit_context.get('deadline_miss_rate'),
-                    'context_throughput_norm': bandit_context.get('throughput_norm'),
-                    'context_idle_ratio': bandit_context.get('idle_ratio'),
-                    'context_malicious_ratio': bandit_context.get('malicious_ratio'),
-                    'context_failure_prob': bandit_context.get('configured_failure_prob'),
-                    'context_comm_loss_prob': bandit_context.get('configured_comm_loss_prob'),
-                    'context_is_ce': bandit_context.get('is_ce'),
-                    'context_is_sd': bandit_context.get('is_sd'),
-                    'context_is_fd': bandit_context.get('is_fd'),
+                    'context_network_probe_loss_rate': bandit_context.get('network_probe_loss_rate'),
+                    'context_suspicion_norm': bandit_context.get('suspicion_norm'),
+                    'completion_source': runtime_metrics.get('completion_source'),
                     'current_architecture': current_arch,
                     'candidate_architecture': candidate_arch,
                     'selected_architecture': best_arch,

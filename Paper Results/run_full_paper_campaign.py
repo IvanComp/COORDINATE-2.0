@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
         "--repetitions",
         type=int,
         default=10,
-        help="Repetitions per configuration. The default extends the current 5-repetition campaign to 10.",
+        help="Repetitions per configuration.",
     )
     parser.add_argument(
         "--rqs",
@@ -107,6 +107,12 @@ def design_total(design: dict[str, Any]) -> Optional[int]:
 
 
 def filter_rows_for_design(rows: list[dict[str, Any]], design: dict[str, Any]) -> list[dict[str, Any]]:
+    experiment_profile = design.get("experiment_profile")
+    if isinstance(experiment_profile, str) and experiment_profile:
+        rows = [
+            row for row in rows
+            if str(row.get("experiment_profile", "")) == experiment_profile
+        ]
     mechanisms = design.get("coordination_mechanisms")
     if not isinstance(mechanisms, list) or not mechanisms:
         return rows

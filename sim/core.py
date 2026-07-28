@@ -30,6 +30,20 @@ class Cfg:
     def record_coordination_message(self, simTime: float, delivered: bool):
         """Track coordination-message outcomes for dynamic-adaptation metrics."""
         self.da_message_events.append((simTime, bool(delivered)))
+        self.record_monitor_event(
+            simTime,
+            'message_delivered' if delivered else 'message_lost',
+        )
+
+    def record_monitor_event(self, simTime: float, event: str):
+        """Forward an observable runtime event to RTLola when it is active."""
+        monitor = getattr(self, 'rtlola_monitor', None)
+        if monitor is None or not monitor.is_running():
+            return
+        try:
+            monitor.send_event(simTime, -1, -1, -1, -1, -1, event)
+        except Exception as exc:
+            print(f'[RTLola] Error sending {event}: {exc}')
 
 class Clock:
     def __init__(self):
@@ -185,12 +199,21 @@ class Robot:
         self.healthy = True
         self.optRoute: List[Room] = []
         self.memoryItem = None
+        # A rescue is a distinct workflow from normal priority preemption.
+        # Keeping it separate prevents a fake request from being abandoned
+        # after the first hop instead of being checked at its reported room.
+        self.rescueMission = None
+        self.rescueReserved = False
+        self._rescue_event_idx = 0
+        self._fd_patrol_cursor = idx
         self.logfile = logfile
 
     # helpers
     def getIdx(self): return self.idx
     def isFree(self): return self.item is None
     def isHealthy(self): return self.healthy
+    def isRescuing(self): return self.rescueMission is not None
+    def isAvailableForRescue(self): return self.isHealthy() and not self.isRescuing() and not self.rescueReserved
     def hasOtherTasks(self): return len(self.optRoute) > 0
     def getItem(self): return self.item
     def setItem(self, item: Item): self.item, item.uber = item, self
@@ -221,6 +244,31 @@ class Robot:
     def _effective_comp_time(self, item: Optional[Item]) -> float:
         return float(self.cfg.COMP_TIME) + self._privacy_bonus_by_importance(item, 'PRIVACY_COMP_TIME_BONUS')
 
+    def beginFDInspection(self, simTime: float):
+        """Start one local FD inspection without exchanging rescue messages."""
+        if (
+            self.cfg.current_architecture != 'decentralized'
+            or not self.isHealthy()
+            or not self.isFree()
+            or self.isRescuing()
+            or self.optRoute
+        ):
+            return
+        target = self.space.nextFDInspectionRoom(self)
+        if target is None or target == self.position:
+            return
+        self.destination = target
+        self.optRoute = self.space.findRoute(
+            self.position, target, strategy=self.cfg.FIND_ROUTE_STRATEGY,
+        )
+        if self.optRoute:
+            self.space.clock.scheduleEvent(
+                f'move-{self.getIdx()}',
+                [self.cfg.MOVEMENT_TIME],
+                [self.cfg.MOVEMENT_TRACE],
+                [self.cfg.MOVEMENT_DISTR],
+            )
+
     def _log(self, simTime, event):
         os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
         new = not os.path.exists(self.logfile)
@@ -248,6 +296,8 @@ class Robot:
         if len(self.space.getItemsByImportance(imp=-1, room=self.position)) == 0 and self.isHealthy():
             self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
             if itemExpired and self.position != self.space.getSource():
+                self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
+            elif not itemExpired and self.optRoute:
                 self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
 
     def loadItem(self, item: Item, simTime):
@@ -291,11 +341,15 @@ class Robot:
         nextRoom = self.optRoute.pop(0)
         self.setLocation(nextRoom)
         if self.cfg.LOG_MOVE: self._log(simTime, 'move')
-        if self.destination == nextRoom and not self.isFree():
-            self.dropItem(simTime); self.memoryItem = None
         if self._fail(simTime):
             self.space.clock.scheduleEvent(f'recovery-{self.getIdx()}', [self.cfg.RECOVERY_TIME], [self.cfg.RECOVERY_TRACE], [self.cfg.RECOVERY_DISTR])
             self.memoryItem = None
+            self.rescueMission = None
+        elif self.isRescuing():
+            self._continueRescueMission(simTime)
+            return
+        elif self.destination == nextRoom and not self.isFree():
+            self.dropItem(simTime); self.memoryItem = None
         elif self.memoryItem is not None:
             if self.memoryItem[0].getImportance() > self.space.getMaxImportance(room=nextRoom):
                 self.optRoute = self.space.findRoute(self.position, self.memoryItem[1], strategy=self.cfg.FIND_ROUTE_STRATEGY)
@@ -313,15 +367,9 @@ class Robot:
             self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
         # malicious fake messages
         if self.isHealthy() and self.malicious and self.cfg.MALICIOUS_FAKE_FAILURES:
-            message_lost = np.random.uniform() < self.cfg.COMM_FAIL_PROB
-            uses_coordination_message = (
-                self.cfg.current_architecture == 'semi-decentralized'
-                or 'centralized-' in self.cfg.current_architecture
-            )
-            if uses_coordination_message and hasattr(self.cfg, 'record_coordination_message'):
-                self.cfg.record_coordination_message(simTime, not message_lost)
-            if not message_lost:
-                self._fakeFailure(nextRoom, simTime)
+            # The coordination layer models delivery (or loss) of the actual
+            # rescue request.  A malicious agent still attempts the request.
+            self._fakeFailure(nextRoom, simTime)
 
     def _fail(self, simTime):
         if np.random.uniform() < self.cfg.FAIL_PROB:
@@ -330,21 +378,13 @@ class Robot:
             if self.item is not None:
                 itemToDrop = self.item
                 self.dropItem(simTime)
-                message_lost = np.random.uniform() < self.cfg.COMM_FAIL_PROB
-                uses_coordination_message = (
-                    self.cfg.current_architecture == 'semi-decentralized'
-                    or 'centralized-' in self.cfg.current_architecture
-                )
-                if uses_coordination_message and hasattr(self.cfg, 'record_coordination_message'):
-                    self.cfg.record_coordination_message(simTime, not message_lost)
-                if not message_lost:
-                    if self.cfg.current_architecture == 'semi-decentralized':
-                        importance = itemToDrop.getImportance() if not self.malicious else len(self.cfg.IMPORTANCE_PROBABILITIES) + 1
-                        self._sendPeers(importance, self.position, simTime)
-                    elif 'centralized-' in self.cfg.current_architecture:
-                        strat = self.cfg.current_architecture.split('-')[1]
-                        importance = itemToDrop.getImportance() if not self.malicious else len(self.cfg.IMPORTANCE_PROBABILITIES) + 1
-                        self._sendMaster(importance, self.position, simTime, strat)
+                if self.cfg.current_architecture == 'semi-decentralized':
+                    importance = itemToDrop.getImportance() if not self.malicious else len(self.cfg.IMPORTANCE_PROBABILITIES) + 1
+                    self._sendPeers(importance, self.position, simTime)
+                elif 'centralized-' in self.cfg.current_architecture:
+                    strat = self.cfg.current_architecture.split('-')[1]
+                    importance = itemToDrop.getImportance() if not self.malicious else len(self.cfg.IMPORTANCE_PROBABILITIES) + 1
+                    self._sendMaster(importance, self.position, simTime, strat)
             return True
         return False
 
@@ -362,18 +402,29 @@ class Robot:
     def _sendPeers(self, itemImportance, position, simTime, fake=False):
         near = self.space.getNearRobots(self)
         if self.cfg.LOG_HELP and not fake: self._log(simTime, 'help')
+        if hasattr(self.cfg, 'record_monitor_event'):
+            self.cfg.record_monitor_event(simTime, 'rescue_request')
         # choose a helper among close robots with min importance
         cand = self.space.getRobotsByImportance(self, near, itemImportance)
         if len(cand) == 0: return None
         helper = random.choice(cand)
-        helper._abortMission(itemImportance, position, simTime)
+        # SD remains peer-local, but the rescue request still traverses one
+        # communication hop before a helper can change mission.
+        self.space.schedulePeerRescue(self, helper, itemImportance, position, simTime, fake=fake)
 
     def _sendMaster(self, itemImportance, position, simTime, strategy, fake=False):
         if self.cfg.LOG_HELP and not fake: self._log(simTime, 'help')
+        if hasattr(self.cfg, 'record_monitor_event'):
+            self.cfg.record_monitor_event(simTime, 'rescue_request')
         self.space.scheduleCentralRequest(self, itemImportance, position, simTime, strategy, fake=fake)
 
     def _fakeFailure(self, position, simTime):
         if self.cfg.LOG_FAKE: self._log(simTime, 'fakeFailure')
+        # Endpoint telemetry observes a suspicious false-failure signal before
+        # the active coordination mechanism decides whether to act on it.
+        # This makes the DA context independent of the preceding architecture.
+        if hasattr(self.cfg, 'record_monitor_event'):
+            self.cfg.record_monitor_event(simTime, 'suspicious_signal')
         maxImp = len(self.cfg.IMPORTANCE_PROBABILITIES) + 1
         if self.cfg.current_architecture == 'semi-decentralized':
             self._sendPeers(maxImp, self.position, simTime, fake=True)
@@ -381,21 +432,122 @@ class Robot:
             strat = self.cfg.current_architecture.split('-')[1]
             self._sendMaster(maxImp, self.position, simTime, strat, fake=True)
 
-    def _abortMission(self, newItemImportance, helpRoom, simTime):
-        if self.cfg.LOG_RESCUE: self._log(simTime, 'rescue')
-        if helpRoom == self.position:
-            if self.canLoadItem():
-                self.space.clock.removeEvent(f'move-{self.getIdx()}')
-                self.loadItem(self.space.getMoreImportantItem(room=self.position), simTime)
-        elif self.getItemImportance() < newItemImportance and self.isHealthy():
-            if len(self.optRoute) == 0 or helpRoom != self.optRoute[0]:
-                if not self.isFree():
-                    self.memoryItem = [self.item, self.position]
-                    self.dropItem(simTime)
-                self.space.clock.removeEvent(f'move-{self.getIdx()}')
-                self.destination = helpRoom
+    def _scheduleRescueVerification(self, simTime):
+        if self.rescueMission is not None:
+            self.rescueMission['verification_pending'] = True
+        self._rescue_event_idx += 1
+        verification_time = max(
+            0.0,
+            float(getattr(self.cfg, 'RESCUE_VERIFICATION_TIME', self.cfg.COMP_TIME)),
+        )
+        self.space.clock.scheduleEvent(
+            f'rescue-verification-{self.getIdx()}-{self._rescue_event_idx}',
+            [verification_time],
+            ['_'],
+            ['deterministic'],
+        )
+
+    def _resumeInterruptedMission(self, simTime):
+        mission = self.rescueMission
+        if mission is None:
+            return
+
+        resume_item = mission['resume_item']
+        resume_room = mission['resume_room']
+        if resume_item is None:
+            self.rescueMission = None
+            if self.position != self.space.getSource():
+                self.destination = self.space.getSource()
                 self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
                 self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
+            return
+
+        if self.position == resume_room:
+            self.rescueMission = None
+            if resume_item in self.space.availItems and resume_item.getLocation() == self.position:
+                self.loadItem(resume_item, simTime)
+            elif self.canLoadItem():
+                self.loadItem(self.space.getMoreImportantItem(room=self.position), simTime)
+            return
+
+        mission['stage'] = 'return'
+        self.destination = resume_room
+        self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
+        self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
+
+    def _continueRescueMission(self, simTime):
+        mission = self.rescueMission
+        if mission is None:
+            return
+
+        if mission['stage'] == 'return':
+            if self.position == mission['resume_room']:
+                self._resumeInterruptedMission(simTime)
+            elif self.optRoute:
+                self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
+            return
+
+        if self.position != mission['help_room']:
+            if self.optRoute:
+                self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
+            return
+
+        if mission['fake']:
+            if not mission.get('verification_pending', False):
+                self._scheduleRescueVerification(simTime)
+            return
+
+        rescue_item = self.space.getMoreImportantItem(room=self.position)
+        self.rescueMission = None
+        if rescue_item is not None:
+            self.loadItem(rescue_item, simTime)
+        else:
+            self.rescueMission = mission
+            self._resumeInterruptedMission(simTime)
+
+    def completeRescueVerification(self, simTime):
+        """Resume after reaching a fake rescue location and finding no task."""
+        if (
+            self.rescueMission is not None
+            and self.rescueMission['fake']
+            and self.rescueMission.get('verification_pending', False)
+        ):
+            self.rescueMission['verification_pending'] = False
+            if hasattr(self.cfg, 'record_monitor_event'):
+                self.cfg.record_monitor_event(simTime, 'verified_fake_request')
+            self._resumeInterruptedMission(simTime)
+
+    def _abortMission(self, newItemImportance, helpRoom, simTime, fake=False):
+        if self.cfg.LOG_RESCUE: self._log(simTime, 'rescue')
+        if not self.isAvailableForRescue() or self.getItemImportance() >= newItemImportance:
+            return False
+
+        resume_item = self.item
+        resume_room = self.position
+        if not self.isFree():
+            self.dropItem(simTime)
+        self.space.clock.removeEvent(f'move-{self.getIdx()}')
+        self.rescueMission = {
+            'fake': bool(fake),
+            'help_room': helpRoom,
+            'requested_importance': newItemImportance,
+            'resume_item': resume_item,
+            'resume_room': resume_room,
+            'stage': 'outbound',
+            'verification_pending': False,
+        }
+
+        if self.position == helpRoom:
+            if fake:
+                self._scheduleRescueVerification(simTime)
+            else:
+                self._continueRescueMission(simTime)
+            return True
+
+        self.destination = helpRoom
+        self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
+        self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
+        return True
 
 
 class Space:
@@ -413,12 +565,18 @@ class Space:
         self.robotPositionDict: Dict[Robot, Room] = {}
         self._central_request_idx = 0
         self._central_requests = {}
+        self._central_decisions = {}
         self._central_commands = {}
+        self._peer_rescue_idx = 0
+        self._peer_rescues = {}
         self._coordinator_available_at = 0.0
+        self._fd_patrol_cursor = 0
+        self._fd_patroller_cursor = 0
         self.central_coordination_stats = {
             'requests': 0,
             'commands_sent': 0,
             'commands_lost': 0,
+            'coordinator_failures': 0,
             'queue_delay_s': 0.0,
         }
 
@@ -427,39 +585,116 @@ class Space:
     def getClock(self): return self.clock
     def getAllRobots(self): return list(self.robotPositionDict.keys())
 
+    def nextFDInspectionRoom(self, robot: Robot) -> Optional[Room]:
+        """Return the next room in a shared, capacity-limited FD patrol."""
+        candidates = [room for room in self.rooms if room != self.source]
+        if not candidates:
+            return None
+        index = self._fd_patrol_cursor % len(candidates)
+        self._fd_patrol_cursor += 1
+        return candidates[index]
+
+    def selectFDPatroller(self) -> Optional[Robot]:
+        """Rotate finite FD patrol slots among currently idle, healthy robots."""
+        candidates = [
+            bot for bot in self.getAllRobots()
+            if bot.isHealthy() and bot.isFree() and not bot.isRescuing() and not bot.optRoute
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda bot: bot.getIdx())
+        index = self._fd_patroller_cursor % len(candidates)
+        self._fd_patroller_cursor += 1
+        return candidates[index]
+
     def setRobotPosition(self, robot: Robot, room: Room):
         self.robotPositionDict[robot] = room
 
     def getNearRobots(self, askingRobot: Robot) -> List[Robot]:
         targetRoom = askingRobot.getLocation()
+        # SD coordinates within a bounded neighbourhood, rather than only
+        # with robots occupying the same edge of the topology. The radius is
+        # configurable and remains strictly smaller than global CE visibility.
+        hops = max(1, int(getattr(self.cfg, 'SD_COORDINATION_HOPS', 1)))
+        proximity = targetRoom.getProximity()
         outs = []
         for bot, room in self.robotPositionDict.items():
-            if bot != askingRobot and (room == targetRoom or room.isAdjacent(targetRoom)):
+            if bot != askingRobot and proximity.get(room, float('inf')) <= hops:
                 outs.append(bot)
         return outs
 
     def getRobotsByImportance(self, askingRobot: Robot, bots: List[Robot], itemImportance: int) -> List[Robot]:
-        bots = [b for b in bots if b != askingRobot]
+        bots = [b for b in bots if b != askingRobot and b.isAvailableForRescue()]
         minImp = itemImportance
         for b in bots:
-            if b.isHealthy():
+            if b.isAvailableForRescue():
                 curr = b.getItemImportance()
                 if curr == -1:
                     minImp = curr; break
                 elif curr < minImp:
                     minImp = curr
         if minImp >= itemImportance: return []
-        return [b for b in bots if b.isHealthy() and b.getItemImportance() == minImp]
+        return [b for b in bots if b.isAvailableForRescue() and b.getItemImportance() == minImp]
 
     def getRobotsByProximity(self, askingRobot: Robot, bots: List[Robot], targetRoom: Room) -> List[Robot]:
-        bots = [b for b in bots if b != askingRobot and b.isHealthy()]
+        bots = [b for b in bots if b != askingRobot and b.isAvailableForRescue()]
         prox = targetRoom.getProximity()
         minH = min([prox[self.robotPositionDict[b]] for b in bots], default=10**9)
         return [b for b in bots if prox[self.robotPositionDict[b]] == minH]
 
+    def schedulePeerRescue(self, requester: Robot, helper: Robot, itemImportance: int,
+                           position: Room, simTime: float, fake: bool = False):
+        """Deliver a peer-local SD rescue request after one communication hop."""
+        message_lost = np.random.uniform() < max(
+            0.0, min(1.0, float(getattr(self.cfg, 'COMM_FAIL_PROB', 0.0))),
+        )
+        if hasattr(self.cfg, 'record_coordination_message'):
+            self.cfg.record_coordination_message(simTime, not message_lost)
+        if message_lost:
+            if self.cfg.LOG_HELP and not fake:
+                requester._log(simTime, 'peerRequestLost')
+            return
+
+        self._peer_rescue_idx += 1
+        rescue_id = self._peer_rescue_idx
+        helper.rescueReserved = True
+        self._peer_rescues[rescue_id] = {
+            'requester': requester,
+            'helper': helper,
+            'importance': itemImportance,
+            'position': position,
+            'fake': fake,
+        }
+        self.clock.scheduleEvent(
+            f'peer-rescue-{rescue_id}',
+            [self.cfg.COMM_TIME],
+            [self.cfg.COMM_TRACE],
+            [self.cfg.COMM_DISTR],
+        )
+
+    def processPeerRescue(self, rescue_id: int, simTime: float):
+        rescue = self._peer_rescues.pop(rescue_id, None)
+        if rescue is None:
+            return
+        helper = rescue['helper']
+        helper.rescueReserved = False
+        helper._abortMission(
+            rescue['importance'], rescue['position'], simTime, fake=rescue['fake']
+        )
+
     def scheduleCentralRequest(self, requester: Robot, itemImportance: int, position: Room,
                                simTime: float, strategy: str, fake: bool = False):
         """Schedule the requester-to-coordinator hop before central dispatch."""
+        message_lost = np.random.uniform() < max(
+            0.0, min(1.0, float(getattr(self.cfg, 'COMM_FAIL_PROB', 0.0))),
+        )
+        if hasattr(self.cfg, 'record_coordination_message'):
+            self.cfg.record_coordination_message(simTime, not message_lost)
+        if message_lost:
+            if self.cfg.LOG_HELP and not fake:
+                requester._log(simTime, 'centralRequestLost')
+            return
+
         self._central_request_idx += 1
         request_id = self._central_request_idx
         self._central_requests[request_id] = {
@@ -496,21 +731,71 @@ class Space:
         return random.choice(candidates) if candidates else None
 
     def processCentralRequest(self, request_id: int, simTime: float):
-        """Queue a central decision and schedule its coordinator-to-helper command."""
+        """Queue a request for finite-capacity central processing."""
         request = self._central_requests.pop(request_id, None)
         if request is None:
             return
+
+        # CE has a single coordinator. If it is unavailable, the rescue cannot
+        # be dispatched; SD and FD do not traverse this code path.
+        coordinator_available = bool(getattr(self.cfg, 'COORDINATOR_AVAILABLE', True))
+        if not coordinator_available:
+            self.central_coordination_stats['coordinator_failures'] += 1
+            if hasattr(self.cfg, 'record_coordination_message'):
+                self.cfg.record_coordination_message(simTime, False)
+            if hasattr(self.cfg, 'record_monitor_event'):
+                self.cfg.record_monitor_event(simTime, 'coordinator_unavailable')
+            if self.cfg.LOG_HELP and not request['fake']:
+                request['requester']._log(simTime, 'centralCoordinatorUnavailable')
+            return
+
+        # Every received report, including a fake one, consumes a coordinator
+        # service slot before the coordinator can determine whether a helper
+        # is available. This is the intrinsic CE control-plane bottleneck.
+        service_time_key = (
+            'COORDINATOR_FAKE_REQUEST_SERVICE_TIME'
+            if request['fake'] else 'COORDINATOR_SERVICE_TIME'
+        )
+        service_time = max(0.0, float(getattr(
+            self.cfg, service_time_key, getattr(self.cfg, 'COORDINATOR_SERVICE_TIME', 0.0),
+        )))
+        service_start = max(simTime, self._coordinator_available_at)
+        queue_delay = service_start - simTime
+        self._coordinator_available_at = service_start + service_time
+        self.central_coordination_stats['queue_delay_s'] += queue_delay
+        self._central_decisions[request_id] = request
+        self.clock.scheduleEvent(
+            f'central-decision-{request_id}',
+            [queue_delay + service_time],
+            ['_'],
+            ['deterministic'],
+        )
+
+    def processCentralDecision(self, request_id: int, simTime: float):
+        """Finish a queued decision and dispatch a helper when possible."""
+        request = self._central_decisions.pop(request_id, None)
+        if request is None:
+            return
+
+        coordinator_available = bool(getattr(self.cfg, 'COORDINATOR_AVAILABLE', True))
+        coordinator_failure_prob = float(getattr(self.cfg, 'COORDINATOR_FAILURE_PROB', 0.0))
+        coordinator_failure_prob = min(1.0, max(0.0, coordinator_failure_prob))
+        if not coordinator_available or np.random.uniform() < coordinator_failure_prob:
+            self.central_coordination_stats['coordinator_failures'] += 1
+            if hasattr(self.cfg, 'record_coordination_message'):
+                self.cfg.record_coordination_message(simTime, False)
+            if hasattr(self.cfg, 'record_monitor_event'):
+                self.cfg.record_monitor_event(simTime, 'coordinator_unavailable')
+            if self.cfg.LOG_HELP and not request['fake']:
+                request['requester']._log(simTime, 'centralCoordinatorUnavailable')
+            return
+
         helper = self._selectCentralHelper(
             request['requester'], request['importance'], request['position'], request['strategy']
         )
         if helper is None:
             return
-
-        service_time = max(0.0, float(getattr(self.cfg, 'COORDINATOR_SERVICE_TIME', 0.0)))
-        service_start = max(simTime, self._coordinator_available_at)
-        queue_delay = service_start - simTime
-        self._coordinator_available_at = service_start + service_time
-        self.central_coordination_stats['queue_delay_s'] += queue_delay
+        helper.rescueReserved = True
 
         command_loss_prob = float(getattr(self.cfg, 'COORDINATOR_COMMAND_LOSS_PROB', -1.0))
         if command_loss_prob < 0.0:
@@ -519,6 +804,7 @@ class Space:
         if hasattr(self.cfg, 'record_coordination_message'):
             self.cfg.record_coordination_message(simTime, not command_lost)
         if command_lost:
+            helper.rescueReserved = False
             self.central_coordination_stats['commands_lost'] += 1
             if self.cfg.LOG_HELP and not request['fake']:
                 request['requester']._log(simTime, 'centralCommandLost')
@@ -534,9 +820,9 @@ class Space:
         self.central_coordination_stats['commands_sent'] += 1
         self.clock.scheduleEvent(
             f'central-command-{request_id}',
-            [queue_delay + service_time, self.cfg.COMM_TIME],
-            ['_', self.cfg.COMM_TRACE],
-            ['deterministic', self.cfg.COMM_DISTR],
+            [self.cfg.COMM_TIME],
+            [self.cfg.COMM_TRACE],
+            [self.cfg.COMM_DISTR],
         )
 
     def processCentralCommand(self, request_id: int, simTime: float):
@@ -545,7 +831,8 @@ class Space:
             return
         if self.cfg.LOG_HELP and not command['fake']:
             command['requester']._log(simTime, 'centralCommand')
-        command['helper']._abortMission(command['importance'], command['position'], simTime)
+        command['helper'].rescueReserved = False
+        command['helper']._abortMission(command['importance'], command['position'], simTime, fake=command['fake'])
 
     # items
     def newItem(self, item: Item):

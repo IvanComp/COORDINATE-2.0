@@ -38,6 +38,7 @@ COORD_TO_ARCH = {
 }
 
 ARCH_TO_COORD = {arch: label for label, arch in COORD_TO_ARCH.items()}
+FD_POLICY_VERSION = "limited-patrol-v2"
 
 
 BASE_CONFIG = {
@@ -78,6 +79,13 @@ BASE_CONFIG = {
     "RECOVERY_TIME": 1800.0,
     "RECOVERY_DISTR": "exponential",
     "RECOVERY_TRACE": "_",
+    "COORDINATOR_SERVICE_TIME": 0.25,
+    "COORDINATOR_FAKE_REQUEST_SERVICE_TIME": 0.25,
+    "COORDINATOR_FAILURE_PROB": 0.0,
+    "COORDINATOR_AVAILABLE": True,
+    "FD_INSPECTION_INTERVAL": 2 * 60.0,
+    "FD_MAX_PATROLLERS": 2,
+    "SD_COORDINATION_HOPS": 1,
     "LOG_ITEM": True,
     "LOG_DELIVERY": True,
     "LOG_LOAD": False,
@@ -90,17 +98,27 @@ BASE_CONFIG = {
     "LOG_FAKE": False,
     "LOG_RESCUE": False,
     "ADAPTATION_POLICY": "contextual-bandit",
-    "BANDIT_REWARD_VERSION": "completion_v2",
-    "BANDIT_WEIGHT_LATENCY": 0.20,
-    "BANDIT_WEIGHT_PENDING": 0.30,
-    "BANDIT_WEIGHT_FAILURE": 0.05,
-    "BANDIT_WEIGHT_MESSAGE_LOSS": 0.10,
-    "BANDIT_WEIGHT_DEADLINE_MISS": 0.30,
-    "BANDIT_WEIGHT_THROUGHPUT_SHORTFALL": 0.25,
-    "BANDIT_WEIGHT_IDLE_WHEN_PENDING": 0.05,
-    "BANDIT_WEIGHT_THROUGHPUT": 0.20,
-    "BANDIT_BACKLOG_OVERRIDE_REQUIRES_FAULT": True,
+    "BANDIT_REWARD_VERSION": "weighted-cw50-v1",
+    "BANDIT_OBJECTIVE_MODE": "weighted",
+    "BANDIT_COMPLETION_WEIGHT": 0.50,
+    "BANDIT_COMPLETION_TARGET": 0.65,
+    "BANDIT_MIN_TERMINAL_OUTCOMES": 3,
+    "BANDIT_CREATED_TASKS_REF": 40.0,
+    "BANDIT_FAILURE_REF": 2.5,
+    "BANDIT_SUSPICION_REF": 10.0,
+    "BANDIT_RIDGE": 1.0,
+    "BANDIT_UCB_ALPHA": 0.50,
+    "BANDIT_INITIAL_SAMPLES_PER_ACTION": 1,
+    "BANDIT_CONTEXT_MIN_SAMPLES_PER_ACTION": 1,
+    "BANDIT_CONTEXT_BIN_THRESHOLD": 0.5,
+    "BANDIT_INITIAL_SAMPLING_BYPASS_PERSISTENCE": True,
+    "BANDIT_IMPROVEMENT_MARGIN": 0.03,
+    "BANDIT_SWITCH_PENALTY": 0.03,
+    "NETWORK_PROBE_SAMPLES_PER_CHECK": 5,
     "ADAPTATION_CHECK_INTERVAL": 10 * 60.0,
+    "ADAPTATION_WINDOW": 60 * 60.0,
+    "BANDIT_FEEDBACK_WINDOW": 60 * 60.0,
+    "ADAPTATION_MIN_SWITCH_INTERVAL": 60 * 60.0,
     "LATENCY_THRESHOLD_LOW": 10 * 60.0,
     "LATENCY_THRESHOLD_HIGH": 40 * 60.0,
     "RTLOLA_METRIC_TIMEOUT": 0.05,
@@ -278,6 +296,8 @@ def row_logs_expiration(row: dict[str, Any]) -> bool:
 
 
 def row_matches_current_expiration(row: dict[str, Any]) -> bool:
+    if str(row.get("fd_policy_version", "")) != FD_POLICY_VERSION:
+        return False
     expected = expiration_metadata()
     for key, expected_value in expected.items():
         try:
