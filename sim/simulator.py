@@ -541,14 +541,32 @@ def run(config_path='config.json'):
         bots.append(Robot(cfg, i, i < cfg.N_MALICIOUS, space, logfile))
     botsRandomOrder = list(bots)
 
-    # FD has a finite patrol budget. Slots rotate among idle, healthy robots
-    # and are always scheduled so DA can enter FD at any adaptation point.
+    # Legacy FD is strictly local: agents only inspect tasks when their normal
+    # routes bring them to a room. Newer scenarios can opt into a bounded
+    # patrol explicitly, without changing the historical baseline.
     inspection_interval = max(1.0, float(getattr(cfg, 'FD_INSPECTION_INTERVAL', 15 * 60.0)))
-    fd_patroller_count = min(len(bots), max(1, int(getattr(cfg, 'FD_MAX_PATROLLERS', 4))))
+    fd_patroller_count = 0
+    if bool(getattr(cfg, 'FD_PATROL_ENABLED', True)):
+        fd_patroller_count = min(len(bots), max(0, int(getattr(cfg, 'FD_MAX_PATROLLERS', 4))))
     for slot in range(fd_patroller_count):
         clock.scheduleEvent(
             f'fd-inspection-{slot}',
             [inspection_interval * slot / fd_patroller_count],
+            ['_'],
+            ['deterministic'],
+        )
+
+    # FD local scouts are fixed agents. They independently choose a local
+    # random walk; unlike the retired patrol, no shared cursor or dispatcher
+    # assigns robots or rooms.
+    local_scout_count = 0
+    if bool(getattr(cfg, 'FD_LOCAL_SEARCH_ENABLED', False)):
+        local_scout_count = min(len(bots), max(0, int(getattr(cfg, 'FD_LOCAL_SEARCH_AGENT_COUNT', 0))))
+    local_search_interval = max(1.0, float(getattr(cfg, 'FD_LOCAL_SEARCH_INTERVAL', 15 * 60.0)))
+    for idx in range(local_scout_count):
+        clock.scheduleEvent(
+            f'fd-local-search-{idx}',
+            [local_search_interval * idx / max(1, local_scout_count)],
             ['_'],
             ['deterministic'],
         )
@@ -774,6 +792,16 @@ def run(config_path='config.json'):
                 clock.scheduleEvent(
                     event,
                     [inspection_interval],
+                    ['_'],
+                    ['deterministic'],
+                )
+            elif event.startswith('fd-local-search-'):
+                idx = int(event.rsplit('-', 1)[1])
+                if cfg.current_architecture == 'decentralized':
+                    bots[idx].beginFDLocalSearch(ts, force=True)
+                clock.scheduleEvent(
+                    event,
+                    [local_search_interval],
                     ['_'],
                     ['deterministic'],
                 )

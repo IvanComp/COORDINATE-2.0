@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sim import simulator  # noqa: E402
+from sim.env_maps import topologyName_dict  # noqa: E402
 from sim.rtlola_monitor import resolve_rtlola_binary  # noqa: E402
 
 
@@ -38,7 +39,18 @@ COORD_TO_ARCH = {
 }
 
 ARCH_TO_COORD = {arch: label for label, arch in COORD_TO_ARCH.items()}
-FD_POLICY_VERSION = "limited-patrol-v2"
+FD_POLICY_VERSION = "legacy-local-retry-v7"
+
+EXTENDED_ROOM_COUNTS = [4, 9, 16, 25, 36, 49]
+EXTENDED_ITEM_SPAWNING_TIMES = [90, 120, 150, 180, 210, 240, 270, 300]
+EXTENDED_ROBOT_COUNTS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+EXTENDED_NOMINAL_TOPOLOGY = "ring"
+EXTENDED_NOMINAL_ROOMS = 25
+EXTENDED_NOMINAL_SPAWN = 120
+EXTENDED_NOMINAL_ROBOTS = 20
+EXTENDED_NOMINAL_MALICIOUS = 12
+EXTENDED_NOMINAL_FAIL_PROB = 0.09
+EXTENDED_NOMINAL_MSG_LOSS = 0.03
 
 
 BASE_CONFIG = {
@@ -83,8 +95,15 @@ BASE_CONFIG = {
     "COORDINATOR_FAKE_REQUEST_SERVICE_TIME": 0.25,
     "COORDINATOR_FAILURE_PROB": 0.0,
     "COORDINATOR_AVAILABLE": True,
+    "FD_PATROL_ENABLED": False,
     "FD_INSPECTION_INTERVAL": 2 * 60.0,
-    "FD_MAX_PATROLLERS": 2,
+    "FD_MAX_PATROLLERS": 0,
+    "FD_LOCAL_SEARCH_ENABLED": False,
+    "FD_LOCAL_SEARCH_PROBABILITY": 0.0,
+    "FD_LOCAL_SEARCH_HOPS": 3,
+    "FD_LOCAL_SEARCH_AGENT_COUNT": 0,
+    "FD_LOCAL_SEARCH_INTERVAL": 15 * 60.0,
+    "FD_REQUEUE_ON_FAILURE": True,
     "SD_COORDINATION_HOPS": 1,
     "LOG_ITEM": True,
     "LOG_DELIVERY": True,
@@ -123,6 +142,91 @@ BASE_CONFIG = {
     "LATENCY_THRESHOLD_HIGH": 40 * 60.0,
     "RTLOLA_METRIC_TIMEOUT": 0.05,
 }
+
+
+def extended_scenario_updates(
+    *,
+    topology_type: str,
+    n_rooms: int,
+    n_robots: int,
+    n_malicious: int,
+    item_spawning_time: float,
+    fail_prob: float,
+    msg_loss_prob: float,
+    comp_time: float = 0.03,
+    comm_time: float = 0.03,
+) -> dict[str, Any]:
+    """Return the common extended campaign configuration used by RQ3 and RQ4."""
+    return {
+        "TOPOLOGY_NAME": f"{topology_type}{n_rooms}",
+        "N_ROOMS": n_rooms,
+        "SOURCE": 0,
+        "TARGETS": -1,
+        "ITEM_SPAWNING_TIME": item_spawning_time,
+        "IMPORTANCE_PROBABILITIES": [0.55, 0.25, 0.20],
+        "EXPIRATION_TIME": [28800, 14400, 7200],
+        "EXPIRATION_DISTR": ["deterministic", "deterministic", "deterministic"],
+        "N_ROBOTS": n_robots,
+        "N_MALICIOUS": n_malicious,
+        "FAIL_PROB": fail_prob,
+        "COMM_FAIL_PROB": msg_loss_prob,
+        "COMP_TIME": comp_time,
+        "COMM_TIME": comm_time,
+        "ADAPTATION_CHECK_INTERVAL": 60 * 60.0,
+        "ADAPTATION_WINDOW": 60 * 60.0,
+        "BANDIT_FEEDBACK_WINDOW": 60 * 60.0,
+        "ADAPTATION_MIN_SWITCH_INTERVAL": 60 * 60.0,
+        "ADAPTATION_PERSISTENCE_CHECKS": 1,
+        "BANDIT_EXPLORATION_EPSILON": 0.02,
+        "BANDIT_MIN_EXPLORATION_EPSILON": 0.0,
+        "BANDIT_EXPLORATION_BYPASS_PERSISTENCE": False,
+        "FD_PATROL_ENABLED": False,
+        "FD_MAX_PATROLLERS": 0,
+        "FD_LOCAL_SEARCH_ENABLED": False,
+        "FD_LOCAL_SEARCH_PROBABILITY": 0.0,
+        "FD_LOCAL_SEARCH_HOPS": 3,
+        "FD_LOCAL_SEARCH_AGENT_COUNT": 0,
+        "FD_LOCAL_SEARCH_INTERVAL": 15 * 60.0,
+        "FD_REQUEUE_ON_FAILURE": True,
+    }
+
+
+def build_extended_daily_phases(
+    *,
+    sim_days: int,
+    base_fail_prob: float,
+    base_msg_loss: float,
+    n_robots: int,
+    n_malicious: int,
+    item_spawning_time: float,
+) -> list[dict[str, Any]]:
+    """Build the shared daily triangular severity profile for the extended campaign."""
+    segments = [
+        ("severity_0", 0, 4, 1.00, 1.00, 1.00, 0.00),
+        ("severity_25", 4, 8, 1.25, 1.25, 0.90, 0.05),
+        ("severity_50", 8, 12, 1.50, 1.50, 0.80, 0.10),
+        ("severity_75", 12, 16, 1.75, 1.75, 0.70, 0.15),
+        ("severity_50_recovery", 16, 20, 1.50, 1.50, 0.80, 0.10),
+        ("severity_25_recovery", 20, 24, 1.25, 1.25, 0.90, 0.05),
+    ]
+    phases: list[dict[str, Any]] = []
+    day_seconds = 24 * 3600
+    for day in range(sim_days):
+        day_start = day * day_seconds
+        for label, start_hour, end_hour, fail_scale, msg_scale, spawn_scale, malicious_delta in segments:
+            phases.append({
+                "label": label,
+                "start": day_start + start_hour * 3600,
+                "end": day_start + end_hour * 3600,
+                "N_MALICIOUS": max(0, min(n_robots, int(round(n_malicious + malicious_delta * n_robots)))),
+                "FAIL_PROB": min(1.0, base_fail_prob * fail_scale),
+                "COMM_FAIL_PROB": min(1.0, base_msg_loss * msg_scale),
+                "ITEM_SPAWNING_TIME": max(30.0, item_spawning_time * spawn_scale),
+                "COORDINATOR_SERVICE_TIME": 0.25,
+                "COORDINATOR_FAILURE_PROB": 0.0,
+                "COORDINATOR_AVAILABLE": True,
+            })
+    return phases
 
 
 def ensure_rtlola_available() -> str:
@@ -350,11 +454,15 @@ def find_matching_rq1_row(
     *,
     coord_label: str,
     rep: int,
+    topology: str | None = None,
+    n_rooms: int | None = None,
     item_spawning_time: float,
     n_robots: int,
     malicious_ratio: float,
     fail_prob: float,
     msg_loss_prob: float,
+    comp_time: float = 0.03,
+    comm_time: float = 0.03,
 ) -> Optional[dict[str, Any]]:
     rq1_runs = read_rows(PAPER_ROOT / "RQ1" / "runs.csv")
     for row in rq1_runs:
@@ -367,6 +475,10 @@ def find_matching_rq1_row(
             continue
         if row.get("coord_label") != coord_label:
             continue
+        if topology is not None and str(row.get("topology", "")) != topology:
+            continue
+        if n_rooms is not None and not int_matches(row.get("n_rooms"), n_rooms):
+            continue
         if not int_matches(row.get("rep"), rep):
             continue
         if not int_matches(row.get("item_spawning_time"), item_spawning_time):
@@ -377,7 +489,12 @@ def find_matching_rq1_row(
             continue
         if not float_matches(row.get("fail_prob"), fail_prob, tolerance=0.005):
             continue
-        if not float_matches(row.get("msg_loss_prob"), msg_loss_prob, tolerance=0.005):
+        row_msg_loss = row.get("msg_loss_prob", row.get("msg_loss"))
+        if not float_matches(row_msg_loss, msg_loss_prob, tolerance=0.005):
+            continue
+        if not float_matches(row.get("comp_time", 0.03), comp_time, tolerance=0.0005):
+            continue
+        if not float_matches(row.get("comm_time", 0.03), comm_time, tolerance=0.0005):
             continue
         return row
     return None
@@ -446,13 +563,54 @@ def overhead_metrics(logfile: Path) -> dict[str, Any]:
     }
 
 
-def analyze_log(logfile: Path, sim_time: float) -> dict[str, Any]:
-    create_times: dict[int, float] = {}
+def minimum_delivery_time(cfg: dict, destination: int) -> float:
+    """Return the ideal source-to-destination delivery time used in the paper.
+
+    Relative latency subtracts this floor from the observed latency, so a run on
+    a large topology is not penalised for the distance its agents must cover.
+    """
+    topology = topologyName_dict[str(cfg["TOPOLOGY_NAME"])]
+    source = int(cfg.get("SOURCE", 0))
+    if destination == source:
+        hops = 0
+    else:
+        queue = [(source, 0)]
+        visited = {source}
+        hops = None
+        while queue:
+            room, distance = queue.pop(0)
+            for neighbor in topology[room]:
+                if neighbor == destination:
+                    hops = distance + 1
+                    queue = []
+                    break
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, distance + 1))
+    if hops is None:
+        raise ValueError(f"Destination {destination} is unreachable in {cfg['TOPOLOGY_NAME']}.")
+    return float(cfg["LOAD_TIME"]) + hops * float(cfg["MOVEMENT_TIME"]) + float(cfg["DROP_TIME"])
+
+
+def analyze_log(logfile: Path, sim_time: float, cfg: Optional[dict] = None) -> dict[str, Any]:
+    """Summarise one simulation trace.
+
+    Pass ``cfg`` to also record ``avg_relative_latency_s``. Without it the column
+    is still written as NaN so every RQ shares one result schema.
+    """
+    create_events: dict[int, tuple[float, int]] = {}
     delivery_latencies: list[float] = []
+    relative_delivery_latencies: list[float] = []
+    minimum_times: dict[int, float] = {}
     events: dict[str, int] = {}
     switches: list[tuple[float, str]] = []
     last_time = 0.0
     row_count = 0
+
+    def minimum_time(destination: int) -> float:
+        if destination not in minimum_times:
+            minimum_times[destination] = minimum_delivery_time(cfg, destination)
+        return minimum_times[destination]
 
     with logfile.open(newline="") as f:
         for row in csv.DictReader(f):
@@ -466,9 +624,13 @@ def analyze_log(logfile: Path, sim_time: float) -> dict[str, Any]:
             events[event] = events.get(event, 0) + 1
 
             if event == "create" and item_id >= 0:
-                create_times[item_id] = sim_t
-            elif event == "deliver" and item_id in create_times:
-                delivery_latencies.append(sim_t - create_times[item_id])
+                create_events[item_id] = (sim_t, int(row.get("destination", -1) or -1))
+            elif event == "deliver" and item_id in create_events:
+                created_at, destination = create_events[item_id]
+                latency = sim_t - created_at
+                delivery_latencies.append(latency)
+                if cfg is not None and destination >= 0:
+                    relative_delivery_latencies.append(max(0.0, latency - minimum_time(destination)))
             elif event.startswith("switch_architecture_"):
                 switches.append((sim_t, event.replace("switch_architecture_", "")))
 
@@ -490,6 +652,9 @@ def analyze_log(logfile: Path, sim_time: float) -> dict[str, Any]:
         "terminal_rate": (delivered + expired) / created if created else 0.0,
         "throughput_per_hour": delivered / (sim_time / 3600.0) if sim_time else 0.0,
         "avg_latency_s": statistics.mean(delivery_latencies) if delivery_latencies else math.nan,
+        "avg_relative_latency_s": (
+            statistics.mean(relative_delivery_latencies) if relative_delivery_latencies else math.nan
+        ),
         "median_latency_s": statistics.median(delivery_latencies) if delivery_latencies else math.nan,
         "p95_latency_s": percentile(delivery_latencies, 0.95),
         "max_latency_s": max(delivery_latencies) if delivery_latencies else math.nan,

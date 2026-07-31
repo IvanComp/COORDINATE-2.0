@@ -147,10 +147,17 @@ BASE_CONFIG = {
     "BANDIT_EXPLORATION_EPSILON": 0.02,
     "BANDIT_MIN_EXPLORATION_EPSILON": 0.0,
     "BANDIT_EXPLORATION_BYPASS_PERSISTENCE": False,
-    # FD uses a bounded two-slot patrol with a short coverage cycle. This
-    # limits inspection capacity while avoiding long failure-observation gaps.
+    # Match the original COORDINATE FD baseline: agents coordinate neither
+    # through messages nor through a shared patrol schedule.
+    "FD_PATROL_ENABLED": False,
     "FD_INSPECTION_INTERVAL": 2 * 60.0,
-    "FD_MAX_PATROLLERS": 2,
+    "FD_MAX_PATROLLERS": 0,
+    "FD_LOCAL_SEARCH_ENABLED": False,
+    "FD_LOCAL_SEARCH_PROBABILITY": 0.0,
+    "FD_LOCAL_SEARCH_HOPS": 3,
+    "FD_LOCAL_SEARCH_AGENT_COUNT": 0,
+    "FD_LOCAL_SEARCH_INTERVAL": 15 * 60.0,
+    "FD_REQUEUE_ON_FAILURE": True,
     "SD_COORDINATION_HOPS": 1,
     "LATENCY_THRESHOLD_LOW": 10 * 60.0,
     "LATENCY_THRESHOLD_HIGH": 40 * 60.0,
@@ -175,7 +182,7 @@ PAPER_BASE_N_ROOMS = 25
 DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
 RQ1_PROFILE_ID = "table-aligned-rq1-v1"
 RQ1_METRIC_VERSION = "relative-latency-v1"
-FD_POLICY_VERSION = "limited-patrol-v2"
+FD_POLICY_VERSION = "legacy-local-retry-v7"
 RQ1_WORKLOAD_SLICE = "workload"
 RQ1_TOPOLOGY_SLICE = "topology"
 RQ1_SIZE_SLICE = "size"
@@ -747,7 +754,10 @@ def completed_run_ids(rows: list[dict], sim_days: int) -> set[str]:
                 continue
             if str(row.get("analysis_metric_version", "")) != RQ1_METRIC_VERSION:
                 continue
-            if str(row.get("fd_policy_version", "")) != FD_POLICY_VERSION:
+            if (
+                str(row.get("coord_label", "")) in {"FD", "DA"}
+                and str(row.get("fd_policy_version", "")) != FD_POLICY_VERSION
+            ):
                 continue
             completed.add(run_id)
     return completed
@@ -836,8 +846,15 @@ def run_campaign(args: argparse.Namespace) -> None:
         "analysis_metric_version": RQ1_METRIC_VERSION,
         "fd_policy_version": FD_POLICY_VERSION,
         "fd_policy": {
+            "patrol_enabled": BASE_CONFIG["FD_PATROL_ENABLED"],
             "inspection_interval_s": BASE_CONFIG["FD_INSPECTION_INTERVAL"],
             "max_patrollers": BASE_CONFIG["FD_MAX_PATROLLERS"],
+            "local_search_enabled": BASE_CONFIG["FD_LOCAL_SEARCH_ENABLED"],
+            "local_search_probability": BASE_CONFIG["FD_LOCAL_SEARCH_PROBABILITY"],
+            "local_search_hops": BASE_CONFIG["FD_LOCAL_SEARCH_HOPS"],
+            "local_search_agent_count": BASE_CONFIG["FD_LOCAL_SEARCH_AGENT_COUNT"],
+            "local_search_interval_s": BASE_CONFIG["FD_LOCAL_SEARCH_INTERVAL"],
+            "requeue_on_failure": BASE_CONFIG["FD_REQUEUE_ON_FAILURE"],
         },
         "sim_days": args.sim_days,
         "repetitions": args.repetitions,
@@ -1016,8 +1033,15 @@ def run_campaign(args: argparse.Namespace) -> None:
             "experiment_profile": RQ1_PROFILE_ID,
             "analysis_metric_version": RQ1_METRIC_VERSION,
             "fd_policy_version": FD_POLICY_VERSION,
+            "fd_patrol_enabled": cfg["FD_PATROL_ENABLED"],
             "fd_inspection_interval_s": cfg["FD_INSPECTION_INTERVAL"],
             "fd_max_patrollers": cfg["FD_MAX_PATROLLERS"],
+            "fd_local_search_enabled": cfg["FD_LOCAL_SEARCH_ENABLED"],
+            "fd_local_search_probability": cfg["FD_LOCAL_SEARCH_PROBABILITY"],
+            "fd_local_search_hops": cfg["FD_LOCAL_SEARCH_HOPS"],
+            "fd_local_search_agent_count": cfg["FD_LOCAL_SEARCH_AGENT_COUNT"],
+            "fd_local_search_interval_s": cfg["FD_LOCAL_SEARCH_INTERVAL"],
+            "fd_requeue_on_failure": cfg["FD_REQUEUE_ON_FAILURE"],
             "architecture": params["architecture"],
             "topology": params["topology"],
             "n_rooms": params["n_rooms"],
@@ -1049,8 +1073,14 @@ def run_campaign(args: argparse.Namespace) -> None:
             "experiment_profile": RQ1_PROFILE_ID,
             "analysis_metric_version": RQ1_METRIC_VERSION,
             "fd_policy_version": FD_POLICY_VERSION,
+            "fd_patrol_enabled": cfg["FD_PATROL_ENABLED"],
             "fd_inspection_interval_s": cfg["FD_INSPECTION_INTERVAL"],
             "fd_max_patrollers": cfg["FD_MAX_PATROLLERS"],
+            "fd_local_search_enabled": cfg["FD_LOCAL_SEARCH_ENABLED"],
+            "fd_local_search_probability": cfg["FD_LOCAL_SEARCH_PROBABILITY"],
+            "fd_local_search_hops": cfg["FD_LOCAL_SEARCH_HOPS"],
+            "fd_local_search_agent_count": cfg["FD_LOCAL_SEARCH_AGENT_COUNT"],
+            "fd_local_search_interval_s": cfg["FD_LOCAL_SEARCH_INTERVAL"],
             "coord_label": params["coord_label"],
             "topology": params["topology"],
             "n_rooms": params["n_rooms"],

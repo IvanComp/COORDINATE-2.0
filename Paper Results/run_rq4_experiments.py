@@ -7,8 +7,8 @@ simulation duration, fleet size, and workload increase. Each run is executed in
 an isolated Python subprocess so peak RSS can be measured per simulation.
 
 Default campaign per hardware profile:
-    4 durations x 3 workload levels x 3 fleet sizes x 2 mechanisms x
-    10 repetitions = 720 runs.
+    Extended one-factor-at-a-time sweeps of workload, fleet size, and topology
+    size across the four coordination mechanisms.
 
 Run examples:
     python "Paper Results/run_rq4_experiments.py" --dry-run
@@ -41,13 +41,23 @@ from paper_experiment_utils import (
     PAPER_ROOT,
     PROJECT_ROOT,
     analyze_log,
-    build_paper_daily_phases,
+    build_extended_daily_phases,
     cleanup_transient_artifacts,
     config_with_paths,
     completed_run_ids,
     ensure_rtlola_available,
     ensure_result_dirs,
     expiration_metadata,
+    EXTENDED_ITEM_SPAWNING_TIMES,
+    EXTENDED_NOMINAL_FAIL_PROB,
+    EXTENDED_NOMINAL_MSG_LOSS,
+    EXTENDED_NOMINAL_ROOMS,
+    EXTENDED_NOMINAL_ROBOTS,
+    EXTENDED_NOMINAL_SPAWN,
+    EXTENDED_NOMINAL_TOPOLOGY,
+    EXTENDED_ROBOT_COUNTS,
+    EXTENDED_ROOM_COUNTS,
+    extended_scenario_updates,
     file_size_mb,
     malicious_count,
     read_rows,
@@ -59,9 +69,8 @@ from paper_experiment_utils import (
 
 
 RESULTS_ROOT = PAPER_ROOT / "RQ4"
-DEFAULT_SIM_DAYS = [1, 7, 30, 90]
-DEFAULT_ITEM_SPAWNING_TIMES = [150, 120, 90]
-DEFAULT_N_ROBOTS = [10, 20, 30]
+RQ4_EXPERIMENT_PROFILE = "extended-wallclock-v2"
+DEFAULT_SIM_DAYS = [90]
 DEFAULT_COORD_LABELS = ["CE", "DA"]
 SUBPROCESS_MARKER = "__RQ4_RESULT__"
 
@@ -75,10 +84,9 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated simulation durations in days. Defaults to the full RQ4 duration set.",
     )
     parser.add_argument("--base-seed", type=int, default=20260604, help="Base random seed.")
-    parser.add_argument("--fail-prob", type=float, default=0.66, help="Baseline agent failure probability.")
-    parser.add_argument("--msg-loss", type=float, default=0.10, help="Baseline message loss probability.")
-    parser.add_argument("--malicious-ratio", type=float, default=0.33, help="Malicious-agent ratio.")
-    parser.add_argument("--stress-multiplier", type=float, default=1.2, help="Paper stress-window multiplier.")
+    parser.add_argument("--fail-prob", type=float, default=EXTENDED_NOMINAL_FAIL_PROB, help="Baseline agent failure probability.")
+    parser.add_argument("--msg-loss", type=float, default=EXTENDED_NOMINAL_MSG_LOSS, help="Baseline message loss probability.")
+    parser.add_argument("--malicious-ratio", type=float, default=0.60, help="Malicious-agent ratio.")
     parser.add_argument(
         "--coord-labels",
         default=",".join(DEFAULT_COORD_LABELS),
@@ -86,7 +94,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--machine-label",
-        default=None,
+        default="workstation",
         help="Short label for the computer running this shard, e.g. mac or workstation.",
     )
     parser.add_argument("--shard-count", type=int, default=1, help="Number of machines/shards used for RQ4.")
@@ -105,18 +113,12 @@ def sanitize_label(value: str) -> str:
 
 
 def default_machine_label() -> str:
-    system = platform.system().lower()
-    if system == "darwin":
-        return "mac"
-    if system == "windows":
-        return "windows"
-    if system == "linux":
-        return "workstation"
-    return sanitize_label(platform.node() or system or "machine")
+    return "workstation"
 
 
 def machine_label(args: argparse.Namespace) -> str:
     return sanitize_label(args.machine_label or default_machine_label())
+
 
 
 def hardware_metadata(label: str) -> dict[str, Any]:
@@ -164,35 +166,51 @@ def validate_shard_args(args: argparse.Namespace) -> None:
 def build_campaign_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.quick:
         sim_days_values = [1]
-        item_spawning_times = [150]
-        n_robots_values = [10]
+        conditions = [("nominal", EXTENDED_NOMINAL_SPAWN, EXTENDED_NOMINAL_ROBOTS, EXTENDED_NOMINAL_ROOMS)]
         coord_labels = selected_coord_labels(args)
         repetitions = 1 if args.repetitions == 10 else args.repetitions
     else:
         sim_days_values = selected_sim_days(args)
-        item_spawning_times = DEFAULT_ITEM_SPAWNING_TIMES
-        n_robots_values = DEFAULT_N_ROBOTS
+        conditions = []
+        seen = set()
+
+        def add_condition(slice_name, item_spawn=EXTENDED_NOMINAL_SPAWN,
+                          n_robots=EXTENDED_NOMINAL_ROBOTS, n_rooms=EXTENDED_NOMINAL_ROOMS):
+            key = (item_spawn, n_robots, n_rooms)
+            if key not in seen:
+                seen.add(key)
+                conditions.append((slice_name, *key))
+            else:
+                index = next(index for index, row in enumerate(conditions) if row[1:] == key)
+                conditions[index] = (conditions[index][0] + "," + slice_name, *key)
+
+        for value in EXTENDED_ITEM_SPAWNING_TIMES:
+            add_condition("workload", item_spawn=value)
+        for value in EXTENDED_ROBOT_COUNTS:
+            add_condition("fleet", n_robots=value)
+        for value in EXTENDED_ROOM_COUNTS:
+            add_condition("topology_size", n_rooms=value)
         coord_labels = selected_coord_labels(args)
         repetitions = args.repetitions
 
     rows: list[dict[str, Any]] = []
     combo_idx = 0
     label = machine_label(args)
-    for sim_days, item_spawn, n_robots, coord_label in product(
-        sim_days_values,
-        item_spawning_times,
-        n_robots_values,
-        coord_labels,
+    for sim_days, (analysis_slices, item_spawn, n_robots, n_rooms), coord_label in product(
+        sim_days_values, conditions, coord_labels,
     ):
         combo_idx += 1
         for rep in range(1, repetitions + 1):
             rows.append({
                 "combo_idx": combo_idx,
+                "analysis_slices": analysis_slices,
                 "rep": rep,
                 "seed": args.base_seed + combo_idx * 1000 + rep,
                 "machine_label": label,
                 "coord_label": coord_label,
                 "architecture": COORD_TO_ARCH[coord_label],
+                "topology": f"{EXTENDED_NOMINAL_TOPOLOGY}{n_rooms}",
+                "n_rooms": n_rooms,
                 "sim_days": sim_days,
                 "item_spawning_time": item_spawn,
                 "n_robots": n_robots,
@@ -224,8 +242,8 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
 def run_id(params: dict[str, Any]) -> str:
     return (
         f"{params['machine_label']}_c{params['combo_idx']:03d}_r{params['rep']:02d}_"
-        f"{params['coord_label']}_days{params['sim_days']}_"
-        f"spawn{params['item_spawning_time']}_bots{params['n_robots']}"
+        f"{params['coord_label']}_{params['topology']}_days{params['sim_days']}_"
+        f"spawn{params['item_spawning_time']}_bots{params['n_robots']}_{RQ4_EXPERIMENT_PROFILE}"
     )
 
 
@@ -252,6 +270,8 @@ def resume_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
         normalize_machine_label(params.get("machine_label")),
         str(params.get("coord_label", "")),
         str(params.get("architecture", "")),
+        str(params.get("topology", "")),
+        int(params.get("n_rooms", 0)),
         int(params.get("rep", 0)),
         int(params.get("sim_days", 0)),
         int(params.get("item_spawning_time", 0)),
@@ -271,6 +291,8 @@ def resume_key_from_row(row: dict[str, Any]) -> tuple[Any, ...]:
         normalize_machine_label(machine),
         str(row.get("coord_label", "")),
         str(row.get("architecture", "")),
+        str(row.get("topology", "")),
+        int(float(row.get("n_rooms", 0) or 0)),
         int(float(row.get("rep", 0) or 0)),
         int(float(row.get("sim_days", 0) or 0)),
         int(float(row.get("item_spawning_time", 0) or 0)),
@@ -356,6 +378,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     combos = shard_combos[: args.limit] if args.limit else shard_combos
     design = {
         "research_question": "RQ4",
+        "experiment_profile": RQ4_EXPERIMENT_PROFILE,
         "repetitions": args.repetitions,
         "total_runs": len(combos),
         "full_campaign_runs": len(all_combos),
@@ -365,15 +388,23 @@ def run_campaign(args: argparse.Namespace) -> None:
         "shard_count": args.shard_count,
         "shard_index": args.shard_index,
         "sim_days": [1] if args.quick else selected_sim_days(args),
-        "item_spawning_times": [150] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
-        "n_robots": [10] if args.quick else DEFAULT_N_ROBOTS,
+        "item_spawning_times": [EXTENDED_NOMINAL_SPAWN] if args.quick else EXTENDED_ITEM_SPAWNING_TIMES,
+        "n_robots": [EXTENDED_NOMINAL_ROBOTS] if args.quick else EXTENDED_ROBOT_COUNTS,
+        "n_rooms": [EXTENDED_NOMINAL_ROOMS] if args.quick else EXTENDED_ROOM_COUNTS,
         "coordination_mechanisms": coord_labels,
         "malicious_ratio": args.malicious_ratio,
         "fail_prob": args.fail_prob,
         "msg_loss": args.msg_loss,
-        "daily_stress_window": [12, 24],
-        "stress_multiplier": args.stress_multiplier,
-        "expiration_time": expiration_metadata(),
+        "daily_operating_profile": "triangular severity and recovery",
+        "expiration_time": expiration_metadata(extended_scenario_updates(
+            topology_type=EXTENDED_NOMINAL_TOPOLOGY,
+            n_rooms=EXTENDED_NOMINAL_ROOMS,
+            n_robots=EXTENDED_NOMINAL_ROBOTS,
+            n_malicious=malicious_count(EXTENDED_NOMINAL_ROBOTS, args.malicious_ratio),
+            item_spawning_time=EXTENDED_NOMINAL_SPAWN,
+            fail_prob=args.fail_prob,
+            msg_loss_prob=args.msg_loss,
+        )),
         "purpose": "Measure execution time, peak RSS, event throughput, and trace size.",
     }
     print("=" * 80)
@@ -409,14 +440,13 @@ def run_campaign(args: argparse.Namespace) -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
         logfile = run_dir / "simulation_log.csv"
         cfg_path = machine_configs_dir / f"{rid}.json"
-        phases = build_paper_daily_phases(
+        phases = build_extended_daily_phases(
             sim_days=params["sim_days"],
             base_fail_prob=params["fail_prob"],
             base_msg_loss=params["msg_loss_prob"],
-            base_recovery_time=1800.0,
+            n_robots=params["n_robots"],
             n_malicious=params["n_malicious"],
             item_spawning_time=params["item_spawning_time"],
-            stress_multiplier=args.stress_multiplier,
         )
         cfg = config_with_paths(
             results_root=RESULTS_ROOT,
@@ -425,13 +455,17 @@ def run_campaign(args: argparse.Namespace) -> None:
             seed=params["seed"],
             sim_days=params["sim_days"],
             updates={
+                **extended_scenario_updates(
+                    topology_type=EXTENDED_NOMINAL_TOPOLOGY,
+                    n_rooms=params["n_rooms"],
+                    n_robots=params["n_robots"],
+                    n_malicious=params["n_malicious"],
+                    item_spawning_time=params["item_spawning_time"],
+                    fail_prob=params["fail_prob"],
+                    msg_loss_prob=params["msg_loss_prob"],
+                ),
                 "MACHINE_LABEL": label,
                 "MACHINE_METADATA": hardware,
-                "N_ROBOTS": params["n_robots"],
-                "N_MALICIOUS": params["n_malicious"],
-                "FAIL_PROB": params["fail_prob"],
-                "COMM_FAIL_PROB": params["msg_loss_prob"],
-                "ITEM_SPAWNING_TIME": params["item_spawning_time"],
             },
             phases=phases,
         )
@@ -478,6 +512,8 @@ def run_campaign(args: argparse.Namespace) -> None:
         event_count = safe_float(subprocess_metrics.get("event_count"))
         row = {
             "run_id": rid,
+            "experiment_profile": RQ4_EXPERIMENT_PROFILE,
+            "analysis_slices": params["analysis_slices"],
             "status": status,
             "error": error_message,
             "config_path": str(cfg_path),
@@ -491,6 +527,8 @@ def run_campaign(args: argparse.Namespace) -> None:
             "rep": params["rep"],
             "seed": params["seed"],
             "sim_days": params["sim_days"],
+            "topology": params["topology"],
+            "n_rooms": params["n_rooms"],
             "item_spawning_time": params["item_spawning_time"],
             "n_robots": params["n_robots"],
             "malicious_ratio": params["malicious_ratio"],

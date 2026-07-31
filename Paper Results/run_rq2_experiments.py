@@ -64,10 +64,10 @@ TIMESERIES_PATH = RESULTS_ROOT / "adaptation_state_timeseries.csv.gz"
 PROFILE_NAMES = ["adaptive_operating_cycle"]
 RQ2_EXPERIMENT_PROFILE = "table-aligned-operating-cycle-v1"
 DAILY_OPERATING_SEGMENTS = [
-    ("P1", 0, 6),
-    ("P2", 6, 12),
-    ("P3", 12, 18),
-    ("P4", 18, 24),
+    ("I1", 0, 6),
+    ("I2", 6, 12),
+    ("I3", 12, 18),
+    ("I4", 18, 24),
 ]
 
 COMPLETION_CONFIG_UPDATES = {
@@ -86,8 +86,15 @@ COMPLETION_CONFIG_UPDATES = {
     "BANDIT_EXPLORATION_BYPASS_PERSISTENCE": False,
     "COORDINATOR_SERVICE_TIME": 0.25,
     "COORDINATOR_FAKE_REQUEST_SERVICE_TIME": 0.25,
+    "FD_PATROL_ENABLED": False,
     "FD_INSPECTION_INTERVAL": 2 * 60.0,
-    "FD_MAX_PATROLLERS": 2,
+    "FD_MAX_PATROLLERS": 0,
+    "FD_LOCAL_SEARCH_ENABLED": False,
+    "FD_LOCAL_SEARCH_PROBABILITY": 0.0,
+    "FD_LOCAL_SEARCH_HOPS": 3,
+    "FD_LOCAL_SEARCH_AGENT_COUNT": 0,
+    "FD_LOCAL_SEARCH_INTERVAL": 15 * 60.0,
+    "FD_REQUEUE_ON_FAILURE": True,
     "SD_COORDINATION_HOPS": 1,
 }
 
@@ -232,16 +239,16 @@ def profile_definition(profile_name: str, sim_days: int) -> dict[str, Any]:
 
     n_robots = 20
     recovery = 1800.0
-    description = "Repeated four-level daily operating cycle P1--P4."
+    description = "Repeated four-level daily operating cycle I1--I4."
     segments = []
-    # P1 is the underlined baseline in Table~\ref{tab:usecase-inputs}. P2--P4
+    # I1 is the underlined baseline in Table~\ref{tab:usecase-inputs}. I2--I4
     # apply the 25%, 50%, and 75% increments of the daily operating profile.
-    # The malicious ratio cannot exceed 100%, hence P4 is capped at 20 agents.
+    # The malicious ratio cannot exceed 100%, hence I4 is capped at 20 agents.
     mode_settings = {
-        "P1": {"malicious": 0.60, "fail": 0.0900, "comm": 0.0300, "spawn": 120.0},
-        "P2": {"malicious": 0.75, "fail": 0.1125, "comm": 0.0375, "spawn": 90.0},
-        "P3": {"malicious": 0.90, "fail": 0.1350, "comm": 0.0450, "spawn": 60.0},
-        "P4": {"malicious": 1.00, "fail": 0.1575, "comm": 0.0525, "spawn": 30.0},
+        "I1": {"malicious": 0.60, "fail": 0.0900, "comm": 0.0300, "spawn": 120.0},
+        "I2": {"malicious": 0.75, "fail": 0.1125, "comm": 0.0375, "spawn": 90.0},
+        "I3": {"malicious": 0.90, "fail": 0.1350, "comm": 0.0450, "spawn": 60.0},
+        "I4": {"malicious": 1.00, "fail": 0.1575, "comm": 0.0525, "spawn": 30.0},
     }
     for label, start_hour, end_hour in DAILY_OPERATING_SEGMENTS:
         mode = mode_settings[label]
@@ -409,8 +416,10 @@ def run_campaign(args: argparse.Namespace) -> None:
         "bandit_reward_version": BASE_CONFIG.get("BANDIT_REWARD_VERSION", ""),
         "fd_policy_version": FD_POLICY_VERSION,
         "fd_policy": {
+            "patrol_enabled": COMPLETION_CONFIG_UPDATES["FD_PATROL_ENABLED"],
             "inspection_interval_s": COMPLETION_CONFIG_UPDATES["FD_INSPECTION_INTERVAL"],
             "max_patrollers": COMPLETION_CONFIG_UPDATES["FD_MAX_PATROLLERS"],
+            "requeue_on_failure": COMPLETION_CONFIG_UPDATES["FD_REQUEUE_ON_FAILURE"],
         },
         "bandit_reward_parameters": {
             "objective_mode": BASE_CONFIG.get("BANDIT_OBJECTIVE_MODE"),
@@ -566,8 +575,10 @@ def run_campaign(args: argparse.Namespace) -> None:
             "bandit_objective_mode": cfg.get("BANDIT_OBJECTIVE_MODE", ""),
             "bandit_completion_weight": cfg.get("BANDIT_COMPLETION_WEIGHT", ""),
             "fd_policy_version": FD_POLICY_VERSION,
+            "fd_patrol_enabled": cfg["FD_PATROL_ENABLED"],
             "fd_inspection_interval_s": cfg["FD_INSPECTION_INTERVAL"],
             "fd_max_patrollers": cfg["FD_MAX_PATROLLERS"],
+            "fd_requeue_on_failure": cfg["FD_REQUEUE_ON_FAILURE"],
             "source_rq": source_rq,
             "source_run_id": source_run_id,
             "source_logfile": source_logfile,

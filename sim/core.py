@@ -206,6 +206,7 @@ class Robot:
         self.rescueReserved = False
         self._rescue_event_idx = 0
         self._fd_patrol_cursor = idx
+        self._fd_recovery_item: Optional[Item] = None
         self.logfile = logfile
 
     # helpers
@@ -248,6 +249,7 @@ class Robot:
         """Start one local FD inspection without exchanging rescue messages."""
         if (
             self.cfg.current_architecture != 'decentralized'
+            or not bool(getattr(self.cfg, 'FD_PATROL_ENABLED', True))
             or not self.isHealthy()
             or not self.isFree()
             or self.isRescuing()
@@ -269,6 +271,49 @@ class Robot:
                 [self.cfg.MOVEMENT_DISTR],
             )
 
+    def beginFDLocalSearch(self, simTime: float, force: bool = False) -> bool:
+        """Let an idle FD agent independently explore a short local route."""
+        if (
+            self.cfg.current_architecture != 'decentralized'
+            or not bool(getattr(self.cfg, 'FD_LOCAL_SEARCH_ENABLED', False))
+            or not self.isHealthy()
+            or not self.isFree()
+            or self.isRescuing()
+            or self.optRoute
+            or self.position != self.space.getSource()
+        ):
+            return False
+        probability = min(1.0, max(0.0, float(getattr(self.cfg, 'FD_LOCAL_SEARCH_PROBABILITY', 0.0))))
+        if not force and random.random() >= probability:
+            return False
+
+        hops = max(1, int(getattr(self.cfg, 'FD_LOCAL_SEARCH_HOPS', 1)))
+        route = []
+        current = self.position
+        previous = None
+        for _ in range(hops):
+            candidates = current.getAdjacentRooms()
+            forward = [room for room in candidates if room != previous]
+            if forward:
+                candidates = forward
+            if not candidates:
+                break
+            following = random.choice(candidates)
+            route.append(following)
+            previous, current = current, following
+        if not route:
+            return False
+
+        self.destination = route[-1]
+        self.optRoute = route
+        self.space.clock.scheduleEvent(
+            f'move-{self.getIdx()}',
+            [self.cfg.MOVEMENT_TIME],
+            [self.cfg.MOVEMENT_TRACE],
+            [self.cfg.MOVEMENT_DISTR],
+        )
+        return True
+
     def _log(self, simTime, event):
         os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
         new = not os.path.exists(self.logfile)
@@ -281,7 +326,9 @@ class Robot:
                 f.write(f'{simTime},{self.idx},{self.item.getIdx()},{self.item.getImportance()},{self.position.getIdx()},{self.destination.getIdx()},{event}\n')
 
     def dropItem(self, simTime, itemExpired=False):
-        if self.position == self.destination:
+        delivered_item = self.item
+        delivered = self.position == self.destination
+        if delivered:
             if self.cfg.LOG_DELIVERY: self._log(simTime, 'deliver')
             self.space.deliverItem(self.item)
         else:
@@ -293,6 +340,27 @@ class Robot:
                 self.space.switchItem(self.item)
         self.unsetItem()
         self.destination = self.space.getSource()
+        if (
+            delivered
+            and self.cfg.current_architecture == 'decentralized'
+            and self.isHealthy()
+            and self._fd_recovery_item is delivered_item
+        ):
+            self._fd_recovery_item = None
+
+        # A fully decentralized robot can use only what it observes locally.
+        # When a failed peer has left a task in this room, continue with that
+        # task instead of becoming idle after the delivery.
+        if (
+            delivered
+            and self.cfg.current_architecture == 'decentralized'
+            and self.isHealthy()
+        ):
+            next_item = self.space.getMoreImportantItem(room=self.position)
+            if next_item is not None:
+                self.loadItem(next_item, simTime)
+                return
+
         if len(self.space.getItemsByImportance(imp=-1, room=self.position)) == 0 and self.isHealthy():
             self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
             if itemExpired and self.position != self.space.getSource():
@@ -350,6 +418,13 @@ class Robot:
             return
         elif self.destination == nextRoom and not self.isFree():
             self.dropItem(simTime); self.memoryItem = None
+        elif self._fd_recovery_item is not None and self.position == self.destination:
+            recovery_item = self._fd_recovery_item
+            self._fd_recovery_item = None
+            if recovery_item in self.space.availItems and recovery_item.getLocation() == self.position:
+                self.loadItem(recovery_item, simTime)
+            elif self.canLoadItem():
+                self.loadItem(self.space.getMoreImportantItem(room=nextRoom), simTime)
         elif self.memoryItem is not None:
             if self.memoryItem[0].getImportance() > self.space.getMaxImportance(room=nextRoom):
                 self.optRoute = self.space.findRoute(self.position, self.memoryItem[1], strategy=self.cfg.FIND_ROUTE_STRATEGY)
@@ -377,7 +452,25 @@ class Robot:
             if self.cfg.LOG_FAIL: self._log(simTime, 'fail')
             if self.item is not None:
                 itemToDrop = self.item
-                self.dropItem(simTime)
+                requeue_failed_fd_task = (
+                    self.cfg.current_architecture == 'decentralized'
+                    and bool(getattr(self.cfg, 'FD_REQUEUE_ON_FAILURE', False))
+                    and self.position != self.destination
+                )
+                if requeue_failed_fd_task:
+                    # FD has no rescue message or dispatcher. A durable task
+                    # is simply republished to its origin after a failed run,
+                    # where any independently available agent may pick it up.
+                    itemToDrop.setLocation(self.space.getSource())
+                    self.space.switchItem(itemToDrop)
+                    self.unsetItem()
+                    self.destination = self.space.getSource()
+                    self.optRoute = []
+                elif self.cfg.current_architecture == 'decentralized':
+                    self._fd_recovery_item = itemToDrop
+                    self.dropItem(simTime)
+                else:
+                    self.dropItem(simTime)
                 if self.cfg.current_architecture == 'semi-decentralized':
                     importance = itemToDrop.getImportance() if not self.malicious else len(self.cfg.IMPORTANCE_PROBABILITIES) + 1
                     self._sendPeers(importance, self.position, simTime)
@@ -395,6 +488,26 @@ class Robot:
         self.destination = self.space.getSource()
         self.optRoute = []
         if self.cfg.LOG_RECOVERY: self._log(simTime, 'recover')
+        if self.cfg.current_architecture == 'decentralized' and self._fd_recovery_item is not None:
+            recovery_item = self._fd_recovery_item
+            if recovery_item in self.space.availItems:
+                self.destination = recovery_item.getLocation()
+                self.optRoute = self.space.findRoute(
+                    self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY,
+                )
+                if self.optRoute:
+                    self.space.clock.scheduleEvent(
+                        f'move-{self.getIdx()}',
+                        [self.cfg.MOVEMENT_TIME],
+                        [self.cfg.MOVEMENT_TRACE],
+                        [self.cfg.MOVEMENT_DISTR],
+                    )
+                    return
+                if self.destination == self.position:
+                    self._fd_recovery_item = None
+                    self.loadItem(recovery_item, simTime)
+                    return
+            self._fd_recovery_item = None
         if self.canLoadItem():
             self.loadItem(self.space.getMoreImportantItem(room=self.position), simTime)
 

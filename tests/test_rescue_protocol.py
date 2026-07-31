@@ -59,6 +59,108 @@ class RescueProtocolTest(unittest.TestCase):
         self.assertEqual(event, 'move-0')
         self.assertEqual(robot.destination, rooms[1])
 
+    def test_legacy_fd_does_not_start_a_patrol(self):
+        cfg = build_cfg()
+        cfg.current_architecture = 'decentralized'
+        cfg.FD_PATROL_ENABLED = False
+        clock = Clock()
+        rooms = [Room(i) for i in range(3)]
+        space = Space(cfg, rooms, {0: [1], 1: [0, 2], 2: [1]}, clock, source=rooms[0])
+        robot = Robot(cfg, 0, False, space, '')
+
+        robot.beginFDInspection(0.0)
+        _, event = clock.getNextEvent()
+
+        self.assertIsNone(event)
+
+    def test_fd_local_search_uses_only_a_robot_local_route(self):
+        cfg = build_cfg()
+        cfg.current_architecture = 'decentralized'
+        cfg.FD_LOCAL_SEARCH_ENABLED = True
+        cfg.FD_LOCAL_SEARCH_PROBABILITY = 1.0
+        cfg.FD_LOCAL_SEARCH_HOPS = 2
+        clock = Clock()
+        rooms = [Room(i) for i in range(3)]
+        space = Space(cfg, rooms, {0: [1], 1: [0, 2], 2: [1]}, clock, source=rooms[0])
+        robot = Robot(cfg, 0, False, space, '')
+
+        self.assertTrue(robot.beginFDLocalSearch(0.0))
+        _, event = clock.getNextEvent()
+
+        self.assertEqual(event, 'move-0')
+        self.assertEqual(robot.destination, rooms[2])
+
+    def test_fd_recovery_resumes_its_own_dropped_task(self):
+        cfg = build_cfg()
+        cfg.current_architecture = 'decentralized'
+        clock = Clock()
+        rooms = [Room(i) for i in range(3)]
+        space = Space(cfg, rooms, {0: [1], 1: [0, 2], 2: [1]}, clock, source=rooms[0])
+        robot = Robot(cfg, 0, False, space, '')
+        item = Item(cfg, '', 1, space, 0.0, imp=1, target=rooms[2])
+        item.setLocation(rooms[1])
+        space.movingItems.append(item)
+        robot.setLocation(rooms[1])
+        robot.setItem(item)
+        robot.destination = rooms[2]
+
+        robot._fd_recovery_item = item
+        robot.dropItem(0.0)
+        robot.healthy = False
+        robot.recovery(10.0)
+
+        _, event = clock.getNextEvent()
+        self.assertEqual(event, 'move-0')
+        self.assertEqual(robot.destination, rooms[1])
+
+    def test_fd_delivery_continues_with_a_task_observed_in_the_same_room(self):
+        cfg = build_cfg()
+        cfg.current_architecture = 'decentralized'
+        clock = Clock()
+        rooms = [Room(i) for i in range(3)]
+        space = Space(cfg, rooms, {0: [1], 1: [0, 2], 2: [1]}, clock, source=rooms[0])
+        robot = Robot(cfg, 0, False, space, '')
+        robot.setLocation(rooms[1])
+
+        delivered = Item(cfg, '', 1, space, 0.0, imp=0, target=rooms[1])
+        delivered.setLocation(rooms[1])
+        space.movingItems.append(delivered)
+        robot.setItem(delivered)
+        robot.destination = rooms[1]
+
+        dropped = Item(cfg, '', 2, space, 0.0, imp=2, target=rooms[2])
+        dropped.setLocation(rooms[1])
+        space.availItems.append(dropped)
+
+        robot.dropItem(0.0)
+
+        self.assertIs(robot.getItem(), dropped)
+        self.assertEqual(robot.destination, rooms[2])
+        _, event = clock.getNextEvent()
+        self.assertEqual(event, 'move-0')
+
+    def test_fd_requeues_a_failed_task_at_its_origin_without_a_rescue(self):
+        cfg = build_cfg()
+        cfg.current_architecture = 'decentralized'
+        cfg.FD_REQUEUE_ON_FAILURE = True
+        cfg.FAIL_PROB = 1.0
+        clock = Clock()
+        rooms = [Room(i) for i in range(3)]
+        space = Space(cfg, rooms, {0: [1], 1: [0, 2], 2: [1]}, clock, source=rooms[0])
+        robot = Robot(cfg, 0, False, space, '')
+        robot.setLocation(rooms[1])
+        item = Item(cfg, '', 1, space, 0.0, imp=1, target=rooms[2])
+        item.setLocation(rooms[1])
+        space.movingItems.append(item)
+        robot.setItem(item)
+        robot.destination = rooms[2]
+
+        self.assertTrue(robot._fail(0.0))
+
+        self.assertIsNone(robot.getItem())
+        self.assertIn(item, space.availItems)
+        self.assertEqual(item.getLocation(), rooms[0])
+
     def test_unavailable_central_coordinator_does_not_dispatch_a_rescue(self):
         cfg = build_cfg()
         cfg.COORDINATOR_FAILURE_PROB = 1.0
