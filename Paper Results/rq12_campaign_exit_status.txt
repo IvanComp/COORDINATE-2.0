@@ -1,2 +1,0 @@
-RQ1_EXIT=0
-RQ2_EXIT=0

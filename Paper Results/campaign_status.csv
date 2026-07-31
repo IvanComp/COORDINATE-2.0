@@ -1,3 +1,0 @@
-rq,command,return_code,duration_s,expected_runs,completed,errors,remaining,timestamp
-RQ1,/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/run_rq1_experiments.py --repetitions 10 --workers 3 --dry-run --limit 1,0,0.1474158763885498,,3006,0,,2026-07-31T16:53:11
-RQ2,/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 /Users/ivan/Desktop/COORDINATE-2.0/Paper Results/run_rq2_experiments.py --repetitions 10 --workers 3 --dry-run --limit 1,0,0.1418156623840332,,30,0,,2026-07-31T16:53:11
