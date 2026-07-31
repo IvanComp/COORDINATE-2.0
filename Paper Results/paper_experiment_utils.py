@@ -23,6 +23,20 @@ from typing import Any, Optional
 PAPER_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PAPER_ROOT.parent
 
+
+def resolve_worker_count(requested: int, *, cap: int = 6) -> int:
+    """Resolve ``--workers`` while avoiding excessive simulator contention.
+
+    A value of zero selects a conservative number of independent simulation
+    processes from the CPUs visible to the current machine.  An explicit value
+    remains available for clusters and performance experiments.
+    """
+    if requested < 0:
+        raise ValueError("--workers must be zero (automatic) or a positive integer.")
+    if requested:
+        return requested
+    return max(1, min(cap, os.cpu_count() or 1))
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

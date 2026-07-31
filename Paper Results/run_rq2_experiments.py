@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import math
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ from paper_experiment_utils import (
     read_rows,
     read_overhead_samples,
     replace_row,
+    resolve_worker_count,
     run_or_analyze,
     safe_float,
     write_json,
@@ -157,6 +159,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
     parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N run instances.")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Independent simulations in parallel; 0 automatically uses available CPUs (up to 6).",
+    )
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately if a run fails.")
     parser.add_argument(
         "--bandit-objective",
@@ -398,7 +406,26 @@ def switch_rows(
     return rows
 
 
+def execute_rq2_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Execute one isolated run; the parent process owns all campaign CSVs."""
+    try:
+        cfg_path = Path(job["config_path"])
+        logfile = Path(job["logfile"])
+        metrics, wall_time, event_count = run_or_analyze(
+            cfg_path=cfg_path,
+            logfile=logfile,
+            sim_time=job["sim_time"],
+            force=job["force"],
+        )
+        return {"status": "ok", "error": "", "metrics": metrics,
+                "wall_time": wall_time, "event_count": event_count}
+    except BaseException as exc:
+        return {"status": "error", "error": str(exc) or exc.__class__.__name__,
+                "metrics": {}, "wall_time": math.nan, "event_count": math.nan}
+
+
 def run_campaign(args: argparse.Namespace) -> None:
+    args.workers = resolve_worker_count(args.workers)
     configure_bandit_objective(args)
     if not args.dry_run:
         rtlola_binary = ensure_rtlola_available()
@@ -411,6 +438,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "repetitions": args.repetitions,
         "profiles": selected_profiles(args),
         "total_runs": len(combos),
+        "workers": args.workers,
         "coordination_mechanisms": ["DA"],
         "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
         "bandit_reward_version": BASE_CONFIG.get("BANDIT_REWARD_VERSION", ""),
@@ -491,6 +519,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     ], args.sim_days)
     started_at = time.time()
 
+    jobs: list[dict[str, Any]] = []
     for idx, params in enumerate(combos, start=1):
         rid = run_id(params)
         definition = params["definition"]
@@ -514,15 +543,6 @@ def run_campaign(args: argparse.Namespace) -> None:
         )
         write_json(cfg_path, cfg)
 
-        print(f"[{idx}/{len(combos)}] {rid}", flush=True)
-        status = "ok"
-        error_message = ""
-        metrics: dict[str, Any] = {}
-        wall_time = math.nan
-        event_count = math.nan
-        source_rq = "RQ2"
-        source_run_id = rid
-        source_logfile = str(planned_logfile)
         had_previous_error = any(error.get("run_id") == rid for error in errors)
         had_stale_expire_log = any(
             row.get("run_id") == rid
@@ -538,29 +558,40 @@ def run_campaign(args: argparse.Namespace) -> None:
             print("  old log lacks expire events; removing stale log and re-running", flush=True)
             planned_logfile.unlink()
 
-        try:
-            metrics, wall_time, event_count = run_or_analyze(
-                cfg_path=cfg_path,
-                logfile=planned_logfile,
-                sim_time=cfg["SIM_TIME"],
-                force=args.force,
-            )
-        except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
-                raise
-            status = "error"
-            error_message = str(exc) or exc.__class__.__name__
-            errors.append({
-                "run_id": rid,
-                "profile": params["profile"],
-                "rep": params["rep"],
-                "config_path": str(cfg_path),
-                "logfile": str(planned_logfile),
-                "error": error_message,
-            })
-            print(f"  ERROR: {error_message}", flush=True)
-            if args.fail_fast:
-                raise
+        jobs.append({
+            "idx": idx,
+            "run_id": rid,
+            "params": params,
+            "cfg": cfg,
+            "config_path": str(cfg_path),
+            "logfile": str(planned_logfile),
+            "sim_time": cfg["SIM_TIME"],
+            "force": args.force,
+        })
+
+    def persist_result(job: dict[str, Any], result: dict[str, Any], completed_count: int) -> None:
+        nonlocal rows, errors, all_timeseries, all_switches
+        rid = job["run_id"]
+        params = job["params"]
+        definition = params["definition"]
+        cfg = job["cfg"]
+        planned_logfile = Path(job["logfile"])
+        logfile = planned_logfile
+        status = result["status"]
+        error_message = result["error"]
+        metrics = result["metrics"]
+        wall_time = result["wall_time"]
+        event_count = result["event_count"]
+        source_rq = "RQ2"
+        source_run_id = rid
+        source_logfile = str(planned_logfile)
+        if status == "error":
+            errors.append({"run_id": rid, "profile": params["profile"], "rep": params["rep"],
+                           "config_path": job["config_path"], "logfile": str(planned_logfile),
+                           "error": error_message})
+            print(f"[{completed_count}/{len(jobs)}] {rid} ERROR: {error_message}", flush=True)
+        else:
+            print(f"[{completed_count}/{len(jobs)}] {rid} completed", flush=True)
 
         run_meta = {
             "run_id": rid,
@@ -606,7 +637,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             "status": status,
             "error": error_message,
             "description": definition["description"],
-            "config_path": str(cfg_path),
+            "config_path": job["config_path"],
             "logfile": str(logfile),
             "planned_logfile": str(planned_logfile),
             "source_rq": source_rq,
@@ -624,6 +655,26 @@ def run_campaign(args: argparse.Namespace) -> None:
         write_rows(RESULTS_ROOT / "switch_timeline.csv", all_switches)
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
+
+    print(f"Launching {len(jobs)} runs with {min(args.workers, len(jobs)) if jobs else 0} worker processes.", flush=True)
+    if not jobs:
+        print("No pending runs.", flush=True)
+    elif args.workers == 1:
+        for completed_count, job in enumerate(jobs, start=1):
+            persist_result(job, execute_rq2_job(job), completed_count)
+            if rows[-1]["status"] == "error" and args.fail_fast:
+                raise RuntimeError(rows[-1]["error"])
+    else:
+        with ProcessPoolExecutor(max_workers=min(args.workers, len(jobs))) as executor:
+            future_to_job = {executor.submit(execute_rq2_job, job): job for job in jobs}
+            for completed_count, future in enumerate(as_completed(future_to_job), start=1):
+                job = future_to_job[future]
+                result = future.result()
+                persist_result(job, result, completed_count)
+                if result["status"] == "error" and args.fail_fast:
+                    for pending in future_to_job:
+                        pending.cancel()
+                    raise RuntimeError(result["error"])
 
     cleanup_transient_artifacts(RESULTS_ROOT)
 

@@ -3,8 +3,9 @@
 Run the full paper experimental campaign.
 
 The script runs the RQ scripts sequentially and relies on each runner's resume
-logic. It is intended for overnight runs on workstations or batch allocations
-such as LEONARDO.
+logic. Each RQ runner executes its independent simulations in parallel. It is
+intended for overnight runs on workstations or batch allocations such as
+LEONARDO.
 
 Examples:
     python "Paper Results/run_full_paper_campaign.py" --dry-run
@@ -75,6 +76,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rq4-shard-count", type=int, default=1, help="Forward --shard-count to RQ4 only.")
     parser.add_argument("--rq4-shard-index", type=int, default=1, help="Forward --shard-index to RQ4 only.")
     parser.add_argument("--limit", type=int, default=None, help="Forward --limit to each RQ script.")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Forward worker count to each RQ runner; 0 selects it automatically.",
+    )
     parser.add_argument(
         "--log-file",
         default=os.devnull,
@@ -149,6 +156,7 @@ def rq_status(rq: str) -> dict[str, Any]:
 
 def command_for_rq(rq: str, args: argparse.Namespace) -> list[str]:
     cmd = [args.python, str(RQ_SCRIPTS[rq]), "--repetitions", str(args.repetitions)]
+    cmd.extend(["--workers", str(args.workers)])
     if args.quick:
         cmd.append("--quick")
     if args.dry_run:

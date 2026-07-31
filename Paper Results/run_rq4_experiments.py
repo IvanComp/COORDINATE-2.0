@@ -31,6 +31,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,7 @@ from paper_experiment_utils import (
     read_rows,
     replace_row,
     safe_float,
+    resolve_worker_count,
     write_json,
     write_rows,
 )
@@ -107,6 +109,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Print the campaign design without running simulations.")
     parser.add_argument("--force", action="store_true", help="Re-run even if the run is already marked ok in runs.csv.")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N run instances.")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Independent simulations in parallel; 0 automatically uses available CPUs (up to 6).",
+    )
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately if a run fails.")
     return parser.parse_args()
 
@@ -365,7 +373,23 @@ print("{SUBPROCESS_MARKER}" + json.dumps({{
     return json.loads(result_lines[-1].removeprefix(SUBPROCESS_MARKER))
 
 
+def execute_rq4_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Run one RSS-measured simulation; campaign CSVs are written by the parent."""
+    try:
+        logfile = Path(job["logfile"])
+        if logfile.exists() and not job["force"]:
+            logfile.unlink()
+        subprocess_metrics = run_subprocess(Path(job["config_path"]))
+        return {"status": "ok", "error": "", "subprocess_metrics": subprocess_metrics,
+                "metrics": analyze_log(logfile, job["sim_time"])}
+    except BaseException as exc:
+        return {"status": "error", "error": str(exc) or exc.__class__.__name__,
+                "subprocess_metrics": {"wall_time_s": math.nan, "event_count": math.nan,
+                                       "max_rss_mb": math.nan}, "metrics": {}}
+
+
 def run_campaign(args: argparse.Namespace) -> None:
+    args.workers = resolve_worker_count(args.workers)
     label = machine_label(args)
     hardware = hardware_metadata(label)
     coord_labels = selected_coord_labels(args)
@@ -380,6 +404,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "experiment_profile": RQ4_EXPERIMENT_PROFILE,
         "repetitions": args.repetitions,
         "total_runs": len(combos),
+        "workers": args.workers,
         "full_campaign_runs": len(all_combos),
         "shard_runs_before_limit": len(shard_combos),
         "machine_label": label,
@@ -428,6 +453,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     completed_keys = completed_resume_keys(rows)
     started_at = time.time()
 
+    jobs: list[dict[str, Any]] = []
     for idx, params in enumerate(combos, start=1):
         rid = run_id(params)
         resume_key = resume_key_from_params(params)
@@ -470,42 +496,33 @@ def run_campaign(args: argparse.Namespace) -> None:
         )
         write_json(cfg_path, cfg)
 
-        print(f"[{idx}/{len(combos)}] {rid}", flush=True)
-        status = "ok"
-        error_message = ""
-        subprocess_metrics = {
-            "wall_time_s": math.nan,
-            "event_count": math.nan,
-            "max_rss_mb": math.nan,
-        }
-        metrics: dict[str, Any] = {}
         had_previous_error = any(error.get("run_id") == rid for error in errors)
         errors = [error for error in errors if error.get("run_id") != rid]
         if had_previous_error and logfile.exists() and not args.force:
             print("  previous error found; removing stale log and re-running", flush=True)
             logfile.unlink()
 
-        try:
-            if logfile.exists() and not args.force:
-                print("  stale log without completed run found; removing and re-running", flush=True)
-                logfile.unlink()
-            subprocess_metrics = run_subprocess(cfg_path)
-            metrics = analyze_log(logfile, cfg["SIM_TIME"])
-        except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
-                raise
-            status = "error"
-            error_message = str(exc) or exc.__class__.__name__
-            errors.append({
-                **params,
-                "run_id": rid,
-                "config_path": str(cfg_path),
-                "logfile": str(logfile),
-                "error": error_message,
-            })
-            print(f"  ERROR: {error_message}", flush=True)
-            if args.fail_fast:
-                raise
+        jobs.append({"idx": idx, "run_id": rid, "params": params, "cfg": cfg,
+                     "config_path": str(cfg_path), "logfile": str(logfile),
+                     "sim_time": cfg["SIM_TIME"], "force": args.force})
+
+    def persist_result(job: dict[str, Any], result: dict[str, Any], completed_count: int) -> None:
+        nonlocal rows, errors, completed, completed_keys
+        params = job["params"]
+        cfg = job["cfg"]
+        rid = job["run_id"]
+        logfile = Path(job["logfile"])
+        cfg_path = Path(job["config_path"])
+        status = result["status"]
+        error_message = result["error"]
+        subprocess_metrics = result["subprocess_metrics"]
+        metrics = result["metrics"]
+        if status == "error":
+            errors.append({**params, "run_id": rid, "config_path": str(cfg_path),
+                           "logfile": str(logfile), "error": error_message})
+            print(f"[{completed_count}/{len(jobs)}] {rid} ERROR: {error_message}", flush=True)
+        else:
+            print(f"[{completed_count}/{len(jobs)}] {rid} completed", flush=True)
 
         wall_time = safe_float(subprocess_metrics.get("wall_time_s"))
         event_count = safe_float(subprocess_metrics.get("event_count"))
@@ -551,6 +568,27 @@ def run_campaign(args: argparse.Namespace) -> None:
         write_rows(RESULTS_ROOT / "runs.csv", rows)
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
+
+    print(f"Launching {len(jobs)} runs with {min(args.workers, len(jobs)) if jobs else 0} worker processes.", flush=True)
+    if not jobs:
+        print("No pending runs.", flush=True)
+    elif args.workers == 1:
+        for completed_count, job in enumerate(jobs, start=1):
+            result = execute_rq4_job(job)
+            persist_result(job, result, completed_count)
+            if result["status"] == "error" and args.fail_fast:
+                raise RuntimeError(result["error"])
+    else:
+        with ProcessPoolExecutor(max_workers=min(args.workers, len(jobs))) as executor:
+            future_to_job = {executor.submit(execute_rq4_job, job): job for job in jobs}
+            for completed_count, future in enumerate(as_completed(future_to_job), start=1):
+                job = future_to_job[future]
+                result = future.result()
+                persist_result(job, result, completed_count)
+                if result["status"] == "error" and args.fail_fast:
+                    for pending in future_to_job:
+                        pending.cancel()
+                    raise RuntimeError(result["error"])
 
     cleanup_transient_artifacts(RESULTS_ROOT)
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import math
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,7 @@ from paper_experiment_utils import (
     malicious_count,
     read_rows,
     replace_row,
+    resolve_worker_count,
     run_or_analyze,
     safe_float,
     write_json,
@@ -100,6 +102,12 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated mechanisms to include, e.g. DA or CE,SD,FD,DA.",
     )
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N run instances.")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Independent simulations in parallel; 0 automatically uses available CPUs (up to 6).",
+    )
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately if a run fails.")
     return parser.parse_args()
 
@@ -186,7 +194,50 @@ def run_id(params: dict[str, Any]) -> str:
     )
 
 
+def execute_rq3_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Run or reuse one configuration without concurrently writing CSV files."""
+    try:
+        params = job["params"]
+        cfg = job["cfg"]
+        planned_logfile = Path(job["logfile"])
+        source_rq = "RQ3"
+        source_run_id = job["run_id"]
+        source_logfile = str(planned_logfile)
+        reuse_row = None
+        if not job["force"] and not job["no_reuse_rq1"]:
+            reuse_row = find_matching_rq1_row(
+                coord_label=params["coord_label"], rep=params["rep"], topology=params["topology"],
+                n_rooms=params["n_rooms"], item_spawning_time=params["item_spawning_time"],
+                n_robots=params["n_robots"], malicious_ratio=params["malicious_ratio"],
+                fail_prob=params["fail_prob"], msg_loss_prob=params["msg_loss_prob"],
+                comp_time=params["comp_time"], comm_time=params["comm_time"],
+            )
+        if reuse_row:
+            logfile = Path(str(reuse_row["logfile"]))
+            source_rq = "RQ1"
+            source_run_id = str(reuse_row.get("run_id", ""))
+            source_logfile = str(logfile)
+            wall_time = safe_float(reuse_row.get("wall_time_s"))
+            event_count = safe_float(reuse_row.get("event_count"))
+            metrics = analyze_log(logfile, cfg["SIM_TIME"])
+        else:
+            logfile = planned_logfile
+            metrics, wall_time, event_count = run_or_analyze(
+                cfg_path=Path(job["config_path"]), logfile=logfile,
+                sim_time=cfg["SIM_TIME"], force=job["force"],
+            )
+        return {"status": "ok", "error": "", "metrics": metrics, "wall_time": wall_time,
+                "event_count": event_count, "logfile": str(logfile), "source_rq": source_rq,
+                "source_run_id": source_run_id, "source_logfile": source_logfile}
+    except BaseException as exc:
+        return {"status": "error", "error": str(exc) or exc.__class__.__name__, "metrics": {},
+                "wall_time": math.nan, "event_count": math.nan, "logfile": job["logfile"],
+                "source_rq": "RQ3", "source_run_id": job["run_id"],
+                "source_logfile": job["logfile"]}
+
+
 def run_campaign(args: argparse.Namespace) -> None:
+    args.workers = resolve_worker_count(args.workers)
     coord_labels = selected_coord_labels(args)
     if not args.dry_run and "DA" in coord_labels:
         rtlola_binary = ensure_rtlola_available()
@@ -198,6 +249,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "sim_days": args.sim_days,
         "repetitions": args.repetitions,
         "total_runs": len(combos),
+        "workers": args.workers,
         "coordination_mechanisms": coord_labels,
         "item_spawning_times": [EXTENDED_NOMINAL_SPAWN] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
         "malicious_ratios": [args.malicious_ratio] if args.quick else DEFAULT_MALICIOUS_RATIOS,
@@ -237,6 +289,7 @@ def run_campaign(args: argparse.Namespace) -> None:
     completed = completed_run_ids(rows)
     started_at = time.time()
 
+    jobs: list[dict[str, Any]] = []
     for idx, params in enumerate(combos, start=1):
         rid = run_id(params)
         if rid in completed and not args.force:
@@ -277,69 +330,38 @@ def run_campaign(args: argparse.Namespace) -> None:
         )
         write_json(cfg_path, cfg)
 
-        print(f"[{idx}/{len(combos)}] {rid}", flush=True)
-        status = "ok"
-        error_message = ""
-        metrics: dict[str, Any] = {}
-        wall_time = math.nan
-        event_count = math.nan
-        source_rq = "RQ3"
-        source_run_id = rid
-        source_logfile = str(planned_logfile)
         had_previous_error = any(error.get("run_id") == rid for error in errors)
         errors = [error for error in errors if error.get("run_id") != rid]
         if had_previous_error and planned_logfile.exists() and not args.force:
             print("  previous error found; removing stale log and re-running", flush=True)
             planned_logfile.unlink()
 
-        try:
-            reuse_row = None
-            if not args.force and not args.no_reuse_rq1:
-                reuse_row = find_matching_rq1_row(
-                    coord_label=params["coord_label"],
-                    rep=params["rep"],
-                    topology=params["topology"],
-                    n_rooms=params["n_rooms"],
-                    item_spawning_time=params["item_spawning_time"],
-                    n_robots=params["n_robots"],
-                    malicious_ratio=params["malicious_ratio"],
-                    fail_prob=params["fail_prob"],
-                    msg_loss_prob=params["msg_loss_prob"],
-                    comp_time=params["comp_time"],
-                    comm_time=params["comm_time"],
-                )
+        jobs.append({"idx": idx, "run_id": rid, "params": params, "cfg": cfg,
+                     "config_path": str(cfg_path), "logfile": str(planned_logfile),
+                     "force": args.force, "no_reuse_rq1": args.no_reuse_rq1})
 
-            if reuse_row:
-                logfile = Path(str(reuse_row["logfile"]))
-                source_rq = "RQ1"
-                source_run_id = str(reuse_row.get("run_id", ""))
-                source_logfile = str(logfile)
-                wall_time = safe_float(reuse_row.get("wall_time_s"))
-                event_count = safe_float(reuse_row.get("event_count"))
-                metrics = analyze_log(logfile, cfg["SIM_TIME"])
-                print(f"  reused from RQ1: {source_run_id}", flush=True)
-            else:
-                metrics, wall_time, event_count = run_or_analyze(
-                    cfg_path=cfg_path,
-                    logfile=planned_logfile,
-                    sim_time=cfg["SIM_TIME"],
-                    force=args.force,
-            )
-        except BaseException as exc:
-            if isinstance(exc, KeyboardInterrupt):
-                raise
-            status = "error"
-            error_message = str(exc) or exc.__class__.__name__
-            errors.append({
-                **params,
-                "run_id": rid,
-                "config_path": str(cfg_path),
-                "logfile": str(planned_logfile),
-                "error": error_message,
-            })
-            print(f"  ERROR: {error_message}", flush=True)
-            if args.fail_fast:
-                raise
+    def persist_result(job: dict[str, Any], result: dict[str, Any], completed_count: int) -> None:
+        nonlocal rows, errors
+        params = job["params"]
+        cfg = job["cfg"]
+        rid = job["run_id"]
+        status = result["status"]
+        error_message = result["error"]
+        metrics = result["metrics"]
+        wall_time = result["wall_time"]
+        event_count = result["event_count"]
+        logfile = Path(result["logfile"])
+        planned_logfile = Path(job["logfile"])
+        source_rq = result["source_rq"]
+        source_run_id = result["source_run_id"]
+        source_logfile = result["source_logfile"]
+        if status == "error":
+            errors.append({**params, "run_id": rid, "config_path": job["config_path"],
+                           "logfile": job["logfile"], "error": error_message})
+            print(f"[{completed_count}/{len(jobs)}] {rid} ERROR: {error_message}", flush=True)
+        else:
+            suffix = f" reused from {source_run_id}" if source_rq == "RQ1" else " completed"
+            print(f"[{completed_count}/{len(jobs)}] {rid}{suffix}", flush=True)
 
         run_meta = {
             "run_id": rid,
@@ -365,7 +387,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             **run_meta,
             "status": status,
             "error": error_message,
-            "config_path": str(cfg_path),
+            "config_path": job["config_path"],
             "logfile": str(logfile),
             "planned_logfile": str(planned_logfile),
             "source_rq": source_rq,
@@ -391,6 +413,27 @@ def run_campaign(args: argparse.Namespace) -> None:
         write_rows(RESULTS_ROOT / "runs.csv", rows)
         if errors:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
+
+    print(f"Launching {len(jobs)} runs with {min(args.workers, len(jobs)) if jobs else 0} worker processes.", flush=True)
+    if not jobs:
+        print("No pending runs.", flush=True)
+    elif args.workers == 1:
+        for completed_count, job in enumerate(jobs, start=1):
+            result = execute_rq3_job(job)
+            persist_result(job, result, completed_count)
+            if result["status"] == "error" and args.fail_fast:
+                raise RuntimeError(result["error"])
+    else:
+        with ProcessPoolExecutor(max_workers=min(args.workers, len(jobs))) as executor:
+            future_to_job = {executor.submit(execute_rq3_job, job): job for job in jobs}
+            for completed_count, future in enumerate(as_completed(future_to_job), start=1):
+                job = future_to_job[future]
+                result = future.result()
+                persist_result(job, result, completed_count)
+                if result["status"] == "error" and args.fail_fast:
+                    for pending in future_to_job:
+                        pending.cancel()
+                    raise RuntimeError(result["error"])
 
     cleanup_transient_artifacts(RESULTS_ROOT)
 

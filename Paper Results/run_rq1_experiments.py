@@ -220,8 +220,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=1,
-        help="Number of independent simulations to run in parallel.",
+        default=0,
+        help="Independent simulations in parallel; 0 automatically uses available CPUs (up to 6).",
     )
     parser.add_argument(
         "--condition-indexes",
@@ -824,8 +824,9 @@ def execute_run_job(job: dict) -> dict:
 
 
 def run_campaign(args: argparse.Namespace) -> None:
-    if args.workers < 1:
-        raise ValueError("--workers must be at least 1.")
+    if args.workers < 0:
+        raise ValueError("--workers must be zero (automatic) or a positive integer.")
+    args.workers = max(1, min(6, os.cpu_count() or 1)) if args.workers == 0 else args.workers
     configure_bandit_objective(args)
     combos = campaign_grid(args)
     total_runs = len(combos)
@@ -859,6 +860,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         "sim_days": args.sim_days,
         "repetitions": args.repetitions,
         "total_runs": total_runs,
+        "workers": args.workers,
         "coordination_mechanisms": coord_labels,
         "adaptation_policy": BASE_CONFIG["ADAPTATION_POLICY"],
         "bandit_reward_version": BASE_CONFIG.get("BANDIT_REWARD_VERSION", ""),
@@ -1100,7 +1102,9 @@ def run_campaign(args: argparse.Namespace) -> None:
             write_rows(RESULTS_ROOT / "errors.csv", errors)
 
     print(f"Launching {len(jobs)} runs with {min(args.workers, len(jobs))} worker processes.", flush=True)
-    if args.workers == 1:
+    if not jobs:
+        print("No pending runs.", flush=True)
+    elif args.workers == 1:
         for completed_count, job in enumerate(jobs, start=1):
             print(f"[{completed_count}/{len(jobs)}] {job['run_id']} started", flush=True)
             result = execute_run_job(job)
