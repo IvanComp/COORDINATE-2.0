@@ -36,10 +36,13 @@ GRID_COLOR = "#d9d9d9"
 LEGEND_EDGE_COLOR = "#dddddd"
 PENDING_COLOR = "#666666"
 
-# Neutral greys for the RQ2 operating-phase bands. They stay outside the
-# mechanism palette so a shaded phase is never confused with a mechanism.
-PHASE_DISPLAY = {"I1": "I1", "I2": "I2", "I3": "I3", "I4": "I4"}
-PHASE_COLORS = {"I1": "#e0e0e0", "I2": "#a6a6a6", "I3": "#737373", "I4": "#f2f2f2"}
+# Neutral greys for the fault-window bands. They stay outside the mechanism
+# palette so a shaded window is never confused with a mechanism. The shade
+# tracks severity: FW1 leaves the background untouched because it applies no
+# extra fault pressure, and each later window is darker.
+PHASE_DISPLAY = {"I1": "FW1", "I2": "FW2", "I3": "FW3", "I4": "FW4"}
+PHASE_COLORS = {"I1": "#ffffff", "I2": "#dcdcdc", "I3": "#b0b0b0", "I4": "#808080"}
+PHASE_EDGE_COLOR = "#9e9e9e"
 
 # Non-mechanism series (RQ2 timelines) also share one convention.
 METRIC_STYLE = {
@@ -77,8 +80,14 @@ def mechanism_label(architecture: object) -> str:
     return "CE"
 
 
-def style_axes(ax: plt.Axes, metric: str | None = None, grid_axis: str = "y") -> None:
-    """Apply the shared axis look, plus the metric-specific y-range if known."""
+def style_axes(ax: plt.Axes, metric: str | None = None, grid_axis: str = "y",
+               integer_ticks: bool = True) -> None:
+    """Apply the shared axis look, plus the metric-specific y-range if known.
+
+    Pass ``integer_ticks=False`` for quantities whose useful range is below a
+    few units, such as per-check overhead in milliseconds, where integer ticks
+    would collapse the axis.
+    """
     ax.set_axisbelow(True)
     if grid_axis:
         ax.grid(axis=grid_axis, color=GRID_COLOR, linewidth=0.5)
@@ -88,7 +97,7 @@ def style_axes(ax: plt.Axes, metric: str | None = None, grid_axis: str = "y") ->
         ax.set_ylim(0, 105)
         ax.set_yticks(range(0, 101, 20))
     else:
-        ax.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=6))
+        ax.yaxis.set_major_locator(MaxNLocator(integer=integer_ticks, nbins=6))
 
 
 def legend_handles(labels=ORDER, linewidth: float = 1.0, markersize: float = 3.5) -> list[Line2D]:

@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from matplotlib.ticker import MaxNLocator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from paper_plot_style import (  # noqa: E402
@@ -22,6 +23,7 @@ from paper_plot_style import (  # noqa: E402
     METRIC_STYLE,
     PHASE_COLORS,
     PHASE_DISPLAY,
+    PHASE_EDGE_COLOR,
     apply_rc,
     mechanism_label,
     save,
@@ -35,9 +37,9 @@ SECONDS_PER_DAY = 24 * 3600
 
 # One row per objective weighting in each of the two figures.
 OBJECTIVES = (
-    (0.50, "balanced_50_50", "Completion 50% / latency 50%"),
-    (1.00, "completion_100", "Completion 100% / latency 0%"),
-    (0.00, "latency_100", "Completion 0% / latency 100%"),
+    (0.50, "balanced_50_50", r"$r_{j+1} = w_1 = 0.50 + w_2 = 0.50$"),
+    (1.00, "completion_100", r"$r_{j+1} = w_1 = 1.00 + w_2 = 0.00$"),
+    (0.00, "latency_100", r"$r_{j+1} = w_1 = 0.00 + w_2 = 1.00$"),
 )
 
 PHASE_ALIASES = {f"P{index}": f"I{index}" for index in range(1, 5)}
@@ -48,7 +50,9 @@ SWITCH_MARKERS = {label: MARKERS[label] for label in ("CE", "SD", "FD")}
 LATENCY_STYLE = METRIC_STYLE["latency"]
 COMPLETION_STYLE = METRIC_STYLE["completion_rate"]
 MECHANISM_CODES = {"FD": 0, "SD": 1, "CE": 2}
-MECHANISM_WINDOW_DAYS = 7
+# Figure width matches RQ1 so that identical point sizes render at the same
+# relative text size across every research question.
+FIGURE_WIDTH = 11.8
 
 label = mechanism_label
 
@@ -89,7 +93,7 @@ def shade(ax: plt.Axes, phases: pd.DataFrame, start: float, end: float) -> None:
         color = PHASE_COLORS.get(str(phase.phase_label))
         if color:
             ax.axvspan(max(phase.start, start) / SECONDS_PER_DAY + 1, min(phase.end, end) / SECONDS_PER_DAY + 1,
-                       color=color, alpha=0.45, linewidth=0)
+                       color=color, alpha=0.70, linewidth=0)
 
 
 def prepare(timeline: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -99,10 +103,11 @@ def prepare(timeline: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return trace_all, phase_blocks(trace_all)
 
 
-def draw_mechanism(ax: plt.Axes, trace_all: pd.DataFrame, phases: pd.DataFrame) -> set[str]:
-    start_day = best_window_start(trace_all, MECHANISM_WINDOW_DAYS)
+def draw_mechanism(ax: plt.Axes, trace_all: pd.DataFrame, phases: pd.DataFrame, days: int,
+                   show_label: bool) -> set[str]:
+    start_day = best_window_start(trace_all, days)
     start = (start_day - 1) * SECONDS_PER_DAY
-    end = start + MECHANISM_WINDOW_DAYS * SECONDS_PER_DAY
+    end = start + days * SECONDS_PER_DAY
     trend = trace_all[trace_all["sim_time"].between(start, end)].copy()
     trend["day"] = trend["sim_time"] / SECONDS_PER_DAY + 1
 
@@ -122,16 +127,18 @@ def draw_mechanism(ax: plt.Axes, trace_all: pd.DataFrame, phases: pd.DataFrame) 
                    edgecolor="#222222", linewidth=0.35, zorder=3)
 
     style_axes(ax)
-    ax.set_xlim(start_day, start_day + MECHANISM_WINDOW_DAYS)
-    ax.set_xticks(np.arange(start_day, start_day + MECHANISM_WINDOW_DAYS + 1))
+    ax.set_xlim(start_day, start_day + days)
+    step = 1 if days <= 7 else 3 if days <= 31 else 15
+    ax.set_xticks(np.arange(start_day, start_day + days + 0.1, step))
     ax.set_yticks([0, 1, 2])
     ax.set_yticklabels(["FD", "SD", "CE"])
-    ax.set_ylabel("Active mechanism")
+    if show_label:
+        ax.set_ylabel("Active mechanism")
     return seen
 
 
 def draw_timeline(ax_windows: plt.Axes, ax_perf: plt.Axes, trace_all: pd.DataFrame,
-                  phases: pd.DataFrame, days: int) -> set[str]:
+                  phases: pd.DataFrame, days: int, show_labels: bool) -> set[str]:
     start_day = best_window_start(trace_all, days)
     start = (start_day - 1) * SECONDS_PER_DAY
     end = start + days * SECONDS_PER_DAY
@@ -149,18 +156,21 @@ def draw_timeline(ax_windows: plt.Axes, ax_perf: plt.Axes, trace_all: pd.DataFra
                                color=color, alpha=0.85, linewidth=0)
     ax_windows.set_ylim(0, 1)
     ax_windows.set_yticks([])
-    ax_windows.set_ylabel("Dynamic\nphases")
     for side in ("top", "right", "left"):
         ax_windows.spines[side].set_visible(False)
 
     ax_perf.plot(trace["day"], trace["latency_min"], linewidth=1.0, **LATENCY_STYLE)
-    ax_perf.set_ylabel("Latency (min)")
+    if show_labels:
+        ax_perf.set_ylabel("Latency (min)")
     style_axes(ax_perf)
+    # Drop the topmost tick so its label cannot collide with the phase band above.
+    ax_perf.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, prune="upper"))
     ax_completion = ax_perf.twinx()
     ax_completion.plot(trace["day"], trace["completion_smooth"], linewidth=1.0, **COMPLETION_STYLE)
     ax_completion.set_ylim(0, 105)
     ax_completion.set_yticks(range(0, 101, 20))
-    ax_completion.set_ylabel("Completion rate (%)")
+    if show_labels:
+        ax_completion.set_ylabel("Completion rate (%)")
     ax_completion.spines["top"].set_visible(False)
 
     seen: set[str] = set()
@@ -178,8 +188,17 @@ def draw_timeline(ax_windows: plt.Axes, ax_perf: plt.Axes, trace_all: pd.DataFra
 
 
 def phase_handles() -> list[Patch]:
-    return [Patch(facecolor=PHASE_COLORS[key], edgecolor="none", alpha=0.7, label=PHASE_DISPLAY[key])
-            for key in PHASE_DISPLAY]
+    """One legend entry per fault window, from the untinted FW1 to the darkest."""
+    return [
+        Patch(facecolor=PHASE_COLORS[key], edgecolor=PHASE_EDGE_COLOR,
+              linewidth=0.4, label=PHASE_DISPLAY[key])
+        for key in PHASE_DISPLAY
+    ]
+
+
+def figure_legend(fig, handles: list) -> None:
+    fig.legend(handles=handles, ncol=len(handles), frameon=False,
+               loc="upper center", bbox_to_anchor=(0.5, 1.0))
 
 
 def switch_handles(seen: set[str], linestyle: str) -> list[Line2D]:
@@ -189,48 +208,73 @@ def switch_handles(seen: set[str], linestyle: str) -> list[Line2D]:
             for mechanism in ("CE", "SD", "FD") if mechanism in seen]
 
 
-def plot_mechanism_figure(datasets: list[tuple], output_dir: Path) -> Path:
+def plot_mechanism_figure(datasets: list[dict], output_dir: Path, days: int) -> Path:
     """One figure stacking the active-mechanism timeline of every objective."""
-    fig, axes = plt.subplots(len(datasets), 1, figsize=(6.4, 2.15 * len(datasets)))
+    fig, axes = plt.subplots(len(datasets), 1, figsize=(FIGURE_WIDTH, 1.75 * len(datasets)))
     axes = np.atleast_1d(axes)
     seen: set[str] = set()
-    for ax, (_, title, trace_all, phases) in zip(axes, datasets):
-        seen |= draw_mechanism(ax, trace_all, phases)
-        ax.set_title(title, fontsize=9)
+    middle = len(datasets) // 2
+    for index, (ax, data) in enumerate(zip(axes, datasets)):
+        seen |= draw_mechanism(ax, data["trace"], data["phases"], days, index == middle)
+        ax.set_title(data["title"])
     axes[-1].set_xlabel("Simulation day")
 
-    handles = switch_handles(seen, "none") + phase_handles()
-    fig.legend(handles=handles, ncol=len(handles), frameon=False, fontsize=7,
-               loc="lower center", bbox_to_anchor=(0.5, 0.0))
-    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    figure_legend(fig, switch_handles(seen, "none") + phase_handles())
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
     return save(fig, output_dir, "rq2_mechanism_time_by_phase.pdf")
 
 
-def plot_timeline_figure(datasets: list[tuple], output_dir: Path, days: int) -> Path:
+def plot_timeline_figure(datasets: list[dict], output_dir: Path, days: int) -> Path:
     """One figure stacking the full-duration timeline of every objective."""
-    fig = plt.figure(figsize=(6.9, 2.9 * len(datasets)))
-    outer = fig.add_gridspec(len(datasets), 1, hspace=0.45)
+    fig = plt.figure(figsize=(FIGURE_WIDTH, 2.20 * len(datasets)))
+    outer = fig.add_gridspec(len(datasets), 1, hspace=0.55)
     seen: set[str] = set()
-    for index, (_, title, trace_all, phases) in enumerate(datasets):
-        inner = outer[index].subgridspec(2, 1, height_ratios=[0.32, 1.0], hspace=0.08)
+    middle = len(datasets) // 2
+    for index, data in enumerate(datasets):
+        inner = outer[index].subgridspec(2, 1, height_ratios=[0.30, 1.0], hspace=0.10)
         ax_windows = fig.add_subplot(inner[0])
         ax_perf = fig.add_subplot(inner[1], sharex=ax_windows)
-        seen |= draw_timeline(ax_windows, ax_perf, trace_all, phases, days)
-        ax_windows.set_title(title, fontsize=9)
-        ax_perf.set_xlabel("Simulation day")
+        seen |= draw_timeline(ax_windows, ax_perf, data["trace"], data["phases"], days, index == middle)
+        ax_windows.set_title(data["title"])
+        if index == len(datasets) - 1:
+            ax_perf.set_xlabel("Simulation day")
         plt.setp(ax_windows.get_xticklabels(), visible=False)
 
     handles = [
         Line2D([0], [0], lw=1.0, label="Latency", **LATENCY_STYLE),
         Line2D([0], [0], lw=1.0, label="Completion rate", **COMPLETION_STYLE),
-    ] + switch_handles(seen, ":")
-    fig.legend(handles=handles, ncol=len(handles), frameon=False, fontsize=7,
-               loc="lower center", bbox_to_anchor=(0.5, 0.005))
-    fig.subplots_adjust(left=0.10, right=0.89, top=0.96, bottom=0.075)
+    ] + switch_handles(seen, ":") + phase_handles()
+    figure_legend(fig, handles)
+    fig.subplots_adjust(left=0.06, right=0.94, top=0.91, bottom=0.08)
     return save(fig, output_dir, f"rq2_timeline_{days}d.pdf")
 
 
-def load_datasets(data_dir: Path) -> list[tuple]:
+def switch_statistics(datasets: list[dict], output_dir: Path) -> pd.DataFrame:
+    """Share of DA switches per dynamic fault window and target mechanism.
+
+    Percentages are taken over all switches of one objective, so every block of
+    three mechanism rows sums to 100.
+    """
+    rows = []
+    for data in datasets:
+        trace = data["runs"]
+        switches = trace[truth(trace["switched"])]
+        phases = switches["phase_label"].astype(str).map(lambda value: PHASE_ALIASES.get(value, value))
+        selected = switches["selected_architecture"].map(label)
+        total = len(switches)
+        for mechanism in ("CE", "SD", "FD"):
+            row = {"Objective": data["title"], "Mechanism": mechanism}
+            for key in PHASE_DISPLAY:
+                matches = phases.eq(key) & selected.eq(mechanism)
+                row[PHASE_DISPLAY[key]] = round(100.0 * matches.sum() / total, 1) if total else float("nan")
+            rows.append(row)
+
+    table = pd.DataFrame(rows).set_index(["Objective", "Mechanism"])
+    table.to_csv(output_dir / "rq2_switch_statistics.csv")
+    return table
+
+
+def load_datasets(data_dir: Path) -> list[dict]:
     runs = pd.read_csv(data_dir / "runs.csv")
     timeline = pd.read_csv(data_dir / "adaptation_state_timeseries.csv.gz", low_memory=False)
     runs = runs[
@@ -248,15 +292,22 @@ def load_datasets(data_dir: Path) -> list[tuple]:
         if selected.empty:
             continue
         trace = timeline[timeline["run_id"].astype(str).isin(set(selected["run_id"].astype(str)))].copy()
-        trace_all, phases = prepare(trace)
-        datasets.append((slug, title, trace_all, phases))
+        representative, phases = prepare(trace)
+        # The figures show one representative run; the table aggregates them all.
+        datasets.append({
+            "slug": slug,
+            "title": title,
+            "trace": representative,
+            "phases": phases,
+            "runs": trace,
+        })
     if not datasets:
         raise RuntimeError("No successful RQ2 runs were found for the current experiment profile.")
     return datasets
 
 
-def generate(data_dir: Path, output_dir: Path | None = None) -> list[Path]:
-    """Write the two RQ2 figures and return their PDF paths."""
+def generate(data_dir: Path, output_dir: Path | None = None) -> tuple[list[Path], pd.DataFrame]:
+    """Write the two RQ2 figures plus the switch-statistics table."""
     data_dir = Path(data_dir).resolve()
     output_dir = Path(
         output_dir or data_dir.parent / "paper_figures_latest" / "rq2_objective_weights"
@@ -268,11 +319,12 @@ def generate(data_dir: Path, output_dir: Path | None = None) -> list[Path]:
 
     apply_rc()
     datasets = load_datasets(data_dir)
-    days = max(1, int(np.ceil(max(data[2]["sim_time"].max() for data in datasets) / SECONDS_PER_DAY)))
-    return [
-        plot_mechanism_figure(datasets, output_dir),
+    days = max(1, int(np.ceil(max(data["trace"]["sim_time"].max() for data in datasets) / SECONDS_PER_DAY)))
+    figures = [
+        plot_mechanism_figure(datasets, output_dir, days),
         plot_timeline_figure(datasets, output_dir, days),
     ]
+    return figures, switch_statistics(datasets, output_dir)
 
 
 def main() -> None:

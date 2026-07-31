@@ -70,10 +70,16 @@ from paper_experiment_utils import (
 
 RESULTS_ROOT = PAPER_ROOT / "RQ3"
 RQ3_EXPERIMENT_PROFILE = "extended-overhead-v2"
-DEFAULT_COMP_TIMES = [value / 10 for value in range(0, 11)]
-DEFAULT_COMM_TIMES = [value / 10 for value in range(0, 11)]
-DEFAULT_MSG_LOSS_PROBS = [value / 10 for value in range(0, 11)]
+# RQ3 measures the runtime cost of the same nominal configuration analysed in
+# RQ1, so it sweeps exactly the RQ1 factors one at a time from the ring-25
+# baseline. Reusing the RQ1 grid also lets --reuse-rq1 import every run.
+DEFAULT_ITEM_SPAWNING_TIMES = [90, 120, 150, 180, 210, 240, 270, 300]
+DEFAULT_MALICIOUS_RATIOS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+DEFAULT_FAIL_PROBS = [value / 100 for value in range(1, 11)]
+DEFAULT_MSG_LOSS_PROBS = [value / 100 for value in range(1, 11)]
 DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
+NOMINAL_COMP_TIME = 0.03
+NOMINAL_COMM_TIME = 0.03
 
 
 def parse_args() -> argparse.Namespace:
@@ -111,43 +117,39 @@ def selected_coord_labels(args: argparse.Namespace) -> list[str]:
 def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
     coord_labels = selected_coord_labels(args)
     if args.quick:
-        conditions = [
-            ("nominal", EXTENDED_NOMINAL_SPAWN, EXTENDED_NOMINAL_ROBOTS, EXTENDED_NOMINAL_ROOMS, 0.03, 0.03, args.msg_loss),
-        ]
+        conditions = [("nominal", EXTENDED_NOMINAL_SPAWN, args.malicious_ratio, args.fail_prob, args.msg_loss)]
         repetitions = 1 if args.repetitions == 10 else args.repetitions
     else:
         conditions = []
-        seen = set()
+        seen: dict[tuple, int] = {}
 
-        def add_condition(slice_name, item_spawn=EXTENDED_NOMINAL_SPAWN, n_robots=EXTENDED_NOMINAL_ROBOTS,
-                          n_rooms=EXTENDED_NOMINAL_ROOMS, comp_time=0.03, comm_time=0.03,
+        def add_condition(slice_name, item_spawn=EXTENDED_NOMINAL_SPAWN,
+                          malicious_ratio=args.malicious_ratio, fail_prob=args.fail_prob,
                           msg_loss=args.msg_loss):
-            key = (item_spawn, n_robots, n_rooms, comp_time, comm_time, msg_loss)
-            if key not in seen:
-                seen.add(key)
-                conditions.append((slice_name, *key))
-            else:
-                index = next(index for index, row in enumerate(conditions) if row[1:] == key)
+            key = (item_spawn, malicious_ratio, fail_prob, msg_loss)
+            if key in seen:
+                index = seen[key]
                 conditions[index] = (conditions[index][0] + "," + slice_name, *key)
+            else:
+                seen[key] = len(conditions)
+                conditions.append((slice_name, *key))
 
-        for value in EXTENDED_ITEM_SPAWNING_TIMES:
+        for value in DEFAULT_ITEM_SPAWNING_TIMES:
             add_condition("workload", item_spawn=value)
-        for value in EXTENDED_ROBOT_COUNTS:
-            add_condition("fleet", n_robots=value)
-        for value in EXTENDED_ROOM_COUNTS:
-            add_condition("topology_size", n_rooms=value)
-        for value in DEFAULT_COMP_TIMES:
-            add_condition("computation", comp_time=value)
-        for value in DEFAULT_COMM_TIMES:
-            add_condition("communication_time", comm_time=value)
+        for value in DEFAULT_MALICIOUS_RATIOS:
+            add_condition("security", malicious_ratio=value)
+        for value in DEFAULT_FAIL_PROBS:
+            add_condition("reliability", fail_prob=value)
         for value in DEFAULT_MSG_LOSS_PROBS:
-            add_condition("message_loss", msg_loss=value)
+            add_condition("communication", msg_loss=value)
         repetitions = args.repetitions
 
     rows: list[dict[str, Any]] = []
     combo_idx = 0
-    for analysis_slices, item_spawn, n_robots, n_rooms, comp_time, comm_time, msg_loss in conditions:
-        n_malicious = malicious_count(n_robots, args.malicious_ratio)
+    n_robots = EXTENDED_NOMINAL_ROBOTS
+    n_rooms = EXTENDED_NOMINAL_ROOMS
+    for analysis_slices, item_spawn, malicious_ratio, fail_prob, msg_loss in conditions:
+        n_malicious = malicious_count(n_robots, malicious_ratio)
         for coord_label in coord_labels:
             combo_idx += 1
             for rep in range(1, repetitions + 1):
@@ -162,12 +164,12 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
                     "n_rooms": n_rooms,
                     "item_spawning_time": item_spawn,
                     "n_robots": n_robots,
-                    "malicious_ratio": args.malicious_ratio,
+                    "malicious_ratio": malicious_ratio,
                     "n_malicious": n_malicious,
-                    "fail_prob": args.fail_prob,
+                    "fail_prob": fail_prob,
                     "msg_loss_prob": msg_loss,
-                    "comp_time": comp_time,
-                    "comm_time": comm_time,
+                    "comp_time": NOMINAL_COMP_TIME,
+                    "comm_time": NOMINAL_COMM_TIME,
                 })
     return rows[: args.limit] if args.limit else rows
 
@@ -197,12 +199,12 @@ def run_campaign(args: argparse.Namespace) -> None:
         "repetitions": args.repetitions,
         "total_runs": len(combos),
         "coordination_mechanisms": coord_labels,
-        "item_spawning_times": [EXTENDED_NOMINAL_SPAWN] if args.quick else EXTENDED_ITEM_SPAWNING_TIMES,
-        "n_robots": [EXTENDED_NOMINAL_ROBOTS] if args.quick else EXTENDED_ROBOT_COUNTS,
-        "n_rooms": [EXTENDED_NOMINAL_ROOMS] if args.quick else EXTENDED_ROOM_COUNTS,
-        "comp_times_s": DEFAULT_COMP_TIMES,
-        "comm_times_s": DEFAULT_COMM_TIMES,
-        "message_loss_probabilities": DEFAULT_MSG_LOSS_PROBS,
+        "item_spawning_times": [EXTENDED_NOMINAL_SPAWN] if args.quick else DEFAULT_ITEM_SPAWNING_TIMES,
+        "malicious_ratios": [args.malicious_ratio] if args.quick else DEFAULT_MALICIOUS_RATIOS,
+        "fail_probabilities": [args.fail_prob] if args.quick else DEFAULT_FAIL_PROBS,
+        "message_loss_probabilities": [args.msg_loss] if args.quick else DEFAULT_MSG_LOSS_PROBS,
+        "n_robots": [EXTENDED_NOMINAL_ROBOTS],
+        "n_rooms": [EXTENDED_NOMINAL_ROOMS],
         "malicious_ratio": args.malicious_ratio,
         "fail_prob": args.fail_prob,
         "msg_loss": args.msg_loss,

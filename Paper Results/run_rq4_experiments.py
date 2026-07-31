@@ -70,7 +70,11 @@ from paper_experiment_utils import (
 
 RESULTS_ROOT = PAPER_ROOT / "RQ4"
 RQ4_EXPERIMENT_PROFILE = "extended-wallclock-v2"
+# RQ4 compares two hardware profiles and two mechanisms on the nominal
+# configuration of the paper. No parameter is swept: the only factors are the
+# execution platform and the coordination mechanism.
 DEFAULT_SIM_DAYS = [90]
+NOMINAL_SIM_DAYS = 90
 DEFAULT_COORD_LABELS = ["CE", "DA"]
 SUBPROCESS_MARKER = "__RQ4_RESULT__"
 
@@ -94,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--machine-label",
-        default="workstation",
+        default=None,
         help="Short label for the computer running this shard, e.g. mac or workstation.",
     )
     parser.add_argument("--shard-count", type=int, default=1, help="Number of machines/shards used for RQ4.")
@@ -113,7 +117,8 @@ def sanitize_label(value: str) -> str:
 
 
 def default_machine_label() -> str:
-    return "workstation"
+    """Label this host by hardware profile so the two profiles stay separable."""
+    return "mac" if platform.system() == "Darwin" else "workstation"
 
 
 def machine_label(args: argparse.Namespace) -> str:
@@ -165,39 +170,33 @@ def validate_shard_args(args: argparse.Namespace) -> None:
 
 def build_campaign_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.quick:
-        sim_days_values = [1]
-        conditions = [("nominal", EXTENDED_NOMINAL_SPAWN, EXTENDED_NOMINAL_ROBOTS, EXTENDED_NOMINAL_ROOMS)]
+        conditions = [("nominal", 1, EXTENDED_NOMINAL_SPAWN, EXTENDED_NOMINAL_ROBOTS, EXTENDED_NOMINAL_ROOMS)]
         coord_labels = selected_coord_labels(args)
         repetitions = 1 if args.repetitions == 10 else args.repetitions
     else:
-        sim_days_values = selected_sim_days(args)
         conditions = []
-        seen = set()
+        seen: dict[tuple, int] = {}
 
-        def add_condition(slice_name, item_spawn=EXTENDED_NOMINAL_SPAWN,
+        def add_condition(slice_name, sim_days=NOMINAL_SIM_DAYS, item_spawn=EXTENDED_NOMINAL_SPAWN,
                           n_robots=EXTENDED_NOMINAL_ROBOTS, n_rooms=EXTENDED_NOMINAL_ROOMS):
-            key = (item_spawn, n_robots, n_rooms)
-            if key not in seen:
-                seen.add(key)
-                conditions.append((slice_name, *key))
-            else:
-                index = next(index for index, row in enumerate(conditions) if row[1:] == key)
+            key = (sim_days, item_spawn, n_robots, n_rooms)
+            if key in seen:
+                index = seen[key]
                 conditions[index] = (conditions[index][0] + "," + slice_name, *key)
+            else:
+                seen[key] = len(conditions)
+                conditions.append((slice_name, *key))
 
-        for value in EXTENDED_ITEM_SPAWNING_TIMES:
-            add_condition("workload", item_spawn=value)
-        for value in EXTENDED_ROBOT_COUNTS:
-            add_condition("fleet", n_robots=value)
-        for value in EXTENDED_ROOM_COUNTS:
-            add_condition("topology_size", n_rooms=value)
+        for value in selected_sim_days(args):
+            add_condition("nominal", sim_days=value)
         coord_labels = selected_coord_labels(args)
         repetitions = args.repetitions
 
     rows: list[dict[str, Any]] = []
     combo_idx = 0
     label = machine_label(args)
-    for sim_days, (analysis_slices, item_spawn, n_robots, n_rooms), coord_label in product(
-        sim_days_values, conditions, coord_labels,
+    for (analysis_slices, sim_days, item_spawn, n_robots, n_rooms), coord_label in product(
+        conditions, coord_labels,
     ):
         combo_idx += 1
         for rep in range(1, repetitions + 1):
