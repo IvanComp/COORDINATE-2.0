@@ -16,7 +16,12 @@ COPY ui/ ./
 # Build the React app
 RUN npm run build
 
-# Stage 2: Production image with Python backend
+# Stage 2: Build the Linux RTLola CLI required by Dynamic Adaptation.
+FROM rust:1.88-slim-bookworm AS rtlola-builder
+
+RUN cargo install rtlola-cli --version 0.1.2 --root /opt/rtlola
+
+# Stage 3: Production image with Python backend
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -36,7 +41,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend code
 COPY backend ./backend
 COPY sim ./sim
-COPY experiments ./experiments
+COPY spec2.rtlola ./spec2.rtlola
+
+# Keep the monitor binary in PATH inside the Linux container.
+COPY --from=rtlola-builder /opt/rtlola/bin/rtlola-cli /usr/local/bin/rtlola-cli
 
 # Create necessary directories
 RUN mkdir -p results configuration bench_config test_config
