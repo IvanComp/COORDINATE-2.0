@@ -1,18 +1,23 @@
 #!/bin/bash
-# RQ4 nominal campaign on a single exclusive CPU node.
+# RQ4 nominal campaign on a single core.
 #
-# The node is requested exclusively because RQ4 measures wall time: sharing the
-# node with another job would make the timings unreproducible.
+# The simulator is single-threaded, so one core is all the campaign needs. The
+# serial partition does not grant exclusive nodes, which means the node is
+# shared with other jobs: wall time is therefore measured under contention and
+# should be reported as such. Add --exclusive on a production partition if the
+# project has access to one.
 #
-# Submit with the account and partition of your CINECA project, for example:
-#   sbatch --account=<your_account> --partition=dcgp_usr_prod scripts/rq4_leonardo.slurm
+# Submit with the default account and partition:
+#   sbatch scripts/rq4_leonardo.slurm
+# or explicitly:
+#   sbatch --account=inf26_enesma --partition=<partition> scripts/rq4_leonardo.slurm
 
 #SBATCH --job-name=coordinate-rq4
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --exclusive
-#SBATCH --time=01:00:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=4G
+#SBATCH --time=02:00:00
 #SBATCH --output=slurm_logs/rq4-%j.out
 #SBATCH --error=slurm_logs/rq4-%j.err
 
