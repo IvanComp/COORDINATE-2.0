@@ -1,0 +1,1401 @@
+                 Stream-Based Runtime Adaptation of Coordination Mechanisms for
+                               Fault-Tolerant Multi-Agent Systems
+
+                             Ivan Compagnucci a , Simone Silvetti b , Laura Nenzi b , Catia Trubiani a
+                                                 a Gran Sasso Science Institute, 67100, L’Aquila, Italy
+                                b University of Trieste, Dipartimento di Ingegneria e Architettura, 34127, Trieste, Italy
+
+
+
+
+Abstract
+Multi-Agent Systems (MAS) consist of autonomous entities that operate individually or collaboratively to complete tasks, relying
+on coordination mechanisms to assign responsibilities, manage failures, and regulate agent interactions. Since coordination de-
+termines how tasks are allocated, transferred, and recovered during execution, it directly affects the MAS performance objective,
+such as reducing task latency or improving task completion under uncertain operating conditions. Yet, coordination mechanisms
+are selected at design time and kept fixed during execution. This limits their effectiveness when workload, agent failures, com-
+munication losses, or malicious behaviors change at runtime. This paper addresses this limitation by framing the selection of
+coordination mechanisms as a runtime adaptation problem. We propose a dynamic adaptation strategy that combines stream-based
+runtime monitoring and online learning. RTLola, a stream-based monitoring language formalism, computes prespecified MAS
+performance objectives and tracks evolving operational conditions from the simulation event stream, while a contextual bandit uses
+this feedback to select the most efficient among three coordination mechanisms. We implement the dynamic adaptation strategy
+in COORDINATE 2.0, a discrete-event simulation tool for configuring, executing, and analyzing fault-tolerant MAS scenarios. The
+evaluation, conducted in a smart-hospital scenario, shows that monitoring-guided adaptation can improve MAS performance under
+changing workload and fault conditions, while introducing negligible runtime overhead.
+Keywords: Multi-Agent Systems, Stream-based Monitoring, Online Learning, Contextual Bandit, Performance Evaluation
+
+
+1. Introduction                                                                   Yet, classical design-time practices typically fix a single co-
+                                                                               ordination mechanism a priori, based on offline evaluations of
+   Multi-Agent Systems (MAS) are networks of autonomous                        MAS performance objectives [4]. However, once deployed, the
+agents that are designed to interact and collaborate to complete               MAS is often exposed to faulty or uncertain events (e.g., fail-
+a common task [32, 20]. MAS are increasingly used in do-                       ures, message loss, hardware breakdowns) that can invalidate
+mains such as healthcare, logistics, and smart manufacturing,                  offline assumptions, so that a coordination mechanism that pre-
+where agents operate in dynamic physical environments and                      viously appeared optimal may instead slow down tasks or even
+contribute to system-level goals through individual or collab-                 cause critical tasks to fail, ultimately degrading system perfor-
+orative tasks. For instance, robots need to deliver medicines in               mance objectives [10, 7, 33]. Existing studies [25], therefore,
+a hospital while navigating physical areas that include dynamic                remain largely retrospective: they indicate which coordination
+obstacles, such as moving medical equipment trays. Although                    mechanism performs best under given conditions, but they do
+each agent pursues its own local tasks, the system evaluates                   not close the loop between system performance objective as-
+their joint behavior through performance objectives, which                     sessment and runtime control, which limits their performance
+capture overall MAS performance properties (e.g., on average,                  on MAS with evolving operating conditions [22, 25].
+how many medicines are successfully delivered per hour? What
+                                                                                  To address this limitation, we treat the selection of coor-
+is the average delivery time per request?). Achieving these ob-
+                                                                               dination mechanisms as a runtime adaptation problem. The
+jectives requires coordination, as agents must decide how tasks
+                                                                               key idea is to close the loop between stream-based monitor-
+are assigned, transferred, and recovered in the event of fail-
+                                                                               ing and coordination control, using online learning to dynami-
+ures or delays. Consequently, coordination mechanisms such
+                                                                               cally adapt agent coordination mechanisms in the MAS based
+as centralized schedulers or fully decentralized policies play a
+                                                                               on performance objectives and operational conditions. We use
+key role in ensuring that tasks are completed while meeting pre-
+                                                                               RTLola [2], a real-time stream specification language for run-
+defined MAS performance objectives (e.g., patient X should re-
+                                                                               time monitoring, to define monitors that consume the simu-
+ceive the medicine within 10 minutes) [22, 25].
+                                                                               lation event stream and compute the MAS performance ob-
+  ∗ Corresponding author
+                                                                               jectives alongside evolving operating conditions across con-
+    Email addresses: ivan.compagnucci@gssi.it (Ivan Compagnucci ),
+                                                                               secutive monitoring windows. We implement this approach
+simone.silvetti@gmail.com (Simone Silvetti ), lnenzi@units.it                  in COORDINATE 2.0, which combines the monitored perfor-
+(Laura Nenzi ), catia.trubiani@gssi.it (Catia Trubiani )                       mance objectives with context variables reflecting operating
+conditions—such as workload intensity, agent failures, message         key component of MAS [36]. Rizk et al. [26] survey coordina-
+loss, and malicious agents. This information feeds a contextual        tion in MAS, highlighting Markov decision processes, swarm
+bandit, an online learning model that selects the most suitable        intelligence, and graph-theoretic frameworks. Swarm intelli-
+coordination mechanism for the next window and refines its             gence algorithms are used in [27] for autonomous coordination
+decisions based on the observed performance feedback. Over             in large-scale MAS, while Yun et al. [34] introduce a leader-
+time, the strategy learns which mechanism best fits the cur-           based mechanism to improve data resolution and area cover-
+rent context, allowing the MAS to revise its active coordination       age for aerial vehicles; a related problem of reducing delivery
+mechanism as operating conditions change during execution.             time while prioritizing urgent tasks under collision avoidance
+   Beyond proposing this dynamic adaptation strategy, we               constraints is tackled in [35]. Beyond new mechanisms, sev-
+extend the discrete-event simulator presented in [25] into             eral works quantify MAS performance under varying assump-
+COORDINATE 2.0, providing a configurable environment for               tions: task completion time and efficiency are studied in [17]
+researchers and practitioners to simulate and analyze fault-           via reward-based task offloading, Stochastic Petri Nets [18] en-
+tolerant MAS under controlled, reproducible conditions. Users          able performance analysis but suffer from state-space explo-
+can design custom topologies, task generation processes, agent         sion, and the stochastic models in [24] address coordination in
+populations, fault and communication settings, malicious be-           constrained settings, without explicitly considering reliability.
+haviors, and dynamic fault windows. The tool also supports 3D
+visualization and dashboard-based inspection, enabling anal-           2.2. Simulation Tools for MAS
+ysis of how coordination choices affect MAS behavior under                Discrete-event simulators for MAS are tools for modeling
+varying operating conditions. In summary, the main contribu-           and analyzing complex environments in which multiple au-
+tions of this paper are:                                               tonomous entities (i.e., agents) interact with one another and
+                                                                       their surroundings, with state changes occurring at discrete
+  • We propose a Dynamic Adaptation strategy that enables              points in time. These tools are usually used to study complex
+    fault-tolerant MAS to adapt their coordination mechanism           emergent behaviors and complex dynamics arising from the in-
+    at runtime. The strategy combines stream-based monitor-            teractions of multiple agents that follow predefined rules [27].
+    ing with online learning: RTLola monitors MAS perfor-                 In the literature, several simulators support the design and
+    mance objectives and evolving operating conditions, while          simulation of MAS. ARGoS [23] provides swarm robotics sce-
+    a contextual bandit uses observed trends to select the co-         narios that showcase properties such as synchronization, flock-
+    ordination mechanism that best satisfies those objectives.         ing, and gripping. Gazebo [13], combined with the Robotics
+                                                                       System Toolbox [19], targets robots operating in complex en-
+  • The development of COORDINATE 2.0, a discrete-event
+                                                                       vironments and supports detailed kinematic and dynamic mod-
+    simulation tool that supports configurable MAS scenarios,
+                                                                       eling, motion planning, and trajectory generation. However,
+    including custom topologies, task generation processes,
+                                                                       to the best of our knowledge, none of the MAS simulators cur-
+    agent populations, fault probabilities, communication fail-
+                                                                       rently support: (i) the implementation and evaluation of alterna-
+    ures, malicious behaviors, and dynamic fault windows.
+                                                                       tive coordination mechanisms among agents; (ii) the continuous
+  • We evaluate the adaptation strategy and COORDINATE 2.0             and dynamic stream-based monitoring of MAS performance
+    through an extensive experimental campaign in a represen-          objectives and operating conditions; and (iii) the runtime adap-
+    tative smart-hospital scenario. The evaluation compares            tation of coordination mechanisms based on monitored perfor-
+    dynamic adaptation with static coordination mechanisms             mance indicators and evolving operating conditions.
+    across different system settings.
+                                                                       2.3. Stream-Based Monitoring
+   The rest of the paper is organized as follows. Section 2               Monitoring of real-time metrics is often based on temporal
+reviews related work. Section 3 presents COORDINATE 2.0,               logics such as STL [16] and its variants, which provide boolean
+while Section 4 describes the proposed dynamic adaptation              and quantitative (robustness-based) verdicts [6, 29]. However,
+strategy. Sections 5 and 6 present the experimental design and         these formalisms struggle with expressing aggregation and fil-
+evaluation results, respectively. Section 7 discusses implica-         tering, prompting several extensions [31, 5, 30], and their syn-
+tions and limitations, and Section 8 concludes the paper.              tactic restrictions [1] limit the manipulation of real-valued sig-
+                                                                       nals and the specification of many CPS properties. Stream-
+2. Related Work                                                        based runtime monitoring has therefore emerged as a practi-
+                                                                       cal alternative for systems that require continuous quantitative
+   In the following, we review the key aspects of MAS along the        feedback, supporting both signal- and point-based semantics.
+four dimensions considered in this work: coordination mecha-              A prominent example is RTLola [2], a real-time stream spec-
+nisms, discrete-event simulation tools, stream-based monitor-          ification language with asynchronous input streams, sliding-
+ing, and online learning.                                              window aggregations, and static resource analysis. It has been
+                                                                       used in domains such as autonomous aircraft [2], where speci-
+2.1. Coordination Mechanisms for MAS                                   fications are compiled into FPGA monitors, and its toolkit1 fur-
+   Many recent studies have focused on coordination mecha-
+nisms, which are a fundamental aspect of modern systems and a            1 https://rtlola.cispa.de/
+
+
+                                                                   2
+ther supports design-time analyses, online/offline monitoring,
+and heterogeneous sensor rates. Other asynchronous stream-
+based frameworks, such as TeSSLa [15] and Striver [9],
+also handle variable-rate event streams but lack native sliding-
+window operators, which are essential for quantitative perfor-                  Ring          Fully-Connected          Star         Mesh
+mance indicators.
+
+2.4. Online Learning
+   Online learning is a machine learning paradigm designed for
+settings where data are not available all at once but arrive pro-                      Line                     Tree              Bus
+gressively over time [28]. Instead of training a model once on a
+                                                                         Figure 1: Topologies supported in COORDINATE 2.0. Each node represents a
+fixed dataset, as in offline machine learning, online learning al-       room, while edges represent paths that agents follow to move between rooms.
+lows the model to continue training incrementally as new data
+becomes available [11]. This makes online learning particu-
+larly useful in dynamic environments, where predictions or de-           3.1. System Design
+cisions must be made while the observed context may change
+                                                                         Topology. COORDINATE 2.0 allows users to build their own
+over time. In these settings, the model cannot rely solely on
+                                                                         physical space of interest by specifying rooms and their connec-
+knowledge learned before deployment; it must progressively
+                                                                         tions. Each room may be connected to another one or multiple
+adapt its predictive or decision-making behavior as new obser-
+                                                                         ones, representing the paths the agents can take. Figure 1 shows
+vations reflect changes in the evolving context [11].
+                                                                         seven standard topologies from the literature [8] that are imple-
+   Contextual bandits are an online learning approach for prob-
+                                                                         mented in COORDINATE 2.0: Ring, where the chain is closed
+lems in which decisions must be made repeatedly under chang-
+                                                                         into a cycle; Fully-Connected, where each room is directly con-
+ing conditions [14]. At each decision step, the algorithm ob-
+                                                                         nected to all others; Star, where all rooms connect to a central
+serves the current situation, called the context, and uses it to
+                                                                         hub; Mesh, where rooms is connected to a subset of multiple
+choose one option from the available actions. After the action
+                                                                         rooms that in turn are connected to other nodes; Line, where
+is applied, the algorithm receives feedback, called a reward, in-
+                                                                         rooms form a simple chain; Tree, where rooms are organized
+dicating how effective the choice was. Since only the selected
+                                                                         hierarchically; and Bus, where rooms are connected through a
+action is applied, the algorithm observes feedback only for that
+                                                                         central corridor. It is worth noting that COORDINATE 2.0 also
+action, and not for the alternatives that were not selected. Over
+                                                                         supports the design of custom topologies, allowing practitioners
+time, it uses the collected rewards to improve the model that
+                                                                         to manually specify the number of rooms and their connections
+associates contexts with actions.
+                                                                         through the tool’s GUI.
+   This makes contextual bandits suitable for our dynamic adap-
+tation problem, where the system must repeatedly select a co-
+                                                                         Task. A task represents a system goal to be achieved by the
+ordination mechanism under changing runtime conditions. In
+                                                                         agents. In COORDINATE 2.0, a task models the generation of
+our setting, the context vector includes the monitored value of
+                                                                         an item that must be collected from a source room and deliv-
+the selected MAS performance objective, along with variables
+                                                                         ered to a destination room by an agent. Tasks are generated
+describing current operating conditions, such as workload, fail-
+                                                                         during the simulation based on two configurable parameters:
+ures, communication degradation, and malicious behavior. The
+                                                                         the interarrival time and the event arrival distribution. The in-
+actions correspond to the coordination mechanisms that can be
+                                                                         terarrival time defines the expected time between consecutive
+selected during execution, while the reward is derived from the
+                                                                         tasks, while the event arrival distribution (i.e., uniform, expo-
+value of the MAS performance objective observed after ap-
+                                                                         nential, or deterministic) specifies how this timing is sampled.
+plying the chosen mechanism. RTLola provides a monitoring
+                                                                         Together, these parameters control the rate at which workload
+layer that derives MAS performance objectives and operating
+                                                                         is injected into the system. Each item is characterized by an im-
+conditions from the simulation event stream. The contextual
+                                                                         portance level (e.g., Low, Medium, or High), a source location,
+bandit provides the learning layer by using the context vector
+                                                                         and a destination. The task priority represents the urgency of
+and the observed reward to improve future adaptation decisions.
+                                                                         completing the task. The simulator allows assigning a spawn
+                                                                         probability to each priority level as a percentage, enabling con-
+3. Our Tool                                                              trol over how frequently low-, medium-, and high-priority tasks
+                                                                         are generated during the simulation. For each task, both the
+  This section presents COORDINATE 2.0. We first describe                source and destination rooms can be configured as either fixed
+the simulation design, including the main components used to             or randomly selected. In addition, tasks can be assigned a con-
+define the simulation (i.e., environment topology, tasks, agent          figurable delivery deadline: if the task is not delivered within
+behavior, and runtime aspects). We then introduce the sup-               the specified time, it expires and is no longer considered suc-
+ported coordination mechanisms and explain how COORDINATE                cessfully completed.
+2.0 executes simulations, monitors performance indicators,                  From the agent’s perspective, a task evolves according to the
+and adapts the coordination mechanism at runtime.                        Finite State Machine (FSM) shown in Figure 2. After it is gen-
+                                                                     3
+                                                       Task Priority Levels                                                           Start
+
+
+                    Start             create
+                                                           Low    Medium   High
+                                                                                                                     fakeFailure
+
+                                                                                                                                      Idle
+                                               Available                                                    fail
+                                                                                                                                                                       rescue
+                       startLoading
+                                                                 expire
+                                                                                                                                              deliver
+
+                                         drop                                                                      recover
+                                                                                                                                   startLoading
+               move
+                       Carried            expire                 Expired                                                                                startLoading
+                                                                                            Failed
+                                                                                                                   fakeFailure      Carrying                rescue              Rescuing   fakeFailure
+                                                                                                            fail                                    move
+                            deliver        Delivered                                                 fail
+                                                                                                     drop                                                                        move
+
+                                                                                                     fakeFailure
+                                                                                                                     startLoading
+                                                                                            fail
+Figure 2: FSM of the Task life cycle. Colored item boxes represent the task                          Returning       move
+                                                                                                                                                             move (without item)
+priority levels as they appear in COORDINATE 2.0.                                                                                move (at source)
+
+
+
+
+erated, the task enters the Available state via the create event.                     Figure 3: FSM of the Agent life cycle. The colors of the agents represent their
+                                                                                      current state as they appear in COORDINATE 2.0.
+When an agent selects it, startLoading moves the task to
+the Carried state, where subsequent move events represent its
+transportation through the environment. If the carrying agent                         licious agents, the agent failure probability, and the communi-
+reaches the destination, the task is completed via deliver, and                       cation failure probability. However, fault conditions may vary
+the carrying agent enters the Delivered state. If the agent re-                       over time rather than remain static throughout the simulation.
+leases the task before delivery, either because of a failure or                       For this reason, COORDINATE 2.0 supports a Dynamic Fault
+because it is preempted by a more urgent task, the drop event                         Window mechanism that allows practitioners to define one or
+returns the task to Available, allowing another agent to take it                      more simulation intervals during which fault-related parame-
+later. Finally, if the task exceeds its allowed time window be-                       ters can change. In practice, each time window can redefine
+fore being delivered, expire moves it to the Expired state.                           the number of malicious agents, the probability of operational
+                                                                                      agent failure, and the probability of communication failure.
+Agent. It represents the entity responsible for completing tasks
+                                                                                      This enables the simulation of dynamic fault scenarios, where
+while moving through the physical space. Each agent is initial-
+                                                                                      failures or malicious behaviors can be introduced, increased, re-
+ized with the option to be malicious and with a failure proba-
+                                                                                      duced, or removed at specific points in time. For example, the
+bility, which models the likelihood of an operational fault dur-
+                                                                                      simulation can start with a low agent failure probability and no
+ing execution. We distinguish malicious from faulty agents be-
+                                                                                      malicious agents, then increase the failure probability or intro-
+cause they affect system performance differently. Malicious
+                                                                                      duce malicious agents during a specific time window to emulate
+agents unnecessarily invoke peers and slow down their oper-
+                                                                                      a more “degraded” operating condition. This allows studying
+ation, whereas faulty agents ask for help only when they cannot
+                                                                                      how the system behaves when adverse conditions appear, in-
+complete their tasks.
+                                                                                      tensify, or change over time, rather than assuming a static fault
+    Figure 3 shows the agent FSM. An agent starts in Idle; when
+                                                                                      situation throughout the entire simulation.
+it selects a task, startLoading moves it to Carrying, where
+repeated move events represent navigation toward the destina-
+tion and deliver completes the delivery. If the task is released                      3.2. Coordination Mechanisms
+before completion, drop moves the agent to Returning, where                             How agents move and interact in COORDINATE 2.0 is man-
+it travels back to the source and becomes Idle upon reaching it.                      aged through three different coordination mechanisms, inspired
+Agents can also be redirected to recover unfinished tasks: after                      by [4], and illustrated in Figure 4.
+rescue, they enter Rescuing, move toward the task, and either
+load it through startLoading or return if no task is available.                          • Fully-Decentralized (FD): In this coordination mecha-
+Failures are modeled through fail, which moves the agent to                                nism, agents do not communicate with each other. Each
+Failed; after recover, the agent returns to Idle and can resume                            agent autonomously scans the environment for uncom-
+operation. Malicious behavior is represented by fakeFailure,                               pleted tasks (e.g., a newly generated item awaiting deliv-
+shown with dashed transitions in the figure: this event can be                             ery) and may preempt its current task if a higher-priority
+emitted at any time by a malicious agent without changing its                              unassigned task is available. In Figure 4a, agent A1 aban-
+current state.                                                                             dons the item with priority L and picks up the item with
+                                                                                           priority H. Since decisions are based solely on local obser-
+Runtime. The runtime configuration defines how the simula-                                 vations, malicious behavior does not affect system perfor-
+tion is executed. In particular, COORDINATE 2.0 allows users                               mance, as agents never rely on notifications from others.
+to set the simulation window length and select the coordination
+mechanism to use during execution.                                                       • Semi-Decentralized (SD): Figure 4b depicts a local rescue
+   COORDINATE 2.0 supports configuring fault-related param-                                mechanism between a failing agent (e.g., A1) and nearby
+eters before the simulation starts, including the number of ma-                            agents (e.g., A2 and A3). A1 broadcasts a help request
+                                                                                  4
+                                                                2   checkAgentsStatus
+                                                                                                                                                                             Table 1: Configurable Input Parameters in COORDINATE 2.0.
+                                                                                                                         22   checkAgentsStatus
+                                                                                                                          2   checkAgentsStatus
+
+                                                                C: Coordinator                                                                                    Area        Parameter    Description                  Value
+           Item (H)                                                                                                      C:
+                                                                                                                         C: Coordinator
+                                                                                                                            Coordinator
+          Item (H)                               1    askRescue A3:A3: Agent                 3    actRescue                                                                   T type       Topology                     [ring, fully-connected, star, mesh, line, tree, bus]
+                                                                    Agent                                     11   askRescue
+                                                                                                                   askRescue               33    actRescue
+                                                                                                                                                 actRescue
+                  2                                                           Item (H)                         1   askRescue                     actRescue
+                      loadItem                                            ItemA3:
+                                                                               (H)Agent                                                                                       Nrooms       Number of rooms              N>1
+                 2    loadItem                                                   Item (H)                                                                         Topology
+                                                                                                                                                                              Roomsource   Task source room             [0, Nrooms − 1]
+                                         1   sendingHelpRequest
+                                 1   sendingHelpRequest
+                                                                                                                                                                              Roomtarget   Task target room             [0, Nrooms − 1] ∪ {−1}
+                                             1       sendingHelpRequest
+
+                                                                                     A2: Agent                                                                                T spawn      Task inter-arrival time      R>0
+                  1   dropItem
+                 1
+                                                                                      Item (L)
+                                                                                                                                                                              Dspawn       Inter-arrival distribution   {exp, unif , det}
+                      dropItem                                                   A2: A2:
+                                                                                     Agent
+                                                                                         Agent                                                                    Task
+                                                                                                                                                                                                                        (pL , p M , pH ), p = 1
+                                                                                                                                                                                                                                         P
+           Item (L)                              A1: Agent           2    Help
+                                                                                  ItemItem
+                                                                                        (L) (L)                                                                               Ptask        Task priority distribution
+                                                    Fail
+          Item (L)                           A1:A1:
+                                                Agent
+                                                    Agent 2               2   Help                         A1:
+                                                                                                 A2: Agent A1:
+                                                                                                           A1: Agent
+                                                                                                                Agent                           A2:
+                                                                                                                                                A2: Agent
+                                                                                                                                                    Agent
+                                                                                                                                                    Agent                     T expire     Task expiration time         R>0 ∪ {−1}
+                                      A1: Agent Fail                Help
+                                              Fail                                                Item (L)    Fail
+                                                                                                              Fail
+                                                                                                               Fail                              Item
+                                                                                                                                                 Item (L)
+                                                                                                                                                      (L)
+                                                                                                                                                      (L)
+                                         Fail
+                                                                                                                                                                              Nagent       Number of agents             N>0
+                                                                                                                                                                              Nmalicious   Number of malicious agents   [0, Nagent ]
+ (a) Fully-Decentralized                (b) Semi-Decentralized                                                        (c) Centralized
+                                                                                                                                                                              Fagent       Agent failure probability    [0, 1]
+                                                                                                                                                                              T load       Task loading time            R>0
+                                                                                                                                                                  Agent
+ Figure 4: Multi-Agent System Coordination Mechanisms Under Analysis.                                                                                                         T move       Movement time                R>0
+                                                                                                                                                                              T drop       Task release time            R>0
+                                                                                                                                                                              T comp       Computation time             R>0
+                                                                                                                                                                              T recover    Agent recovery time          R>0
+                                                                                                                                                                              T sim        Simulation window            R>0
+     that encodes the importance of the uncompleted task; re-                                                                                                                 Nrep         Number of repetitions        N>0
+     ceivers compare it with their current task and reply only                                                                                                    Runtime     Mcoord
+                                                                                                                                                                              T adapt
+                                                                                                                                                                                           Coordination mechanism
+                                                                                                                                                                                           Adaptation check interval
+                                                                                                                                                                                                                        [FD, SD, CE, DA]
+                                                                                                                                                                                                                        R>0
+     if the rescue task has higher priority, while idle agents al-                                                                                                            Fmsg         Message loss probability     [0, 1]
+
+     ways respond. A1 accepts the first valid reply and ignores
+     the others, so malicious agents can still harm the system                                                                                                               Table 2: Simulation Metrics in COORDINATE 2.0 dashboard.
+     by issuing fake rescue requests.
+                                                                                                                                                                          Group              Metric                                    Description
+  • Centralized (CE): Figure 4c illustrates the centralized co-                                                                                                                              Pending Tasks                             Uncompleted tasks
+                                                                                                                                                                                             Task Completion                           Completed tasks
+    ordination mechanism. When an agent fails (e.g., A1 ),                                                                                                                   Task
+                                                                                                                                                                                             Task Throughput                           Created vs. completed tasks
+    it notifies the central coordinator C, which maintains a                                                                                                                                 Task Latency                              Average task latency
+    global view of all agents’ statuses. The coordinator selects                                                                                                                             Failures vs Recoveries                    Failure and recovery trend
+                                                                                                                                                                                             Message Losses                            Unsuccessful communications
+    the closest agent carrying the least important item as the                                                                                                       Fault/Comm.
+                                                                                                                                                                                             Task Deadline Misses                      Expired tasks
+    rescuer and sends a rescue request to that agent. As in the                                                                                                                              Event Distribution                        Event-type frequencies
+
+    semi-decentralized mechanism, malicious agents can de-                                                                                                                                   Configured Fault Probabilities            Agent message failure rate
+                                                                                                                                                                                             Active Coord. Mechanism                   Active coordination mechanism
+    grade performance by issuing fake rescue requests to the                                                                                                      Scenario/Resource
+                                                                                                                                                                                             Tasks by Agent                            Completed tasks per agent
+    coordinator.                                                                                                                                                                             Agent Heatmap                             Room visits per agent
+
+
+
+
+3.3. Simulation Workflow                                                                                                                                             2 Simulation. Once the scenario has been configured,
+   The simulation workflow of COORDINATE 2.0 is organized                                                                                                        COORDINATE 2.0 runs an event-driven discrete-event simula-
+into three main phases: 1 Design, where practitioners con-                                                                                                       tion and stores the execution as a timestamped CSV trace. Dur-
+figure the MAS scenario and runtime settings; 2 Execution,                                                                                                       ing the simulation, agents and tasks evolve according to the
+where the event-driven simulation runs and generates a times-                                                                                                    FSMs described in Figure 3 and Figure 2, respectively. The
+tamped trace; and 3 Analysis, where the resulting trace is in-                                                                                                   generated trace records task and agent evolution, faults, coordi-
+spected through the 3D view, timeline, and dashboard metrics.                                                                                                    nation messages, and runtime events.
+If DA is selected during design, COORDINATE 2.0 activates an                                                                                                        If a fixed coordination mechanism is selected, it is used
+adaptation mechanism that is described in Section 4, please re-                                                                                                  throughout the entire simulation. If DA is selected, COORDINATE
+fer to it for further details.                                                                                                                                   2.0 executes the simulation while enabling the runtime mon-
+    1 Design. In this phase, practitioners design the MAS sce-                                                                                                   itoring and adaptation infrastructure. In this case, the trace
+nario by configuring the system parameters introduced in Sec-                                                                                                    also records adaptation-related events, including coordination
+tion 3.1. COORDINATE 2.0 exposes these components through                                                                                                        switches. These events allow practitioners to inspect when
+input parameters that specify the environment topology, task                                                                                                     the selected coordination mechanism changed and relate each
+generation process, agent population, runtime settings, coordi-                                                                                                  change to the observed simulation behavior.
+nation mechanism, and fault-related conditions. Table 1 sum-                                                                                                         3 Analysis. After the simulation, COORDINATE 2.0 sup-
+marizes these parameters, grouping them by the system aspect                                                                                                     ports trace inspection and visual analysis through the simula-
+they configure and reporting, for each parameter, a brief de-                                                                                                    tion hub shown in Figure 5. The 3D view reconstructs the en-
+scription and its admissible values.                                                                                                                             vironment from the trace: rooms are rendered according to the
+   Worth noting that the runtime configuration determines how                                                                                                    selected topology, with the source room highlighted in green
+the simulation is executed. The practitioner can select one of                                                                                                   and the other rooms in blue; agents are displayed as 3D agents
+the fixed coordination mechanisms supported by the tool (i.e.,                                                                                                   with state-dependent colors; and pending tasks are shown as
+FD, SD, or CE, or select DA to enable Dynamic Adaptation.                                                                                                        colored packages according to their priority.
+In the latter case, the practitioner also provides the adaptation-                                                                                                  The hub is organized into complementary panels. In the con-
+related settings required to run the monitoring and decision                                                                                                     figuration panel A , practitioners specify the simulation input
+loop, such as the initial coordination mechanism and the adap-                                                                                                   parameters, grouped by the system features described above.
+tation interval.                                                                                                                                                 The statistics panel B reports aggregate information, such as
+                                                                                                                                                             5
+                                         B             A
+
+
+
+
+      C
+
+
+
+
+      F                                                                  E
+
+                     D                                 G
+
+
+
+                         (a) Simulation Interface.                                 (b) Dashboard with Evaluation Metrics for the evaluation Metrics ( G ).
+
+                                                     Figure 5: COORDINATE 2.0: Simulation Hub.
+
+
+
+processed events, created and delivered tasks, failures, and de-             reinforcement learning technique that takes decisions based on
+ployed agents. The event log C lists the chronological se-                   context to maximize a reward signal), which selects the “op-
+quence of recorded events, while the timeline panel D pro-                   timal” coordination mechanism among CE, SD, and FD and
+vides playback controls, speed selection, and navigation over                updates that choice over time to maximize MAS performance
+the simulation trace. The export button E allows practitioners               objectives.
+to save the generated CSV trace for further offline analysis. For               In the following, we first describe the overall adaptation feed-
+simulations using Dynamic Adaptation, coordination switches                  back loop, then the Monitoring Layer based on RTLola, and
+are highlighted on the timeline F . In particular, each red flag             then the Learning Layer, which uses a contextual bandit model
+marker (b) indicates that a switch occurred at that simulation               to suggest which coordination mechanism to apply.
+time, allowing practitioners to relate the change in coordination
+mechanism to the observed system behavior.                                   4.1. Adaptation Feedback Loop
+   From the generated CSV trace, COORDINATE 2.0 automat-
+ically derives a set of simulation metrics and visualizes them                  Figure 6 illustrates the DA workflow. It includes two inde-
+in the dashboard (see panel G in Figure 5). These metrics are                pendent layers: the Monitoring Layer and the Learning Layer.
+summarized in Table 2 and are divided into three groups, each                Each layer has a distinct responsibility: the Monitoring Layer
+describing a different aspect of the simulation: task processing,            transforms the simulation event stream into quantitative feed-
+fault and communication behavior, and scenario and resource                  back on the selected MAS performance objectives and operat-
+usage. Task metrics describe how the MAS processes the work-                 ing conditions, whereas the Learning Layer combines this feed-
+load it generates, including pending tasks, task completion, task            back with the current operating context to learn which coordi-
+throughput, and task latency. Fault and communication metrics                nation mechanism is expected to best satisfy those objectives.
+summarize runtime degradation, including failures, recoveries,                  During simulation, COORDINATE 2.0 continuously gener-
+message losses, deadline misses, and the temporal distribution               ates a timestamped event stream that records what happens in
+of simulation events. Scenario and resource metrics describe                 the simulated environment. This stream captures the system’s
+the operating context and the use of available resources, includ-            evolution over time and feeds the Monitoring Layer. This layer
+ing idle and malicious agents, configured fault probabilities, the           uses RTLola to consume the event stream within each moni-
+active coordination mechanism, agent activity, completed tasks               toring window W j and derive performance objectives alongside
+per agent, and room-visit heatmaps. Note that the dashboard                  operating conditions from the observed events, thereby showing
+provides practitioners with a preliminary view of the main sim-              how well each objective is being met under the current operat-
+ulation trends, using predefined metrics. For additional or cus-             ing conditions (for instance, computing task latency from task
+tomized analyses, practitioners can export the simulation trace              creation and delivery events). These values are averaged at the
+directly and perform offline inspections.                                    end of each window W j and used to build the context vector x j ,
+                                                                             which is transferred to the Learning Layer. This layer works
+                                                                             in a contextual bandit fashion: it takes x j as input to its learn-
+4. Dynamic Adaptation                                                        ing model and estimates which coordination mechanism should
+                                                                             perform best in the current context. Based on this estimate, it
+   This section presents the proposed Dynamic Adaptation                     selects a coordination mechanism c j among the available alter-
+(DA) strategy for selecting coordination mechanisms at run-                  natives, i.e., {CE, SD, FD}. Once the observed window stream is
+time in fault-tolerant MAS. DA treats the choice of coordina-                finalized, the Learning Layer computes the reward r j+1 based on
+tion mechanism as an online decision problem. While the sys-                 actual performance and updates its model accordingly. When
+tem runs, it monitors MAS performance objectives and oper-                   a switch is triggered, COORDINATE 2.0 applies the new co-
+ating conditions, feeding them to a contextual bandit (i.e., a               ordination mechanism without restarting the simulation. This
+                                                                        6
+               Simulation Event Stream
+               (Monitoring Window     )     Monitoring Layer
+                                                RTLola          - MAS Operating Conditions
+                                                                - MAS Performance Objective
+                                                                                                              Context Vector
+                                                Monitor
+
+
+
+                                            Learning Layer
+
+
+                                                                                                              Compute Reward
+                                                                           Most suitable                          from
+                                                 Learning
+                                                                              for current          AND
+                                                  Model
+                                                                            context ?
+                                                                                                                   Output
+
+
+
+                                  Selected Mechanism                                        to apply in
+
+
+
+                                            Figure 6: Dynamic Adaptation: Feedback Loop Workflow.
+
+
+
+loop repeats at every monitoring window throughout the simu-                destinations. We therefore measure latency relative to the min-
+lation, so the coordination mechanism in place is continuously              imum achievable delivery time for the same destination. For
+reassessed and replaced with the one estimated to perform best.             each item i, let ticrt be its creation time, tidel its delivery time,
+                                                                                  min
+                                                                            and ddest(i) the minimum delivery time from the source room
+4.2. Monitoring Layer                                                       to the destination of item i, computed as the travel time along
+                                                                            the shortest feasible path under ideal operating conditions, i.e.,
+   The Monitoring Layer is implemented through RTLola, in-                  without failures, congestion, or waiting times. The relative task
+troduced in Section 2.3. During simulation, RTLola continu-                 latency of item i is:
+ously analyzes the traces generated by COORDINATE 2.0 and                                                                          
+                                                                                            ℓirel = max 0, tidel − ticrt − ddest(i)
+                                                                                                                            min
+                                                                                                                                      .
+                                                                                                                        
+applies formal stream-based rules to monitor two distinct cate-                                                                               (1)
+gories of runtime information:
+                                                                            The maximum operator avoids negative values when the ob-
+                                                                            served delivery time matches the ideal delivery time. Lower
+ 1. MAS Operating Conditions: Extracted directly from
+                                                                            values indicate that the task was completed closer to the best
+    stream events, quantify the actual workload intensity
+                                                                            achievable time for that destination. For each monitoring win-
+    (T spawn ), agent failure rates (Fagent ), message loss (Fmsg ),
+                                                                            dow W, RTLola aggregates this value over the set of items de-
+    and malicious agents (Nmalicious ). Rather than evaluating
+                                                                            livered in that window, denoted IW :
+    the MAS performance objectives, these indicators capture
+    the operating context in which the system runs. Since                                                     1 X rel
+                                                                                                ℓ̄rel (W) =           ℓ .              (2)
+    such information cannot be known a priori in real deploy-                                               |IW | i∈I i
+                                                                                                                        W
+    ments, RTLola extracts them online to provide the contex-
+    tual bandit with a live MAS snapshot for decision-making.               Task Completion Rate. While relative latency captures how
+                                                                            much time it took to complete tasks, it says nothing about tasks
+ 2. MAS Performance Objectives: Quantify system-level                       that expire. We therefore complement it with the fraction of
+    performance through Task Relative Latency and Task Com-                 tasks that reach their destination before expiring. For each mon-
+    pletion Rate. Computed directly from stream events, they                itoring window W, let TW denote the set of tasks whose cre-
+    measure how effectively the MAS fulfills its goals and are              ation, delivery, or expiration falls within W, and let DW ⊆ TW
+    used to evaluate the adaptation reward.                                 denote the subset of those tasks that were delivered before ex-
+                                                                            piring. The task completion rate for window W is:
+   We detail hereafter how the two MAS performance objec-
+                                                                                                                   |DW |
+tives considered in this work are computed.                                                               ρ(W) =         .                   (3)
+                                                                                                                   |TW |
+Task Relative Latency. Raw delivery time depends on the dis-                Values closer to 1 indicate that most tasks generated or expected
+tance between the source and destination rooms, and therefore               to be completed in that window were delivered on time, while
+cannot be directly compared across tasks assigned to different              lower values indicate a growing backlog of expired tasks.
+                                                                       7
+   At the end of each monitoring window W j , COORDINATE                         5. Experiments Design
+2.0 combines the latency and completion indicators produced
+by RTLola with MAS system parameters and runtime measures                        5.1. Research Questions
+from the simulator, thereby assembling the context vector x j                      We aim to address the following research questions:
+provided to the Learning Layer. After the next window W j+1 ,
+the observed performance on both objectives is used to derive                       - RQ1) Does Dynamic Adaptation improve the selected
+the delayed reward r j+1 , as detailed in Section 4.3.                                MAS performance objectives compared with fixed coordi-
+                                                                                      nation mechanisms? We evaluate whether the proposed
+4.3. Learning Layer                                                                   DA strategy improves the MAS’s performance objectives
+    The Learning Layer implements the contextual bandit model                         by adapting the coordination mechanism at runtime rather
+described in Section 2.4. At the end of each monitoring window                        than keeping it fixed throughout the simulation.
+W j , it collects a context vector x j that characterizes the MAS’s
+                                                                                    - RQ2) How does Dynamic Adaptation react to changing
+current state. Specifically, the context includes the two moni-
+                                                                                      workload and fault conditions during simulation? We an-
+tored dimensions: the MAS operating conditions and the MAS
+                                                                                      alyze the impact of DA coordination switches on the mon-
+performance objectives.
+                                                                                      itored values of the MAS performance objectives, the con-
+    These variables provide the bandit with a compact represen-
+                                                                                      text variables, and the dynamic fault windows.
+tation of both fault-related dynamics and performance trends.
+The action space of the bandit corresponds to the coordination                      - RQ3) What is the runtime overhead introduced by Dy-
+mechanisms supported by COORDINATE 2.0: FD, SD, and CE.                               namic Adaptation? We measure the additional computa-
+Given x j , the bandit evaluates the mechanisms in Mcoord and                         tional cost introduced by DA by quantifying the overhead
+selects the mechanism c j with the highest expected reward un-                        of both the monitoring and learning layers, thereby study-
+der the current context. Intuitively, the expected reward reflects                    ing its efficacy in practice.
+how each mechanism is predicted to affect the two performance
+objectives, while still accounting for the current fault-window                     - RQ4) How does COORDINATE 2.0 scale across demand-
+parameters. The selected mechanism is then communicated to                            ing MAS simulation settings and different hardware pro-
+the tool, which applies it without restarting the simulation or                       files? We estimate the tool’s cost across different simula-
+modifying the current simulation state.                                               tion settings and hardware profiles, thereby assessing the
+    After c j has been applied during the following monitoring                        extent to which it can be used in realistic scenarios.
+window W j+1 , the Learning Layer computes the delayed reward
+r j+1 from the observed performance:                                             5.2. Experimental Scenario
+  r j+1 = w1 · Task Completion Rate + w2 · Task Relative Latency      (4)           Inspired by the Ghent University smart hospital [21], we con-
+                                                                                 sider a hospital logistics scenario in which autonomous agents,
+where w1 , w2 ∈ [0, 1] (with w1 + w2 = 1) are configurable                       modeled as mobile robots, support clinical staff by transport-
+weights assigning relative importance to each MAS perfor-                        ing medical items across the hospital. In COORDINATE 2.0,
+mance objective.                                                                 each task corresponds to the delivery of a single item, such as
+   These weights allow practitioners to guide the learning pro-                  a pill or medical equipment. Items are generated at a source
+cess toward prioritizing a specific MAS performance objec-                       location (e.g., a pharmacy or storage area) and must be deliv-
+tive based on system requirements. The default configuration,                    ered to target rooms (e.g., patient rooms, wards, or nursing sta-
+w1 = w2 = 0.5, assigns equal weight to both objectives, main-                    tions). The hospital topology is modeled as a graph of inter-
+taining a balanced trade-off between task completion and la-                     connected rooms, where nodes represent rooms and edges rep-
+tency. Conversely, setting w1 = 1 and w2 = 0 drives the bandit                   resent traversable paths between them. This topology captures
+to optimize exclusively for task completion, whereas w1 = 0                      the spatial constraints that shape agent mobility, delivery times,
+and w2 = 1 focuses learning solely on latency reduction. In-                     and recovery operations.
+termediate weight combinations define custom trade-offs, en-
+abling practitioners to test scenarios that favor one objective                  MAS Performance Objectives. We identify two performance
+over the other (e.g., prioritizing rapid delivery over comple-                   objectives that logically follow from how hospital logistics op-
+tion rate, or vice versa). Rather than defining separate bandit                  erates [21], namely Task Relative Latency and Task Completion
+models, these weights modularize the reward signal used by                       Rate (see Section 4.2). When a delivery request is generated,
+the learning model, thereby shaping which coordination mech-                     two factors determine whether it is handled successfully: how
+anism it learns to prefer under different contextual conditions.                 long it takes to reach its target room, and whether it reaches
+   At the end of each window, the model updates its policy using                 its target before expiring. Both objectives are grounded in the
+the tuple (x j , c j , r j+1 ). By associating the observed reward r j+1 ,       same clinical concern: delays in delivering medicines or med-
+computed according to the configured weights (w1 , w2 ), with                    ical equipment may disrupt clinical workflows or affect patient
+the mechanism c j selected under context x j , this feedback loop                safety, while an expired task represents an even more severe
+reinforces choices that best satisfy the specified performance                   outcome, since the request is never fulfilled [21, 25].
+trade-off, progressively training the bandit to select the optimal                  Hospitals’ operating conditions are inherently dynamic:
+coordination mechanism under similar operating conditions.                       workload may increase during busy periods, agents may fail
+                                                                             8
+     Table 3: Input parameters considered for the experimental campaign.                 5.4. Dynamic Fault Windows
+  Area         Parameter              Value
+                                                                                            To instantiate dynamic fault windows, we apply four fault
+                                                                                         windows over each simulated day, as reported in Table 4. Each
+               T type                 [mesh, ring, tree]
+                                                                                         window temporarily changes four input parameters from Ta-
+  Topology     Nrooms                 [4, 9, 16, 25, 36, 49]
+               Roomsource             0                                                  ble 3, chosen to simulate variations in workload intensity, sys-
+               Roomtarget             −1 (randomly selected)                             tem security, and system reliability: the task inter-arrival time
+               T spawn                [90, 120, 150, 180, 210, 240, 270, 300] sec.       T spawn , the number of malicious agents Nmalicious , the agent fail-
+  Task         Ptask (%)              (pL , p M , pH ) = (0.55, 0.25, 0.20)              ure probability Fagent , and the message loss probability Fmsg .
+               T expire (L, M, H)     [28800, 14400, 7200] sec.                          The values in the table are expressed as percentage variations
+               Nagent                 [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]          with respect to the corresponding baseline values, while ≡ indi-
+               Nmalicious (%)         [0, 20, 40, 60, 80, 100] of Nagent                 cates that the baseline value is kept unchanged. During execu-
+               Fagent (%)             [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]                    tion, COORDINATE 2.0 selects the active window based on the
+               T load                 1 sec.
+  Agent
+               T move                 5 sec.                                             current time in the simulated day. The values reported in Ta-
+               T drop                 1 sec.                                             ble 4 replace the corresponding baseline values only while that
+               T comp                 0.03 sec.                                          window is active. When the window ends, the simulation con-
+               T recover              1800 sec.                                          tinues with the next one, without restarting the run or resetting
+               T sim                  3 months                                           the system state.
+               Nrep                   10                                                    The first window, from 0 to 6 h, represents the baseline oper-
+  Runtime      Mcoord                 [FD, SD, CE, DA]
+               T adapt                1 hour
+                                                                                         ating condition, with all parameters kept unchanged. The sec-
+               Fmsg (%)               [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]                    ond window, from 6 to 12 h, introduces a mild degradation
+                                                                                         level: T spawn decreases by 25%, increasing task arrival inten-
+Table 4: The four daily dynamic operating profiles. Each six-hour interval
+                                                                                         sity, while Nmalicious , Fagent , and Fmsg increase by 25%. The
+introduces a progressively larger variation relative to the baseline configuration       third window, from 12 to 18 h, represents a moderate degrada-
+in Table 3. The symbol ≡ denotes no change, meaning the values remain equal              tion level, with a 50% reduction in T spawn and a 50% increase
+to the baseline.                                                                         in the malicious-agent fraction, agent failure probability, and
+                                                                                         message loss probability. Finally, the window from 18 to 24
+   ID       Daily Interval          T spawn      Nmalicious       Fagent    Fmsg         h corresponds to the most severe degradation window, reduc-
+  FW1           0–6 h                  ≡            ≡              ≡          ≡          ing T spawn by 75% and increasing all fault-related parameters
+  FW2          6–12 h               ↑ −25%       ↑ +25%         ↑ +25%     ↑ +25%        by 75%. The same window profile is repeated daily throughout
+  FW3          12–18 h              ↑ −50%       ↑ +50%         ↑ +50%     ↑ +50%        the simulation.
+  FW4          18–24 h              ↑ −75%       ↑ +75%         ↑ +75%     ↑ +75%
+                                                                                         5.5. Running Environment
+                                                                                            Experiments were executed on two hardware profiles to sep-
+while carrying items, communication may be delayed or lost,                              arate the evaluation of the adaptation approach from the assess-
+and malicious agents may issue misleading coordination re-                               ment of COORDINATE 2.0’s scalability.
+quests. Under these conditions, a mechanism that performs                                   The initial experimental campaign, corresponding to RQ1–
+well in one operating context may become less suitable later. A                          RQ3, was conducted on the LEONARDO supercomputer, a Eu-
+static approach cannot react to this shift, whereas DA monitors                          roHPC Tier-0 system. LEONARDO provides two main partitions.
+the system at runtime and switches the coordination mechanism                            The Booster partition includes nodes equipped with a 32-core
+when the observed performance indicates that the current one is                          Intel Xeon Platinum 8358 CPU, 512 GiB of RAM, and four
+no longer appropriate.                                                                   NVIDIA A100 GPUs with 64 GiB of memory each. The DCGP
+                                                                                         partition includes nodes equipped with two Intel Xeon Plat-
+                                                                                         inum 8480+ CPUs, for a total of 112 CPU cores per node, and
+5.3. Input Parameters                                                                    512 GiB of DDR5 RAM.
+                                                                                            For RQ4, to analyze the COORDINATE 2.0’s scalability, we
+   Table 3 lists the input parameters we used to set up the ex-
+                                                                                         also ran experiments on a commodity machine to provide a sec-
+perimental campaign, following those reported in [25]. We
+                                                                                         ond, more common hardware profile. This machine is a laptop
+adopted a one-factor-at-a-time design across the parameter val-
+                                                                                         equipped with an Apple M3 Pro chip, featuring an 11-core CPU
+ues considered, using the underlined configuration in Table 3 as
+                                                                                         running at 4.02 GHz and 36 GB of unified memory.
+the baseline. This gives 125 distinct parameter configurations.
+We evaluate each one under the three coordination mechanisms
+plus the DA strategy, running 10 repetitions per configuration,                          6. Evaluation
+for a total of 5k simulation runs. Underlined values denote the
+baseline setting for each parameter, i.e., the value held fixed                          6.1. RQ1: Effectiveness of Dynamic Adaptation
+for that parameter whenever another is varied; these baseline                              RQ1 evaluates the performance trade-offs introduced by DA
+settings are also reused as the default configuration in the sub-                        with respect to the MAS performance objectives. The analysis
+sequent research questions, i.e., RQ2, RQ3, and RQ4.                                     compares DA with CE, SD, and FD across different conditions
+                                                                                     9
+                                                                              Mesh                                                                           Ring                                                                            Tree
+                                                                                                                   FD                                                                                  150
+                                                                                                                   SD    150
+
+
+
+
+             Relative latency [min]
+                                      160                                                                                                                                                              120
+                                                                                                                   CE
+                                                                                                                   DA    120
+                                      120                                                                                                                                                               90
+                                                                                                                          90
+                                            80                                                                                                                                                          60
+                                                                                                                          60
+                                            40                                                                                                                                                          30
+                                                                                                                          30
+                                             0                                                                                                                                                           0
+                                                 90   120        150        180         210       240        270   300         90   120        150        180         210       240        270   300         90   120        150        180            210          240        270   300
+                                                                           Tspawn [sec]                                                                  Tspawn [sec]                                                                  Tspawn [sec]
+                                                                                  (a)                                                                           (b)                                                                              (c)
+                                            90
+                                                                                                                         175                                                                            36
+
+
+
+
+                   Relative latency [min]
+                                            75
+                                                                                                                         150                                                                            30
+                                            60
+                                                                                                                         125                                                                            24
+                                            45
+                                                                                                                         100                                                                            18
+                                            30
+                                                                                                                          75                                                                            12
+                                            15
+                                                 0          20              40        60                80         100         0          20              40        60                80         100         0          20              40                 60             80         100
+                                                                           Nmal/Nbot [%]                                                                 Nmal/Nbot [%]                                                                 Nmal/Nbot [%]
+                                                                                  (d)                                                                           (e)                                                                              (f)
+                                                                                                                         125
+                                      100                                                                                                                                                               40
+
+
+
+
+             Relative latency [min]
+                                                                                                                         100
+                                            75                                                                            75                                                                            30
+                                            50                                                                            50                                                                            20
+                                            25                                                                            25                                                                            10
+                                             0                                                                             0                                                                             0
+                                                 1    2      3         4      5     6         7         8      9   10          1    2      3         4      5     6         7         8      9   10          1    2      3         4         5         6        7         8      9   10
+                                                                            Fagent [%]                                                                    Fagent [%]                                                                    Fagent [%]
+                                                                                  (g)                                                                           (h)                                                                              (i)
+                                      105
+                                                                                                                         104                                                                            48
+
+
+
+
+             Relative latency [min]
+                                            90
+                                            75                                                                            96                                                                            40
+
+                                            60                                                                            88                                                                            32
+                                            45                                                                                                                                                          24
+                                                                                                                          80
+                                            30                                                                                                                                                          16
+                                                                                                                          72
+                                                 1    2      3         4      5    6          7         8      9   10          1    2      3         4      5    6          7         8      9   10          1    2      3         4         5         6        7         8      9   10
+                                                                             Fmsg [%]                                                                      Fmsg [%]                                                                      Fmsg [%]
+                                                                                  (j)                                                                           (k)                                                                              (l)
+
+Figure 7: Task Relative Latency as a function of workload intensity, system security, or system reliability. Nagent = 20 agents operate in an environment with Nrooms
+= 25 rooms organized as the mesh, ring, or tree topology. Other system parameters are shown in Table 3. (a) Mesh, latency versus workload. (b) Ring, latency
+versus workload. (c) Tree, latency versus workload. (d) Mesh, latency versus security. (e) Ring, latency versus security. (f) Tree, latency versus security. (g) Mesh,
+latency versus reliability. (h) Ring, latency versus reliability. (i) Tree, latency versus reliability.
+
+
+
+of workload intensity, system security, and system reliability                                                                                                   effectively assigning and transferring uncompleted tasks. DA
+(i.e., agent faults and message losses). We use the same experi-                                                                                                 dynamically recognizes the heavy-workload context and selects
+mental subjects, and for each analysis we vary a single parame-                                                                                                  coordinated mechanisms (CE/SD), achieving a completion rate
+ter at a time: the workload intensity T spawn , the malicious-agent                                                                                              close to 100% while maintaining low relative latency, compa-
+ratio Nmalicious , the agent fault probability Fagent , or the message                                                                                           rable to SD.
+loss probability Fmsg , while keeping all other parameters fixed                                                                                                    Increasing the ratio of malicious agents Nmalicious from 0% to
+at their baseline values (see Table 3). Figures 7 and 8 report                                                                                                   100% highlights how security threats affect coordination. Ma-
+the resulting Task Relative Latency and Task Completion Rate                                                                                                     licious agents emit fake failure alerts and deceptive rescue re-
+across the Mesh, Ring, and Tree topologies.                                                                                                                      quests. Because FD agents act purely locally and ignore in-
+   Varying the task inter-arrival time (T spawn ) from 90 s (heavy                                                                                               coming messages, FD is completely immune to malicious com-
+workload) to 300 s (light workload) reveals distinct architec-                                                                                                   munications, keeping latency low and flat. Conversely, CE and
+tural strengths. Under heavy workload, FD exhibits severe                                                                                                        SD experience significant latency inflation as legitimate agents
+performance degradation: without peer communication or cen-                                                                                                      and the coordinator spend time processing deceptive requests.
+tralized scheduling, agents cannot coordinate task assignments,                                                                                                  DA successfully adapts to the presence of malicious agents: by
+leading to growing task backlogs and a strong drop in comple-                                                                                                    observing the rise in suspicious signals via RTLola, DA shifts
+tion rate (down to ≈ 20% in Ring and Tree topologies). In con-                                                                                                   toward decentralized behavior (FD), preventing latency spikes
+trast, CE and SD maintain high completion rates (> 90%) by                                                                                                       while preserving a higher completion rate than standalone FD.
+                                                                                                                                                         10
+                                                                         Mesh                                                                                Ring                                                                                Tree
+                                   100                                                                                 100                                                                                 100
+
+
+
+
+             Completion rate [%]
+                                    80                                                                                  80                                                                                  80
+                                    60                                                                                  60                                                                                  60
+                                    40                                                                           FD     40                                                                                  40
+                                                                                                                 SD
+                                    20                                                                           CE     20                                                                                  20
+                                                                                                                 DA
+                                     0                                                                                   0                                                                                   0
+                                         90   120        150        180            210          240        270   300         90   120        150        180            210          240        270   300         90   120        150        180            210          240        270   300
+                                                                   Tspawn [sec]                                                                        Tspawn [sec]                                                                        Tspawn [sec]
+                                                                             (a)                                                                                 (b)                                                                                 (c)
+                                   100                                                                                 100                                                                                 100
+
+
+
+
+             Completion rate [%]
+                                    80                                                                                  80                                                                                  80
+                                    60                                                                                  60                                                                                  60
+                                    40                                                                                  40                                                                                  40
+                                    20                                                                                  20                                                                                  20
+                                     0                                                                                   0                                                                                   0
+                                         0          20              40                 60             80         100         0          20              40                 60             80         100         0          20              40                 60             80         100
+                                                                   Nmal/Nbot [%]                                                                       Nmal/Nbot [%]                                                                       Nmal/Nbot [%]
+                                                                             (d)                                                                                 (e)                                                                                 (f)
+                                   100                                                                                 100                                                                                 100
+
+
+
+
+             Completion rate [%]
+                                    80                                                                                  80                                                                                  80
+                                    60                                                                                  60                                                                                  60
+                                    40                                                                                  40                                                                                  40
+                                    20                                                                                  20                                                                                  20
+                                     0                                                                                   0                                                                                   0
+                                         1    2      3         4         5         6        7         8      9   10          1    2      3         4         5         6        7         8      9   10          1    2      3         4         5         6        7         8      9   10
+                                                                    Fagent [%]                                                                          Fagent [%]                                                                          Fagent [%]
+                                                                             (g)                                                                                 (h)                                                                                 (i)
+                                   100                                                                                 100                                                                                 100
+
+
+
+
+             Completion rate [%]
+                                    80                                                                                  80                                                                                  80
+                                    60                                                                                  60                                                                                  60
+                                    40                                                                                  40                                                                                  40
+                                    20                                                                                  20                                                                                  20
+                                     0                                                                                   0                                                                                   0
+                                         1    2      3         4         5         6        7         8      9   10          1    2      3         4         5         6        7         8      9   10          1    2      3         4         5         6        7         8      9   10
+                                                                     Fmsg [%]                                                                            Fmsg [%]                                                                            Fmsg [%]
+                                                                             (j)                                                                                 (k)                                                                                 (l)
+
+Figure 8: Task Completion Rate as a function of workload intensity, system security, or system reliability. Nagent = 20 agents operate in an environment with
+Nrooms = 25 rooms organized as the mesh, ring, or tree topology. Other system parameters are shown in Table 3. (a) Mesh, completion versus workload. (b) Ring,
+completion versus workload. (c) Tree, completion versus workload. (d) Mesh, completion versus security. (e) Ring, completion versus security. (f) Tree, completion
+versus security. (g) Mesh, completion versus reliability. (h) Ring, completion versus reliability. (i) Tree, completion versus reliability.
+
+
+
+   Higher agent failure probabilities severely impact FD, as                                                                                                      6.2. RQ2: Dynamic Adaptation Implications
+failed agents leave carried items abandoned without any recov-                                                                                                       RQ2 investigates when and why DA switches coordination
+ery mechanism, dropping the FD completion rate below 25%                                                                                                          mechanisms under dynamic operating conditions. Whereas
+in Ring and Tree topologies. CE and SD handle agent failures                                                                                                      RQ1 compares the impact of DA on MAS performance objec-
+robustly through coordinator-led or peer-to-peer rescue proto-                                                                                                    tives against fixed coordination mechanisms, RQ2 reports the
+cols. DA matches the high resilience of CE and SD, maintain-                                                                                                      conditions under which DA changes mechanisms, which mech-
+ing completion rates above 85% even under high failure rates.                                                                                                     anism is selected, and how that selection varies across dynamic
+Similarly, under message loss increasing, DA balances commu-                                                                                                      phases. All runs use the nominal configuration of Table 3 and
+nication overhead and rescue reliability across all topologies.                                                                                                   we perform the experiments by varying the weighting (w1 , w2 )
+                                                                                                                                                                  of the model reward r j+1 , which trades Task Completion Rate
+                                                                                                                                                                  against Task Relative Latency.
+  Answer to RQ1. DA provides the best overall balance be-                                                                                                            Table 5 reports the number of switches observed under the
+  tween MAS performance objectives across varying operat-                                                                                                         three different learning reward weights distributed over coor-
+  ing conditions. It avoids the completion loss of FD under                                                                                                       dination mechanisms and dynamic fault windows. Two results
+  heavy workloads and agent failures, while preventing the                                                                                                        stand out, both suggesting that the learning reward has a limited
+  severe latency degradation of CE and SD under malicious                                                                                                         influence on mechanism selection. First, the destination of a
+  attacks.                                                                                                                                                        switch is largely independent of (w1 , w2 ). Summing each block
+                                                                                                                                                       11
+                                              Switch to CE      Switch to SD       Switch to FD         FW1      FW2        FW3    FW4
+
+                                                                                rj + 1 = w1 = 0.50 + w2 = 0.50
+                   CE
+
+                   SD
+
+                   FD
+                        1             16                            31                         46                      61                  76                   91
+                                                                                rj + 1 = w1 = 1.00 + w2 = 0.00
+
+
+
+Active mechanism
+                   CE
+
+                   SD
+
+                   FD
+                        1             16                            31                         46                      61                  76                   91
+                                                                                rj + 1 = w1 = 0.00 + w2 = 1.00
+                   CE
+
+                   SD
+
+                   FD
+                        1             16                            31                         46                      61                  76                   91
+                                                                                       Simulation day
+
+Figure 9: Coordination mechanism selected by DA over the simulation, considering the three different learning reward r j+1 (top to bottom: balanced, completion-
+only, latency-only weights). The black step line is the mechanism active at each adaptation check, with the vertical axis ordered from FD through SD to CE. Markers
+denote switch events and encode the mechanism being switched.
+
+
+Table 5: Percentage of Dynamic Adaptation switches toward each coordination                       fall between the two extremes (27.5%/26.5%/22.2%/23.9%).
+mechanism (Mcoord ) by different learning reward weights (w) and dynamic fault
+window (fw).
+                                                                                                     Figure 9 shows where the learning objective does exercise a
+                   Learning Reward   Mcoord     FW1          FW2         FW3    FW4               clear influence: not on which mechanism is chosen, but on how
+                                      CE        8.2%         8.4%        8.2%   8.0%              long DA remains on it. The share of simulated time spent on
+           w1 = 0.50, w2 = 0.50       SD         7.7%        9.6%        6.7%   8.9%              each mechanism moves from CE 41.4%, SD 21.5%, FD 37.1%
+                                                                                                  under completion-only weights to CE 25.5%, SD 30.6%,
+                                      FD        11.6%        8.4%        7.2%   7.0%
+                                                                                                  FD 43.8% under latency-only weights, with balanced weights
+                                      CE        9.8%         6.6%        7.6%   8.3%              again intermediate (CE 36.5%, SD 24.6%, FD 38.9%). A com-
+           w1 = 1.00, w2 = 0.00       SD        10.0%        9.4%        5.0%   9.0%              pletion objective therefore, keeps DA on the centralized mech-
+                                      FD        12.4%        6.3%        6.3%   9.2%              anism for the longest stretches, consistent with the RQ1 finding
+                                      CE         6.3%        7.9%        8.5%   8.9%              that CE and SD sustain task completion under fault pressure,
+           w1 = 0.00, w2 = 1.00       SD         8.7%        7.3%        9.3%   8.3%              while a latency objective favors the decentralized mechanism,
+                                      FD         9.1%        6.9%        9.5%   9.1%              which RQ1 showed to be the fastest whenever it is not penalized
+                                                                                                  by abandoned tasks.
+
+by row gives 32.8%/32.9%/34.2% for CE/SD/FD under bal-                                               Figure 10 relates these switches to the two monitored MAS
+anced weights, 32.3%/33.4%/34.2% under completion-only                                            performance objectives. Switching happens mostly early on:
+weights, and 31.6%/33.6%/34.6% under latency-only weights.                                        69.2%, 58.7%, and 58.6% of all switches occur within the first
+Moving from the task completion MAS performance objective                                         seven days. Most of the switching, then, comes from the ex-
+to the latency one changes the share of switches directed at any                                  ploration phase of the contextual bandit, not from steady-state
+single mechanism by less than 2 percentage points. Second,                                        adaptation, and this is why the exploration phase dominates the
+the fault windows have a real effect on switching. Against a                                      aggregate numbers in Table 5. Looking only at the remaining
+uniform reference of 8.3% per cell, all 36 entries fall within                                    83 days, we count 128, 189, and 204 switches, or 0.46–0.55
+5.0%and12.4%. The largest single effect is that FD selections                                     switches per run per day, about 2% of the hourly adaptation
+concentrate in fw1 (11.6%, 12.4%, 9.1%), which is the mildest                                     checks. At steady state, the same pattern is still there, and even
+window rather than the one with peak fault pressure. Aggregat-                                    clearer: switching is concentrated at the two ends of the daily
+ing by column shows the objective-dependent pattern clearly:                                      cycle (fw1 and fw4 together account for 54.6%, 60.9%, and
+completion-only weights concentrate switching in fw1 (32.3%                                       58.8% of late switches), and it is lowest in fw3. Since fw4 is
+of switches against 25% of the time) and reduce it in fw3                                         followed directly by fw1 at each midnight transition, this is the
+(19.0%), while latency-only weights invert this pattern, raising                                  point where operating conditions change the most, and it is also
+fw3 to 27.4% and lowering fw1 to 24.1%. Balanced weights                                          the point where DA reacts the most.
+                                                                                          12
+                          Latency        Completion rate   Switch to CE        Switch to SD           Switch to FD        FW1          FW2          FW3           FW4
+                                                                          rj + 1 = w1 = 0.50 + w2 = 0.50
+
+                                                                                                                                                                                    100
+                240                                                                                                                                                                 80
+                160                                                                                                                                                                 60
+                 80                                                                                                                                                                 40
+                                                                                                                                                                                    20
+                  0                                                                                                                                                                 0
+                      1             16                     31                          46                            61                            76                          91
+
+                                                                          rj + 1 = w1 = 1.00 + w2 = 0.00
+
+
+
+
+                                                                                                                                                                                      Completion rate (%)
+                400                                                                                                                                                                 100
+
+
+Latency (min)
+                300                                                                                                                                                                 80
+                200                                                                                                                                                                 60
+                                                                                                                                                                                    40
+                100                                                                                                                                                                 20
+                  0                                                                                                                                                                 0
+                      1             16                     31                          46                            61                            76                          91
+
+                                                                          rj + 1 = w1 = 0.00 + w2 = 1.00
+
+                                                                                                                                                                                    100
+                300                                                                                                                                                                 80
+                200                                                                                                                                                                 60
+                                                                                                                                                                                    40
+                100                                                                                                                                                                 20
+                  0                                                                                                                                                                 0
+                      1             16                     31                          46                            61                            76                          91
+                                                                                Simulation day
+
+Figure 10: Monitored MAS performance objectives and DA switches over the simulation considering the three different learning reward r j+1 (top to bottom:
+balanced, completion-only, latency-only weights). Within each block, the narrow upper strip repeats the daily cycle of dynamic fault windows fw1–fw4, shaded by
+increasing severity, and places one marker per switch at the time it occurred, coloured and shaped by the mechanism switched
+
+
+                                                                                              Table 6: Adaptation overhead per check of Dynamic Adaptation on the nominal
+        Answer to RQ2. Once past the initial exploration phase,                               configuration, summarised over each one-factor-at-a-time sweep. The policy is
+        DA keeps switching mechanisms, at roughly 2% of adap-                                 invoked once per simulated hour, about 2140 times per 90-day run, and the
+        tation checks, and the timing follows the daily fault cycle                           decision step accounts for 0.156–0.161 ms of each check. Relative overhead is
+                                                                                              the cumulative adaptation cost as a fraction of the wall time of the same run.
+        rather than the learning reward: switches concentrate at the
+        boundary between fw4 and fw1, with FD favored in fw1,                                  Parameters        Range        Overhead/check [msec.]    Total [sec.]    Relative overhead
+        the mildest window. The learning reward barely affects                                 T spawn        90 – 300 sec.        0.528 – 0.725           1.30              1.18%
+        which mechanism is chosen (≈ 32%/33%/34% for CE/S-                                     Nmalicious      0 – 100%            0.635 – 0.940           1.57              1.15%
+                                                                                               Fagent           1 – 10%            0.677 – 0.849           1.59              0.97%
+        D/FD) but strongly affects how long DA stays on it: task                               Fmsg             1 – 10%            0.649 – 0.701           1.45              1.02%
+        completion-oriented weights favor CE (41.4% of the time),
+        task latency-oriented weights favor FD (43.8%).
+
+                                                                                                 Both indicators are measured on the nominal runs them-
+6.3. RQ3: Runtime Overhead                                                                    selves, so the cost reported here belongs to exactly the execu-
+   RQ3 analyzes the runtime cost of enabling DA relative to                                   tions whose performance is analyzed in RQ1, and no separate
+fixed coordination mechanisms, to quantify the additional exe-                                campaign is needed to compare the two.
+cution cost introduced by its stream-based monitoring and on-                                    Table 6 isolates the direct cost of the adaptation pipeline.
+line adaptation pipeline. We compute two values for this: Sim-                                Across every operating condition, one adaptation check costs
+ulation wall time, which captures the cost of executing each                                  between 0.528 and 0.940 milliseconds, of which roughly
+mechanism as the real time required to complete a run, and                                    0.30 ms is spent querying the RTLola monitor and 0.16 ms on
+Adaptation overhead per check, which isolates the direct cost                                 the adaptation decision itself. Over a 90-day run the policy is
+of the DA pipeline itself, including monitor queries, adaptation                              invoked about 2140 times, once per simulated hour, for a cu-
+decisions, and state updates at each adaptation interval. Using                               mulative cost of 1.30 to 1.59 seconds, that is between 0.97%
+the same experimental subjects as before, each analysis varies                                and 1.18% of the wall time of the corresponding run. The direct
+a single parameter at a time, the workload intensity T spawn ,                                price of stream-based monitoring and online adaptation is there-
+the malicious-agent ratio Nmalicious , the agent fault probability                            fore about one percent of execution time, and it stays within
+Fagent , and the message loss probability Fmsg , while keeping all                            that order of magnitude across the whole experimental space.
+other parameters fixed at their baseline values (see Table 3).                                The table also shows that the residual variation is not driven
+                                                                                       13
+                                                                                                                                                          210
+
+
+
+
+                                                                         Simulation wall time [s]
+by the severity of the operating conditions but by the volume                                                                                       FD
+                                                                                                    180                                             SD    180
+of events the monitor has to aggregate: the per-check cost de-                                      150                                             CE    150
+creases from 0.725 to 0.528 ms as the workload is relaxed from                                                                                      DA
+                                                                                                    120                                                   120
+T spawn = 90 to 300 s, and from 0.940 to 0.635 ms as the mali-                                       90                                                    90
+cious ratio grows from 0% to 100%, because malicious agents                                          60                                                    60
+emit fake alerts instead of completing tasks and thus shrink the                                          90   120 150 180 210 240 270 300                      0       20       40                 60       80     100
+stream of task events. The two reliability factors move it least:                                                     Tspawn [sec]                                           Nmal/Nbot [%]
+Fmsg spans only 0.649–0.701 ms across its full range.                                                                            (a)                                                      (b)
+
+
+
+
+                                                                         Simulation wall time [s]
+                                                                                                                                                          180
+   Figure 11 reports the end-to-end cost of each mechanism,                                         400
+                                                                                                                                                          150
+and shows that the per-check overhead does not dominate the                                         320
+                                                                                                    240                                                   120
+comparison. Under varying workload (panel (a)), wall time is
+                                                                                                    160                                                    90
+governed by the number of simulated events rather than by the
+                                                                                                     80                                                    60
+coordination logic: all mechanisms decrease monotonically as
+tasks become rarer, FD stays between 41 and 61 s because its                                              1    2   3   4     5         6   7   8   9 10         1   2    3   4        5         6        7   8    9 10
+agents exchange no messages, and DA tracks CE closely, end-                                                                Fagent [%]                                            Fmsg [%]
+                                                                                                                                 (c)                                                      (d)
+ing marginally faster at T spawn = 300 s (80 s against 87 s). In-
+creasing the malicious-agent ratio (panel (b)) is the only condi-        Figure 11: Simulation wall time of the four coordination mechanisms on the
+tion under which DA becomes the most expensive mechanism,                nominal configuration, varying one parameter at a time: (a) task inter-arrival
+reaching 179 s at 100% against 153 s for CE, since DA pays               time T spawn , (b) malicious-agent ratio Nmalicious /Nbot , (c) agent fault probability
+both for the deceptive rescue traffic and for keeping the mon-           Fagent , and (d) message loss probability Fmsg . Each point is the mean real time
+                                                                         required to complete one 90-day run, and the shaded band is its 95% confidence
+itor fed while the fake alerts arrive; FD is again flat at about         interval over ten repetitions.
+50 s, consistent with the RQ1 finding that it simply ignores
+the malicious messages. Under growing agent fault probabil-
+ity (panel (c)) the ordering inverts: CE collapses from 427 s at
+                                                                         the hardware profile, comparing a workstation profile with a
+Fagent = 1% to 131 s at 10%, DA from 208 to 153 s, because
+                                                                         commodity-hardware profile, and the coordination mechanism,
+higher fault rates remove agents from service and reduce the
+                                                                         comparing CE with DA on both profiles. This design separates
+number of events to simulate. Message loss (panel (d)) leaves
+                                                                         the cost into the execution platform and the additional opera-
+every mechanism essentially flat over its whole range.
+                                                                         tions introduced by DA.
+   Averaged over the nominal configuration, DA completes a
+run in 157.8 s against 179.7 s for CE, 120.9 s for SD, and 62.6 s           We use three indicators to assess scalability. As in RQ3, sim-
+for FD. DA is therefore not the most expensive mechanism to              ulation wall time measures the real time required to complete
+execute despite carrying the monitoring pipeline: because it             a simulation run. Number of events reports the average num-
+spends part of each run on the cheaper decentralized and semi-           ber of simulation events generated during a run, capturing the
+decentralized mechanisms, the time it saves on coordination              workload handled by the simulator. Finally, trace size measures
+traffic more than compensates for the one percent it spends on           the size of the CSV files produced by the tool, since excessively
+adaptation. The cost that DA does not avoid is the one mea-              large traces would make post-simulation inspection and analy-
+sured against FD, whose execution is roughly 2.5× faster, but            sis impractical. All three are reported in Figure 12.
+RQ1 has already shown that this speed is paid for with a task               Figure 12 shows that all three indicators grow smoothly and
+completion rate below 25% under the same conditions.                     without discontinuities across the whole experimental space,
+                                                                         and that the direction of the growth depends on which dimen-
+ Answer to RQ3. The direct cost of stream-based monitor-                 sion is stressed. Relaxing the workload (panels (a), (d), (g)) re-
+ ing and online adaptation is about 1% of execution time:                duces every cost, as fewer tasks mean fewer events to simulate:
+ one adaptation check costs 0.53–0.94 ms, and the roughly                moving T spawn from 90 to 300 seconds takes CE from 89.6 to
+ 2140 checks of a 90-day run accumulate to 1.3–1.6 s. This               44.2 seconds of wall time and from 1.67 to 1.24 million events.
+ cost is stable across workload, security, and reliability con-          Enlarging the topology (panels (c), (f), (i)) has a milder effect,
+ ditions, and its residual variation follows the volume of               because more rooms lengthen the routes but do not create more
+ monitored events rather than the severity of the conditions.            tasks: wall time roughly doubles from 37.0 to 85.3 seconds for
+ DA is cheaper to execute than CE (157.8 s against 179.7 s               CE, while the event count grows by only about a half, from 1.06
+ on average) because it spends part of each run on less                  to 1.64 million.
+ communication-intensive mechanisms, and is only more ex-                   The fleet size is the dimension that separates the two mecha-
+ pensive than CE when the malicious-agent ratio comes to                 nisms, and it does so in favour of DA. Panels (b) and (e) show
+ 100%.                                                                   CE growing linearly with the number of agents, from 45.3 to
+                                                                         227.1 seconds of wall time and from 0.89 to 5.47 million events
+6.4. RQ4: Tool Scalability                                               between 10 and 100 agents. DA follows the same slope up to
+   RQ4 analyzes the execution cost of COORDINATE 2.0 across              about 30 agents and then flattens: at 100 agents it requires 126.1
+increasingly demanding MAS simulation settings and with dif-             seconds and 2.29 million events, that is 0.56× and 0.42× the
+ferent hardware profiles. The analysis considers two factors:            corresponding CE values. The reason is the one already visible
+                                                                    14
+                                                               Workload                                                             Agents                                                        Topology size
+                            90              CE - Commodity                                                                                                               90
+
+
+
+
+ Simulation wall time [s]
+                                            DA - Commodity                                      200
+                                            CE - Workstation                                                                                                             75
+                            75              DA - Workstation                                    160
+                            60                                                                                                                                           60
+                                                                                                120
+                            45                                                                   80                                                                      45
+
+                                                                                                 40                                                                      30
+                                  90         120      150     180    210      240   270   300          10        20    30    40     50  60          70   80   90   100          4        9   16       25             36        49
+                                                             Tspawn [sec]                                                           Nagent                                                           Nrooms
+                                                                  (a)                                                                    (b)                                                              (c)
+                                 1e6                                                                  1e6                                                                      1e6
+                        1.6                                                                       5                                                                      1.6
+                        1.4                                                                                                                                              1.4
+                                                                                                  4
+
+Events (#)
+                        1.2                                                                                                                                              1.2
+                                                                                                  3
+                        1.0                                                                                                                                              1.0
+                                                                                                  2
+                        0.8                                                                                                                                              0.8
+                                                                                                  1
+                        0.6                                                                                                                                              0.6
+                                  90         120      150     180    210      240   270   300          10        20    30    40     50  60          70   80   90   100          4        9   16       25             36        49
+                                                             Tspawn [sec]                                                           Nagent                                                           Nrooms
+                                                                  (d)                                                                    (e)                                                              (f)
+                                                                                                 30
+                            15
+                                                                                                 24                                                                      12
+
+
+
+ Trace size [MB]
+                            12
+                                                                                                 18                                                                       9
+                             9
+                             6                                                                   12                                                                       6
+
+                             3                                                                    6                                                                       3
+                             0                                                                    0                                                                       0
+                                       90       120    150      180     210   240   270   300               10    20    30    40     50        60   70   80   90   100               4       9       16         25        36   49
+                                                             Tspawn [sec]                                                           Nagent                                                           Nrooms
+                                                                  (g)                                                                    (h)                                                              (i)
+
+Figure 12: Scalability of COORDINATE 2.0 on 90-day runs. Rows report the three indicators, columns the three dimensions along which the simulation setting
+grows: task inter-arrival time T spawn , fleet size Nagent , and topology size Nrooms . Each point is the mean over ten repetitions and the shaded band its 95% confidence
+interval; the bottom row uses bars because trace size is compared per configuration rather than as a trend. Solid lines denote the commodity profile and dotted lines
+the workstation profile, with green for CE and dark grey for DA as in the rest of the evaluation. Note that the vertical scale differs across panels.
+
+
+
+in RQ1 and RQ3: the cost of centralized coordination grows                                                                                     Answer to RQ4. COORDINATE 2.0 scales smoothly along
+with the number of agents contacting the coordinator, and as                                                                                   workload, fleet size, and topology size, and enabling Dy-
+the fleet grows DA increasingly selects the decentralized and                                                                                  namic Adaptation does not degrade that scaling. DA is
+semi-decentralized mechanisms, which exchange fewer mes-                                                                                       cheaper than CE on both wall time and event count, and the
+sages. Carrying the monitoring pipeline therefore does not pre-                                                                                gap widens with the fleet: at 100 agents DA requires 0.56×
+vent DA from scaling better than the mechanism it monitors.                                                                                    the wall time and 0.42× the events of CE, because it in-
+                                                                                                                                               creasingly selects the less communication-intensive mecha-
+                                                                                                                                               nisms. Trace size is the only indicator on which DA costs
+                                                                                                                                               more, and only under light load; every configuration stays
+                                                                                                                                               between 7 and 30 MB per 90-day run, so the tool remains
+                                                                                                                                               usable on ordinary hardware. [WIP: workstation profile.]
+   Trace size is the only indicator on which DA is consis-
+tently more expensive than CE, and only under light load: at
+T spawn = 300 s it writes 8.3 MB against 7.4 MB, a factor of
+1.13×, because the adaptation log is written at a fixed rate of                                                                          7. Discussion
+one record per simulated hour regardless of how many tasks
+                                                                                                                                         7.1. Dynamic Adaptation
+the run generates. The relation inverts as soon as the setting
+becomes demanding: with 100 agents DA produces 20.5 MB                                                                                      The RQ1 results confirm that the choice of a coordination
+against 29.5 MB for CE. In absolute terms every configura-                                                                               mechanism is context-dependent and that no single mechanism
+tion stays between 7 and 30 MB for three simulated months,                                                                               is uniformly preferable across all workload intensities, agent
+so traces remain small enough to be stored, transferred, and in-                                                                         numbers, fault probabilities, and malicious-agent ratios. The
+spected with ordinary tools.                                                                                                             aggregate results show different strengths across mechanisms:
+                                                                                                                                   15
+CE completes the most tasks, FD reports the lowest average                sessment because traces contain the information produced dur-
+latency but also the lowest completion rate, while SD is posi-            ing the simulation, including task execution, failures, coordi-
+tioned between the two, balancing completion rate and latency.            nation decisions, monitoring states, and adaptation switches.
+DA does not dominate every metric, but it reports the highest             Therefore, traces must remain reasonably small: if they be-
+completion-latency efficiency, indicating the best balance be-            came too large, storing, transferring, and inspecting them would
+tween the fraction of completed tasks and the typical latency of          become impractical. However, the CSV traces generated with
+delivered tasks.                                                          COORDINATE 2.0, remain small even in the most demanding
+   This distinction is important because looking at latency or            available setting, with DA producing 11.52 MB. This shows
+completion alone can lead to partial interpretations. In RQ1, CE          that the additional monitoring and adaptation evidence does not
+achieves the highest completion rate, but with a higher median            compromise storage, transfer, or post-mortem analysis.
+latency than DA. FD reports the lowest average latency, but with
+a much lower completion rate. DA instead remains close to SD              7.3. Threats to Validity
+in completion rate and throughput-related task outcomes, while               External validity. Threats to external validity concern possi-
+reporting the lowest median latency and the highest completion-           ble biases in the design and interpretation of our simulation ex-
+latency efficiency. RQ1 results further show that this behavior is        periments. Results may be influenced by the stochastic genera-
+not uniform across the experimental space: DA becomes more                tion of items and deceptive messages, as well as by the chosen
+favorable as the number of agents increases and the malicious-            probabilities of agent failure. We mitigate these threats through
+agent ratio increases. Thus, DA is best interpreted as a runtime          an extensive experimental campaign involving 125 subjects and
+strategy for balancing competing performance aspects, rather              5000 runs (10 runs per configuration), assessing significance
+than as a mechanism expected to win every metric in every con-            using Mann–Whitney U tests at the 95% confidence level. All
+figuration.                                                               experiments are reproducible in COORDINATE 2.02 , and the re-
+   RQ2 explains how this runtime behavior emerges. DA                     sults of the experiments are archived on Zenodo [12].
+switches are not arbitrary; they are associated with the mon-                Internal validity. Threats to internal validity concern whether
+itored runtime context and dynamic fault windows. Recov-                  the observed effects can be attributed to the switching policies
+ery mode leads to CE, FD pressure leads to FD, and degraded               implemented by the Dynamic Adaptation strategy (i.e., how co-
+or critical states without FD pressure lead to SD. The phase-             ordination mechanisms are selected based on the monitored la-
+level results show the same pattern: communication degrada-               tency values). Our MAS performance analysis relies on spe-
+tion and malicious-agent surge windows mostly select FD, re-              cific numerical settings for workload, failure probability, and
+covery windows select CE, and nominal conditions mainly se-               fraction of malicious agents, chosen to expose performance dif-
+lect SD, with a smaller fraction of CE. The representative time-          ferences among coordination mechanisms under these policies.
+line further shows that switches occur around dynamic fault               We mitigate potential confounding factors by varying one di-
+windows and alongside changes in latency and pending-task                 mension at a time while keeping all other parameters constant.
+backlog, rather than only at fixed periodic intervals.                    However, selecting appropriate numerical input parameters re-
+   Overall, DA makes coordination more responsive to chang-               mains an open challenge in software performance studies [3].
+ing operating conditions, but its behavior remains tied to the               Construct validity. Threats to construct validity concern
+monitored indicators and to the policy that maps those indi-              whether the selected metrics accurately capture the intended
+cators to coordination mechanisms. This is a useful property              performance objectives. We mainly use relative task latency
+rather than a limitation: the adaptation layer can be recali-             as the primary indicator because timely task completion is cen-
+brated when the target objective changes. In the hospital lo-             tral in the hospital scenario. However, latency alone does not
+gistics scenario, the main objective is to reduce task latency            fully characterize system behavior under severe faults, since it
+while preserving task completion. In other domains, the same              is computed over delivered tasks. For this reason, we comple-
+architecture could prioritize completion rate, pending tasks, ro-         ment latency with task completion rate, expired tasks, and task
+bustness to malicious behavior, communication degradation, or             throughput. These metrics are derived from timestamped simu-
+other MAS-level objectives.                                               lation events, reducing ambiguity in their computation.
+                                                                             Conclusion validity. Threats to conclusion validity concern
+7.2. On the Usage of the Tool
+                                                                          whether the results support the claims drawn from the experi-
+   The RQ4 results provide evidence for the practical use of              ments. Since the simulations include stochastic events, individ-
+COORDINATE 2.0 as an experimental environment rather than                 ual runs may vary because of task generation, failures, message
+solely as a simulation engine. From a practitioner’s perspec-             losses, and malicious behavior. However, some performance
+tive, scalability is not determined solely by whether a run ter-          differences are small and may depend on the selected parameter
+minates, but by whether repeated simulations can be executed,             ranges. Therefore, the results should be interpreted as evidence
+compared, transferred across machines, and inspected after ex-            that Dynamic Adaptation can improve performance in the eval-
+ecution. Results further show that this workflow does not                 uated settings, rather than as proof that it always outperforms
+depend on workstation-class resources, making COORDINATE                  fixed coordination mechanisms.
+2.0 practical in more accessible experimental settings.
+   Another important aspect is the size of the simulation trace
+generated by COORDINATE 2.0. This aspect is central to the as-              2 https://github.com/IvanComp/COORDINATE-2.0
+
+
+                                                                     16
+8. Conclusion                                                            [3] André B Bondi. 2015. Foundations of Software and
+                                                                             System Performance Engineering: Process, Performance
+   This paper addresses a limitation in fault-tolerant MAS: the              Modeling, Requirements, Testing, Scalability, and Prac-
+reliance on a fixed coordination mechanism that may become                   tice.
+ineffective when workload, failures, communication reliability,
+or malicious behavior change during execution. To overcome               [4] Javier Cámara, Henry Muccini, and Karthik Vaid-
+this limitation, we propose a runtime Dynamic Adaptation strat-              hyanathan. 2020. Quantitative Verification-Aided Ma-
+egy that combines stream-based monitoring and online learn-                  chine Learning: A Tandem Approach for Architecting
+ing. RTLola monitors the MAS performance objective and op-                   Self-Adaptive IoT Systems. In International Conference
+erating conditions from the simulation events data stream, while             on Software Architecture (ICSA). 11–22.
+a contextual bandit uses this feedback and the current operating
+context to select among three coordination mechanisms, aiming            [5] Hongkai Chen, Zeyu Zhang, Shouvik Roy, Ezio Bar-
+to improve MAS performance over time.                                        tocci, Scott A Smolka, Scott Stoller, and Shan Lin. 2025.
+   We implement Dynamic Adaptation in COORDINATE 2.0,                        Cumulative-Time Signal Temporal Logic. ACM Trans-
+which we provide to researchers and practitioners as a discrete-             actions on Embedded Computing Systems 24, 5s (2025),
+event simulation tool for configuring, executing, and inspect-               1–23.
+ing fault-tolerant MAS scenarios. The tool supports cus-
+tom topologies, task generation processes, agent populations,            [6] Alexandre Donzé and Oded Maler. 2010. Robust Satis-
+fault probabilities, communication failures, malicious behav-                faction of Temporal Logic over Real-Valued Signals. In
+iors, and dynamic fault windows. We evaluated the approach in                Formal Modeling and Analysis of Timed Systems (FOR-
+a smart-hospital scenario across 544 configurations and 5,440                MATS). 92–106.
+simulation runs, varying the simulation input parameters to
+cover diverse operating conditions. Results show that Dy-                [7] Nandan Garg, Daniel Grosu, and Vipin Chaudhary. 2007.
+namic Adaptation can improve the monitored objective rela-                   Antisocial Behavior of Agents in Scheduling Mecha-
+tive to fixed coordination mechanisms with negligible over-                  nisms. IEEE Trans. Syst. Man Cybern. Part A 37, 6
+head, while COORDINATE 2.0 scales to demanding campaigns                     (2007), 946–954.
+on both workstation and commodity hardware.
+                                                                         [8] Thomas J. Glazier, Javier Cámara, Bradley R. Schmerl,
+   As future work, we plan to extend the framework with addi-
+                                                                             and David Garlan. 2015. Analyzing Resilience Properties
+tional coordination mechanisms, validate the approach across
+                                                                             of Different Topologies of Collective Adaptive Systems.
+additional domains, and explore integrating the DA strategy
+                                                                             In IEEE International Conference on Self-Adaptive and
+into real-world settings.
+                                                                             Self-Organizing Systems Workshops. 55–60.
+
+Tool and Experimental Data Availability                                  [9] Felipe Gorostiaga and César Sánchez. 2018. Striver:
+                                                                             Stream runtime verification for real-time event-streams.
+§ GitHub Code                                                                In International Conference on Runtime Verification (RV).
+o Docker Image                                                               Springer, 282–298.
+ Zenodo Package [12]
+                                                                        [10] Wangli He, Wenying Xu, Xiaohua Ge, Qing-Long Han,
+Declaration on Generative AI                                                 Wenli Du, and Feng Qian. 2022. Secure Control of Mul-
+                                                                             tiagent Systems Against Malicious Attacks: A Brief Sur-
+   During the preparation of this work, the authors used Gram-               vey. IEEE Trans. Ind. Informatics 18, 6 (2022), 3595–
+marly to assist with writing tasks such as polishing language,               3608.
+tightening phrasing, and checking consistency. The authors re-
+viewed and edited the content as needed and take full responsi-         [11] Steven C. H. Hoi, Doyen Sahoo, Jing Lu, and Peilin Zhao.
+bility for the article’s content.                                            2021. Online learning: A comprehensive survey. Neuro-
+                                                                             computing 459 (2021), 249–289.
+References
+                                                                        [12] Ivan Compagnucci, and Simone Silvetti, and Laura Nenzi,
+ [1] Alexey Bakhirkin and Nicolas Basset. 2019. Specification                and Catia Trubiani. 2026. Open Science Artifact: Stream-
+     and efficient monitoring beyond STL. In International                   Based Runtime Adaptation of Coordination Mechanisms
+     Conference on Tools and Algorithms for the Construction                 for Fault-Tolerant Multi-Agent Systems. doi:10.5281/
+     and Analysis of Systems (TACAS). Springer, 79–97.                       zenodo.17679879
+ [2] Jan Baumeister, Bernd Finkbeiner, Sebastian Schirmer,              [13] Nathan Koenig and Andrew Howard. 2026. Gazebo Sim-
+     Maximilian Schwenger, and Christoph Torens. 2020. RT-                   ulator. https://gazebosim.org/home.
+     Lola Cleared for Take-Off: Monitoring Autonomous Air-
+     craft. In International Conference on Computer Aided               [14] Tor Lattimore and Csaba Szepesvári. 2020. Bandit algo-
+     Verification (CAV). 28–39.                                              rithms. Cambridge University Press.
+                                                                   17
+[15] Martin Leucker, César Sánchez, Torben Scheffel, Malte              [27] Melanie Schranz, Gianni A. Di Caro, Thomas Schmickl,
+     Schmitz, and Alexander Schramm. 2018. TeSSLa: run-                      Wilfried Elmenreich, Farshad Arvin, Y. Ahmet Seker-
+     time verification of non-synchronized real-time streams.                cioglu, and Micha Sende. 2021. Swarm Intelligence and
+     In Annual ACM Symposium on Applied Computing (SAC).                     cyber-physical systems: Concepts, challenges and future
+     1925–1933.                                                              trends. Swarm Evol. Comput. 60 (2021), 100762.
+[16] Oded Maler and Dejan Nickovic. 2004. Monitoring                    [28] Shai Shalev-Shwartz. 2012. Online Learning and Online
+     temporal properties of continuous signals. In Interna-                  Convex Optimization. Found. Trends Mach. Learn. 4, 2
+     tional Symposium on Formal Techniques in Real-Time and                  (2012), 107–194.
+     Fault-Tolerant Systems (FTRTFT). 152–166.
+                                                                        [29] Simone Silvetti, Ivan Compagnucci, Francesca Cairoli,
+[17] Asad Waqar Malik, Anis Ur Rahman, Muhammad Ali,                         Catia Trubiani, and Laura Nenzi. 2026. Time Robust-
+     and Max Mauro Santos. 2021. Symbiotic Robotics Net-                     ness for Point-Based Semantics of Metric Interval Tem-
+     work for Efficient Task Offloading in Smart Industry.                   poral Logic. In International Conference on Principles
+     IEEE Transactions on Industrial Informatics 17, 7 (2021),               of Knowledge Representation and Reasoning (KR). 589–
+     4594–4601.                                                              599.
+[18] M. Ajmone Marsan, G. Balbo, G. Conte, S. Donatelli,                [30] Simone Silvetti, Michele Loreti, and Laura Nenzi. 2025.
+     and G. Franceschinis. 1998. Modelling with Generalized                  Modular and Online Monitoring of Temporal Logic Spec-
+     Stochastic Petri Nets. Perform. Eval. Rev. 26, 2 (1998), 2.             ification with Integral and Filter. In International Confer-
+                                                                             ence on Runtime Verification (RV). 120–139.
+[19] Mathlab. 2026. Robotics System Toolbox. https://ww
+     w.mathworks.com/products/robotics.html.                            [31] Simone Silvetti, Laura Nenzi, Ezio Bartocci, and Luca
+                                                                             Bortolussi. 2018. Signal convolution logic. In Interna-
+[20] Boda Ning, Qing-Long Han, Qiang Lu, and Jay Sanjayan.
+                                                                             tional Symposium on Automated Technology for Verifica-
+     2023. Cooperative Control of Multirobot Systems Sub-
+                                                                             tion and Analysis (ATVA). Springer, 267–283.
+     ject to Control Gain Uncertainty. IEEE Transactions on
+     Industrial Informatics 19, 4 (2023), 5367–5376.                    [32] Lei Tian, Yongzhao Hua, Xiwang Dong, Jinhu Lü, and
+                                                                             Zhang Ren. 2022. Distributed Time-Varying Group For-
+[21] Femke Ongenae, Dries Myny, Tom Dhaene, Tom Defloor,
+                                                                             mation Tracking for Multiagent Systems With Switch-
+     Dirk Van Goubergen, Piet Verhoeve, Johan Decruyenaere,
+                                                                             ing Interaction Topologies via Adaptive Control Proto-
+     and Filip De Turck. 2011. An ontology-based nurse call
+                                                                             cols. IEEE Transactions on Industrial Informatics 18, 12
+     management system (oNCS) with probabilistic priority
+                                                                             (2022), 8422–8433.
+     assessment. BMC health services research 11 (2011), 26.
+                                                                        [33] Hao Yang, Qing-Long Han, Xiaohua Ge, Lei Ding,
+[22] Luis Piardi, Pedro Costa, André Schneider de Oliveira,
+                                                                             Yuhang Xu, Bin Jiang, and Donghua Zhou. 2020. Fault-
+     and Paulo Leitão. 2025. Collaborative Fault Tolerance for
+                                                                             Tolerant Cooperative Control of Multiagent Systems: A
+     Cyber-Physical Systems: The Diagnosis Stage. IEEE Ac-
+                                                                             Survey of Trends and Methodologies. IEEE Trans. Ind.
+     cess 13 (2025), 37278–37289.
+                                                                             Informatics 16, 1 (2020), 4–17.
+[23] Carlo Pinciroli, Vito Trianni, Rehan O’Grady, Giovanni
+                                                                        [34] Won Joon Yun, Soohyun Park, Joongheon Kim, Myung-
+     Pini, Arne Brutschy, Manuele Brambilla, Nithin Mathews,
+                                                                             jae Shin, Soyi Jung, David A. Mohaisen, and Jae-Hyun
+     Eliseo Ferrante, Gianni Di Caro, Frederick Ducatelle,
+                                                                             Kim. 2022. Cooperative Multiagent Deep Reinforce-
+     Mauro Birattari, Luca Maria Gambardella, and Marco
+                                                                             ment Learning for Reliable Surveillance via Autonomous
+     Dorigo. 2012. ARGoS: a modular, parallel, multi-engine
+                                                                             Multi-UAV Control. IEEE Trans. Ind. Informatics 18, 10
+     simulator for multi-robot systems. Swarm Intell. 6, 4
+                                                                             (2022), 7086–7096.
+     (2012), 271–295.
+[24] Riccardo Pinciroli and Catia Trubiani. 2021. Model-based           [35] Yingfeng Zhang, Zhenfei Zhu, and Jingxiang Lv. 2018.
+     Performance Analysis for Architecting Cyber-Physical                    CPS-Based Smart Control Model for Shopfloor Material
+     Dynamic Spaces. In International Conference on Soft-                    Handling. IEEE Transactions on Industrial Informatics
+     ware Architecture (ICSA). 104–114.                                      14, 4 (2018), 1764–1775.
+
+[25] Riccardo Pinciroli and Catia Trubiani. 2023. Perfor-               [36] Wenbing Zhao, Congfeng Jiang, Honghao Gao, Shunkun
+     mance Analysis of Fault-Tolerant Multiagent Coordina-                   Yang, and Xiong Luo. 2021. Blockchain-Enabled Cy-
+     tion Mechanisms. IEEE Trans. Ind. Informatics 19, 9                     ber–Physical Systems: A Review. IEEE Internet of Things
+     (2023), 9821–9832.                                                      Journal 8, 6 (2021), 4023–4034.
+
+[26] Yara Rizk, Mariette Awad, and Edward W. Tunstel. 2018.
+     Decision Making in Multiagent Systems: A Survey. IEEE
+     Trans. Cogn. Dev. Syst. 10, 3 (2018), 514–529.
+                                                                   18
+

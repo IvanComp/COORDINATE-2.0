@@ -35,6 +35,11 @@ LINESTYLES = {label: spec["linestyle"] for label, spec in STYLE.items()}
 GRID_COLOR = "#d9d9d9"
 LEGEND_EDGE_COLOR = "#dddddd"
 PENDING_COLOR = "#666666"
+# Outline drawn around scatter markers and bars, so a light fill stays visible.
+MARKER_EDGE_COLOR = "#222222"
+# Texture that distinguishes a second variant of the same series, currently the
+# hardware profile in RQ4, without spending another colour on it.
+SECONDARY_HATCH = "////"
 
 # Neutral greys for the fault-window bands. They stay outside the mechanism
 # palette so a shaded window is never confused with a mechanism. The shade

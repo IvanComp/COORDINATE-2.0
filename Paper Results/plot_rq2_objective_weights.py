@@ -23,6 +23,7 @@ from paper_plot_style import (  # noqa: E402
     METRIC_STYLE,
     PHASE_COLORS,
     PHASE_DISPLAY,
+    MARKER_EDGE_COLOR,
     PHASE_EDGE_COLOR,
     apply_rc,
     mechanism_label,
@@ -124,7 +125,7 @@ def draw_mechanism(ax: plt.Axes, trace_all: pd.DataFrame, phases: pd.DataFrame, 
         seen.add(mechanism)
         ax.scatter(points["day"], [MECHANISM_CODES[mechanism]] * len(points), s=16,
                    color=SWITCH_COLORS[mechanism], marker=SWITCH_MARKERS[mechanism],
-                   edgecolor="#222222", linewidth=0.35, zorder=3)
+                   edgecolor=MARKER_EDGE_COLOR, linewidth=0.35, zorder=3)
 
     style_axes(ax)
     ax.set_xlim(start_day, start_day + days)
@@ -178,7 +179,7 @@ def draw_timeline(ax_windows: plt.Axes, ax_perf: plt.Axes, trace_all: pd.DataFra
         selected = label(row.selected_architecture)
         ax_perf.axvline(row.day, color=SWITCH_COLORS[selected], linestyle=":", linewidth=0.8, alpha=0.85)
         ax_windows.scatter([row.day], [0.5], s=20, marker=SWITCH_MARKERS[selected],
-                           facecolor=SWITCH_COLORS[selected], edgecolor="#222222", linewidth=0.4, zorder=3)
+                           facecolor=SWITCH_COLORS[selected], edgecolor=MARKER_EDGE_COLOR, linewidth=0.4, zorder=3)
         seen.add(selected)
 
     ax_perf.set_xlim(start_day, start_day + days)
@@ -203,7 +204,7 @@ def figure_legend(fig, handles: list) -> None:
 
 def switch_handles(seen: set[str], linestyle: str) -> list[Line2D]:
     return [Line2D([0], [0], color=SWITCH_COLORS[mechanism], marker=SWITCH_MARKERS[mechanism],
-                   linestyle=linestyle, lw=0.8, markersize=4, markeredgecolor="#222222",
+                   linestyle=linestyle, lw=0.8, markersize=4, markeredgecolor=MARKER_EDGE_COLOR,
                    markeredgewidth=0.35, label=f"Switch to {mechanism}")
             for mechanism in ("CE", "SD", "FD") if mechanism in seen]
 

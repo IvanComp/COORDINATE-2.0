@@ -17,7 +17,10 @@ import pandas as pd
 from matplotlib.lines import Line2D
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paper_plot_style import COLORS, STYLE, add_legend, apply_rc, pending_text, save, style_axes  # noqa: E402
+from paper_plot_style import (  # noqa: E402
+    COLORS, MARKER_EDGE_COLOR, SECONDARY_HATCH, STYLE,
+    add_legend, apply_rc, pending_text, save, style_axes,
+)
 
 
 PROFILE = "extended-wallclock-v2"
@@ -38,9 +41,6 @@ METRICS = (
     ("event_count", "Events (#)", "line"),
     ("total_output_size_mb", "Trace size [MB]", "bar"),
 )
-BAR_EDGE_COLOR = "#222222"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--results-root", type=Path, default=Path("Paper Results"))
@@ -138,8 +138,8 @@ def plot_bar_panel(ax: plt.Axes, runs: pd.DataFrame, metric: str, slice_name: st
         ax.bar(
             positions + (offset - 1.5) * width, np.nan_to_num(values), width=width,
             yerr=np.nan_to_num(ci), capsize=2.0, error_kw={"linewidth": 0.6},
-            color=COLORS[coord], edgecolor=BAR_EDGE_COLOR, linewidth=0.4,
-            hatch="////" if machine == "workstation" else "",
+            color=COLORS[coord], edgecolor=MARKER_EDGE_COLOR, linewidth=0.4,
+            hatch=SECONDARY_HATCH if machine == "workstation" else "",
         )
     ax.set_xticks(positions, [str(value) for value in x_values])
     return has_data
@@ -163,8 +163,6 @@ def plot_scalability(runs: pd.DataFrame, output_dir: Path) -> Path:
             ax.set_xlabel(x_label)
             ax.set_ylabel(ylabel if col == 0 else "")
             ax.tick_params(axis="x", labelsize=7)
-            if row == 0:
-                ax.set_title(("Workload", "Agents", "Topology size")[col])
             style_axes(ax)
             ax.text(0.5, -0.28, f"({chr(letter)})", transform=ax.transAxes, ha="center", va="top")
             letter += 1
