@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 
-"""RQ4 figures: scalability of the tool across hardware profiles.
-
-The analysis keeps the nominal configuration and grows the simulated horizon,
-comparing CE against DA on a workstation and on commodity hardware. Bars encode
-the mechanism with the shared palette and the hardware profile with a hatch, so
-the mechanism colour stays consistent with RQ1, RQ2, and RQ3.
-"""
+"""RQ4 scalability figures for the extended campaign."""
 
 from __future__ import annotations
 
@@ -20,39 +14,30 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paper_plot_style import (  # noqa: E402
-    COLORS,
-    add_legend,
-    apply_rc,
-    pending_text,
-    save,
-    style_axes,
-)
+from paper_plot_style import COLORS, STYLE, add_legend, apply_rc, pending_text, save, style_axes  # noqa: E402
 
 
-# The nominal configuration of the paper: no parameter is swept, the only
-# factors are the execution platform and the coordination mechanism.
-NOMINAL_SPAWN = 120
-NOMINAL_ROBOTS = 20
-NOMINAL_ROOMS = 25
-NOMINAL_SIM_DAYS = 90
-NOMINAL_EXPIRATION_MEDIUM = 14400
+PROFILE = "extended-wallclock-v2"
 MECHANISMS = ("CE", "DA")
-
-HARDWARE = (
-    ("workstation", "Workstation", ""),
-    ("mac", "Commodity", "////"),
+SERIES = (
+    ("CE", "mac", "CE - Commodity"),
+    ("DA", "mac", "DA - Commodity"),
+    ("CE", "workstation", "CE - Workstation"),
+    ("DA", "workstation", "DA - Workstation"),
 )
-
-TABLE_METRICS = (
-    ("max_rss_mb", "Peak memory (MB)", 2),
-    ("event_count", "Events (#)", 0),
-    ("total_output_size_mb", "Trace size (MB)", 2),
+SWEEPS = (
+    ("workload", "item_spawning_time", [90, 120, 150, 180, 210, 240, 270, 300], r"$T_{spawn}$ [sec]"),
+    ("fleet", "n_robots", [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], r"$N_{agent}$"),
+    ("topology_size", "n_rooms", [4, 9, 16, 25, 36, 49], r"$N_{rooms}$"),
 )
-
+METRICS = (
+    ("wall_time_s", "Simulation wall time [s]", "line"),
+    ("event_count", "Events (#)", "line"),
+    ("total_output_size_mb", "Trace size [MB]", "bar"),
+)
 BAR_EDGE_COLOR = "#222222"
 
 
@@ -63,93 +48,136 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def normalise_machine(value: object) -> str:
-    label = str(value).strip().lower()
-    if label in {"mac", "commodity", "laptop"}:
-        return "mac"
-    if label in {"", "nan", "none", "workstation", "linux", "ws"}:
-        return "workstation"
-    return label
-
-
 def load_runs(path: Path) -> pd.DataFrame:
     runs = pd.read_csv(path)
-    runs = runs[runs["status"].fillna("ok").astype(str).eq("ok")].copy()
-    for column in ("sim_days", "item_spawning_time", "n_robots", "n_rooms",
-                   "expiration_time_medium_s", "wall_time_s",
-                   "max_rss_mb", "event_count", "total_output_size_mb"):
-        if column in runs:
-            runs[column] = pd.to_numeric(runs[column], errors="coerce")
-    runs["machine"] = runs["machine_label"].map(normalise_machine) if "machine_label" in runs else "workstation"
-    runs["coord_label"] = runs["coord_label"].astype(str).str.upper().str.strip()
-    # Older runs used shorter task deadlines; selecting the nominal expiration
-    # keeps this analysis on the same scenario as RQ1, RQ2, and RQ3.
     runs = runs[
-        runs["coord_label"].isin(MECHANISMS)
-        & runs["sim_days"].eq(NOMINAL_SIM_DAYS)
-        & runs["item_spawning_time"].eq(NOMINAL_SPAWN)
-        & runs["n_robots"].eq(NOMINAL_ROBOTS)
-        & runs["n_rooms"].eq(NOMINAL_ROOMS)
-        & runs["expiration_time_medium_s"].eq(NOMINAL_EXPIRATION_MEDIUM)
+        runs["status"].fillna("ok").astype(str).eq("ok")
+        & runs["experiment_profile"].fillna("").astype(str).eq(PROFILE)
+        & runs["coord_label"].astype(str).str.upper().isin(MECHANISMS)
     ].copy()
+    for column in (
+        "item_spawning_time", "n_robots", "n_rooms", "wall_time_s", "max_rss_mb",
+        "event_count", "total_output_size_mb",
+    ):
+        runs[column] = pd.to_numeric(runs[column], errors="coerce")
     if runs.empty:
-        raise RuntimeError("No nominal RQ4 runs are available for the scalability analysis.")
+        raise RuntimeError("No current RQ4 runs are available for the extended scalability analysis.")
+    runs["machine"] = runs["machine_label"].fillna("").astype(str).str.lower()
     return runs
 
 
-def plot_wall_time(runs: pd.DataFrame, output_dir: Path) -> Path:
-    """Wall time of CE and DA on both hardware profiles, at the nominal setup."""
-    fig, ax = plt.subplots(figsize=(3.4, 2.4), constrained_layout=True)
-    positions = np.arange(len(HARDWARE), dtype=float)
-    width = 0.34
-    for offset, mech in enumerate(MECHANISMS):
-        values, errors = [], []
-        for hw, _, _ in HARDWARE:
-            panel = runs[runs["machine"].eq(hw) & runs["coord_label"].eq(mech)]["wall_time_s"]
-            values.append(panel.mean() if len(panel) else np.nan)
-            errors.append(1.96 * panel.std(ddof=1) / np.sqrt(len(panel)) if len(panel) > 1 else 0.0)
-        ax.bar(
-            positions + (offset - 0.5) * width, np.nan_to_num(values), width=width,
-            yerr=errors, capsize=2.5, error_kw={"linewidth": 0.6},
-            color=COLORS[mech], edgecolor=BAR_EDGE_COLOR, linewidth=0.4, label=mech,
-        )
-    if runs.empty:
-        pending_text(ax)
-    ax.set_xticks(positions)
-    ax.set_xticklabels([hw_label for _, hw_label, _ in HARDWARE])
-    ax.set_ylabel("Simulation wall time [s]")
-    style_axes(ax, integer_ticks=False)
-    add_legend(ax, ax.containers, loc="upper left")
-    return save(fig, output_dir, "rq4_wall_time.pdf")
-
-
-def scalability_table(runs: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
-    """Peak memory, event count, and trace size at the nominal configuration."""
+def summary_for(panel: pd.DataFrame, metric: str, x_column: str, x_values: list[int]) -> pd.DataFrame:
+    summary = panel.groupby(["coord_label", x_column], observed=False)[metric].agg(
+        mean="mean", std="std", count="count"
+    ).reset_index()
     rows = []
-    for hw, hw_label, _ in HARDWARE:
-        for mech in MECHANISMS:
-            panel = runs[runs["machine"].eq(hw) & runs["coord_label"].eq(mech)]
-            row = {"Hardware": hw_label, "Mechanism": mech, "Runs": len(panel)}
-            for column, name, digits in TABLE_METRICS:
-                value = panel[column].mean() if len(panel) else float("nan")
-                row[name] = round(value, digits) if digits else (
-                    int(round(value)) if pd.notna(value) else pd.NA
-                )
-            rows.append(row)
-
-    table = pd.DataFrame(rows).set_index(["Hardware", "Mechanism"])
-    table.to_csv(output_dir / "rq4_scalability.csv")
-    return table
+    for coord in MECHANISMS:
+        series = summary[summary["coord_label"].eq(coord)].set_index(x_column).reindex(x_values)
+        rows.append(pd.DataFrame({
+            "coord_label": coord,
+            x_column: x_values,
+            "mean": series["mean"].to_numpy(),
+            "std": series["std"].fillna(0.0).to_numpy(),
+            "count": series["count"].fillna(1.0).clip(lower=1).to_numpy(),
+        }))
+    return pd.concat(rows, ignore_index=True)
 
 
-def generate(results_root: Path, output_dir: Path | None = None) -> tuple[list[Path], pd.DataFrame]:
-    """Write the RQ4 scalability figure and the per-day cost table."""
+def series_style(coord: str, machine: str) -> dict:
+    style = dict(STYLE[coord])
+    if machine == "workstation":
+        style.update({"linestyle": ":", "markerfacecolor": "white"})
+    return style
+
+
+def legend_handles() -> list[Line2D]:
+    return [
+        Line2D([0], [0], label=label, linewidth=1.0, markersize=3.5, **series_style(coord, machine))
+        for coord, machine, label in SERIES
+    ]
+
+
+def plot_line_panel(ax: plt.Axes, runs: pd.DataFrame, metric: str, slice_name: str,
+                    x_column: str, x_values: list[int]) -> bool:
+    has_data = False
+    for coord, machine, _ in SERIES:
+        panel = runs[
+            runs["machine"].eq(machine)
+            & runs["analysis_slices"].astype(str).str.contains(slice_name, regex=False)
+        ]
+        series = summary_for(panel, metric, x_column, x_values)
+        series = series[series["coord_label"].eq(coord)]
+        if series["mean"].notna().sum() == 0:
+            continue
+        has_data = True
+        x = np.asarray(x_values, dtype=float)
+        y = series["mean"].to_numpy(dtype=float)
+        ci = 1.96 * series["std"].to_numpy(dtype=float) / np.sqrt(series["count"].to_numpy(dtype=float))
+        ax.plot(x, y, linewidth=1.0, markersize=3.5, **series_style(coord, machine))
+        ax.fill_between(x, y - ci, y + ci, color=COLORS[coord], alpha=0.14, linewidth=0)
+    return has_data
+
+
+def plot_bar_panel(ax: plt.Axes, runs: pd.DataFrame, metric: str, slice_name: str,
+                   x_column: str, x_values: list[int]) -> bool:
+    positions = np.arange(len(x_values), dtype=float)
+    width = 0.19
+    has_data = False
+    for offset, (coord, machine, _) in enumerate(SERIES):
+        panel = runs[
+            runs["machine"].eq(machine)
+            & runs["analysis_slices"].astype(str).str.contains(slice_name, regex=False)
+        ]
+        series = summary_for(panel, metric, x_column, x_values)
+        series = series[series["coord_label"].eq(coord)]
+        values = series["mean"].to_numpy(dtype=float)
+        if not np.isfinite(values).any():
+            continue
+        has_data = True
+        ci = 1.96 * series["std"].to_numpy(dtype=float) / np.sqrt(series["count"].to_numpy(dtype=float))
+        ax.bar(
+            positions + (offset - 1.5) * width, np.nan_to_num(values), width=width,
+            yerr=np.nan_to_num(ci), capsize=2.0, error_kw={"linewidth": 0.6},
+            color=COLORS[coord], edgecolor=BAR_EDGE_COLOR, linewidth=0.4,
+            hatch="////" if machine == "workstation" else "",
+        )
+    ax.set_xticks(positions, [str(value) for value in x_values])
+    return has_data
+
+
+def plot_scalability(runs: pd.DataFrame, output_dir: Path) -> Path:
+    fig, axes = plt.subplots(len(METRICS), len(SWEEPS), figsize=(11.8, 8.0), constrained_layout=True)
+    letter = ord("a")
+    for row, (metric, ylabel, kind) in enumerate(METRICS):
+        for col, (slice_name, x_column, x_values, x_label) in enumerate(SWEEPS):
+            ax = axes[row, col]
+            has_data = (
+                plot_line_panel(ax, runs, metric, slice_name, x_column, x_values)
+                if kind == "line"
+                else plot_bar_panel(ax, runs, metric, slice_name, x_column, x_values)
+            )
+            if not has_data:
+                pending_text(ax)
+            if kind == "line":
+                ax.set_xticks(x_values)
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(ylabel if col == 0 else "")
+            ax.tick_params(axis="x", labelsize=7)
+            if row == 0:
+                ax.set_title(("Workload", "Agents", "Topology size")[col])
+            style_axes(ax)
+            ax.text(0.5, -0.28, f"({chr(letter)})", transform=ax.transAxes, ha="center", va="top")
+            letter += 1
+    add_legend(axes[0, 0], legend_handles(), loc="upper left")
+    return save(fig, output_dir, "rq4_scalability.pdf")
+
+
+def generate(results_root: Path, output_dir: Path | None = None) -> tuple[list[Path], None]:
     root = Path(results_root).resolve()
     output_dir = Path(output_dir or root / "paper_figures_latest").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     apply_rc()
-    runs = load_runs(root / "RQ4" / "runs.csv")
-    return [plot_wall_time(runs, output_dir)], scalability_table(runs, output_dir)
+    return [plot_scalability(load_runs(root / "RQ4" / "runs.csv"), output_dir)], None
 
 
 def main() -> None:

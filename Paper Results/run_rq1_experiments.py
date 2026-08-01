@@ -37,6 +37,7 @@ import csv
 import json
 import math
 import os
+import platform
 import shutil
 import statistics
 import sys
@@ -222,6 +223,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Independent simulations in parallel; 0 automatically uses available CPUs (up to 6).",
+    )
+    parser.add_argument(
+        "--machine-label",
+        default=None,
+        help="Short label for the host running this campaign, e.g. mac or leonardo. "
+             "Recorded per run so timings measured on different machines stay separable.",
     )
     parser.add_argument(
         "--condition-indexes",
@@ -827,6 +834,8 @@ def run_campaign(args: argparse.Namespace) -> None:
     if args.workers < 0:
         raise ValueError("--workers must be zero (automatic) or a positive integer.")
     args.workers = max(1, min(6, os.cpu_count() or 1)) if args.workers == 0 else args.workers
+    if not args.machine_label:
+        args.machine_label = "mac" if platform.system() == "Darwin" else "workstation"
     configure_bandit_objective(args)
     combos = campaign_grid(args)
     total_runs = len(combos)
@@ -1066,6 +1075,12 @@ def run_campaign(args: argparse.Namespace) -> None:
             "sim_days": args.sim_days,
             "wall_time_s": result["wall_time"],
             "event_count": result["event_count"],
+            # Wall time and adaptation overhead depend on the host and on how
+            # many simulations shared it, and RQ3 reads both from this file.
+            # Recording them keeps timings from different machines separable.
+            "machine_label": args.machine_label,
+            "machine_cpu_count": os.cpu_count(),
+            "workers": args.workers,
             **result["metrics"],
         }
         rows = replace_row(rows, row)

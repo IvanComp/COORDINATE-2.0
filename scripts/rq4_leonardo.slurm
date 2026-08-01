@@ -65,7 +65,12 @@ python scripts/check_rtlola.py
 echo "[rq4] Campaign design:"
 python "Paper Results/run_rq4_experiments.py" --dry-run
 
-echo "[rq4] Running with machine label: $MACHINE_LABEL"
-python "Paper Results/run_rq4_experiments.py" --machine-label "$MACHINE_LABEL"
+# os.cpu_count() reports every core of the node, not the cores Slurm granted,
+# so the worker count must follow the allocation. Otherwise the runner starts
+# six simulations on however few cores the job actually owns.
+WORKERS="${SLURM_CPUS_PER_TASK:-1}"
+
+echo "[rq4] Running with machine label: $MACHINE_LABEL and $WORKERS worker(s)"
+python "Paper Results/run_rq4_experiments.py" --machine-label "$MACHINE_LABEL" --workers "$WORKERS"
 
 echo "[rq4] Done. Results in Paper Results/RQ4/runs.csv"

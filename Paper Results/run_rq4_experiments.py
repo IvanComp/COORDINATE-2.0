@@ -195,8 +195,10 @@ def build_campaign_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 seen[key] = len(conditions)
                 conditions.append((slice_name, *key))
 
+        # The nominal point is the value shared by the three extended sweeps, so
+        # it carries their combined slice label and appears in every panel.
         for value in selected_sim_days(args):
-            add_condition("nominal", sim_days=value)
+            add_condition("workload,fleet,topology_size", sim_days=value)
         coord_labels = selected_coord_labels(args)
         repetitions = args.repetitions
 

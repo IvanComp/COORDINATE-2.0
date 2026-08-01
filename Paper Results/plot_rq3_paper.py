@@ -41,14 +41,14 @@ NOMINAL_TOPOLOGY = "ring25"
 
 SWEEPS = (
     ("workload", "item_spawning_time", [90, 120, 150, 180, 210, 240, 270, 300], r"$T_{spawn}$ [sec]"),
-    ("security", "malicious_pct", [0, 20, 40, 60, 80, 100], r"$N_{mal}/N_{bot}$ [%]"),
+    ("security", "malicious_pct", [0, 20, 40, 60, 80, 100], r"$N_{mal}/N_{agent}$ [%]"),
     ("reliability", "fail_prob_pct", list(range(1, 11)), r"$F_{agent}$ [%]"),
     ("communication", "msg_loss_pct", list(range(1, 11)), r"$F_{msg}$ [%]"),
 )
 
 TABLE_SWEEPS = (
     ("workload", "item_spawning_time", None, r"$T_{spawn}$", " s"),
-    ("security", "malicious_pct", None, r"$N_{mal}/N_{bot}$", "%"),
+    ("security", "malicious_pct", None, r"$N_{mal}/N_{agent}$", "%"),
     ("reliability", "fail_prob_pct", None, r"$F_{agent}$", "%"),
     ("communication", "msg_loss_pct", None, r"$F_{msg}$", "%"),
 )
