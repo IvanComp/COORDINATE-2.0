@@ -32,7 +32,7 @@ FD_POLICY_VERSION = "legacy-local-retry-v7"
 TOPOLOGIES = (("mesh25", "Mesh"), ("ring25", "Ring"), ("tree25", "Tree"))
 SWEEPS = (
     ("workload", "item_spawning_time", [90, 120, 150, 180, 210, 240, 270, 300], r"$T_{spawn}$ [sec]"),
-    ("security", "malicious_pct", [0, 20, 40, 60, 80, 100], r"$N_{mal}/N_{agent}$ [%]"),
+    ("security", "malicious_pct", [0, 20, 40, 60, 80, 100], r"$N_{malicious}/N_{agent}$ [%]"),
     ("reliability", "fail_prob_pct", list(range(1, 11)), r"$F_{agent}$ [%]"),
     ("communication", "msg_loss_pct", list(range(1, 11)), r"$F_{msg}$ [%]"),
 )
@@ -138,4 +138,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
