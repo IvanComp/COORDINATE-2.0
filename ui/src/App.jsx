@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Typography, Slider, Button, CircularProgress, Paper, Alert, Snackbar, IconButton, Tooltip } from '@mui/material';
-import { GitHub, CheckCircle, Close, Flag } from '@mui/icons-material';
+import { GitHub, CheckCircle, Close, Flag, ShieldOutlined } from '@mui/icons-material';
 import ConfigForm from './ConfigForm';
 import Visualizer from './Visualizer';
 import StatsPanel from './StatsPanel';
@@ -9,6 +9,7 @@ import EventLog from './EventLog';
 import AnimatedRobots from './AnimatedRobots';
 import RobotStudio from './RobotStudio';
 import AnalyticsModal from './AnalyticsModal';
+import { PRIVACY_SCENARIO } from './scenarios';
 import axios from 'axios';
 
 const API_BASE = '/api';
@@ -42,6 +43,13 @@ function App() {
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [activeScenario, setActiveScenario] = useState(null);
+  const [scenarioLoadKey, setScenarioLoadKey] = useState(0);
+
+  const handleScenarioSelect = (scenario) => {
+    setActiveScenario(scenario);
+    setScenarioLoadKey((key) => key + 1);
+  };
 
   // MOCK LOGS FOR VERIFICATION - Disabled for production/homepage view
   /*
@@ -420,6 +428,32 @@ function App() {
               <GitHub fontSize="small" />
               <Typography variant="caption" sx={{ fontFamily: 'monospace', lineHeight: 1 }}>v1.0.1</Typography>
             </Box>
+
+            <Button
+              variant="contained"
+              startIcon={<ShieldOutlined />}
+              onClick={() => handleScenarioSelect(PRIVACY_SCENARIO)}
+              sx={{
+                position: 'absolute',
+                left: 16,
+                bottom: 16,
+                zIndex: 2,
+                px: 2,
+                py: 1,
+                color: '#fff',
+                bgcolor: 'rgba(25, 118, 210, 0.82)',
+                border: '1px solid rgba(255, 255, 255, 0.22)',
+                backdropFilter: 'blur(10px)',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.28)',
+                textTransform: 'none',
+                fontWeight: 700,
+                '&:hover': {
+                  bgcolor: 'rgba(25, 118, 210, 1)'
+                }
+              }}
+            >
+              Scenario Privacy
+            </Button>
           </>
         )}
 
@@ -435,7 +469,13 @@ function App() {
         )}
 
         {/* Config Panel Overlay */}
-        <ConfigForm onRun={handleRun} loading={loading} hasSimulation={hasSimulation} />
+        <ConfigForm
+          onRun={handleRun}
+          loading={loading}
+          hasSimulation={hasSimulation}
+          scenario={activeScenario}
+          scenarioLoadKey={scenarioLoadKey}
+        />
 
         {/* Top-Left Container (Stats, Legend, Event Log) */}
         {hasSimulation && (

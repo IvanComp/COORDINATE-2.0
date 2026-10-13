@@ -260,7 +260,7 @@ function assertConnected(roomCount, edges) {
     }
 }
 
-function ConfigForm({ onRun, loading, hasSimulation = false }) {
+function ConfigForm({ onRun, loading, hasSimulation = false, scenario = null, scenarioLoadKey = 0 }) {
     const [config, setConfig] = useState(DEFAULTS);
     const [topologies, setTopologies] = useState([]);
     const [expanded, setExpanded] = useState(true);
@@ -283,6 +283,23 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
     useEffect(() => {
         setExpanded(!hasSimulation);
     }, [hasSimulation]);
+
+    useEffect(() => {
+        if (!scenario || scenarioLoadKey === 0) return;
+        setConfig({
+            ...DEFAULTS,
+            ...scenario.config,
+            IMPORTANCE_PROBABILITIES: [...scenario.config.IMPORTANCE_PROBABILITIES],
+            EXPIRATION_TIME: [...scenario.config.EXPIRATION_TIME],
+            EXPIRATION_DISTR: [...scenario.config.EXPIRATION_DISTR],
+            PRIVACY_COMM_TIME_BONUS: [...scenario.config.PRIVACY_COMM_TIME_BONUS],
+            PRIVACY_COMP_TIME_BONUS: [...scenario.config.PRIVACY_COMP_TIME_BONUS],
+            PHASES: [...scenario.config.PHASES],
+        });
+        setActiveTab('task');
+        setExpanded(true);
+        setFormError('');
+    }, [scenario, scenarioLoadKey]);
 
     const handleChange = (field, value) => {
         if (field === 'N_ROOMS' && value === CUSTOM_ROOM_VALUE) {
@@ -573,6 +590,20 @@ function ConfigForm({ onRun, loading, hasSimulation = false }) {
 
             <Collapse in={expanded}>
                 <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {scenario && config.SCENARIO_ID === scenario.id && (
+                        <Alert
+                            severity="info"
+                            sx={{
+                                bgcolor: 'rgba(25, 118, 210, 0.16)',
+                                color: '#fff',
+                                border: '1px solid rgba(144, 202, 249, 0.35)',
+                                '& .MuiAlert-icon': { color: '#90caf9' }
+                            }}
+                        >
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{scenario.label}</Typography>
+                            <Typography variant="caption">{scenario.description}</Typography>
+                        </Alert>
+                    )}
                     <Tabs
                         value={activeTab}
                         onChange={(_, v) => setActiveTab(v)}
