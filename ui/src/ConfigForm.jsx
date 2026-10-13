@@ -590,20 +590,6 @@ function ConfigForm({ onRun, loading, hasSimulation = false, scenario = null, sc
 
             <Collapse in={expanded}>
                 <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {scenario && config.SCENARIO_ID === scenario.id && (
-                        <Alert
-                            severity="info"
-                            sx={{
-                                bgcolor: 'rgba(25, 118, 210, 0.16)',
-                                color: '#fff',
-                                border: '1px solid rgba(144, 202, 249, 0.35)',
-                                '& .MuiAlert-icon': { color: '#90caf9' }
-                            }}
-                        >
-                            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{scenario.label}</Typography>
-                            <Typography variant="caption">{scenario.description}</Typography>
-                        </Alert>
-                    )}
                     <Tabs
                         value={activeTab}
                         onChange={(_, v) => setActiveTab(v)}
