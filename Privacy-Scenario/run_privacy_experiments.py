@@ -208,7 +208,8 @@ def build_summary(rows):
         for metric in metric_names:
             values = [numeric(row.get(metric)) for row in group]
             values = [value for value in values if not math.isnan(value)]
-            record[f'avg_{metric}'] = mean(values) if values else ''
+            summary_metric = metric if metric.startswith('avg_') else f'avg_{metric}'
+            record[summary_metric] = mean(values) if values else ''
         summary.append(record)
     return summary
 

@@ -70,6 +70,8 @@ Full campaigns write to `Privacy-Scenario/results/`:
 
 Smoke campaigns use `Privacy-Scenario/results/smoke/` and cannot cause full runs to be skipped.
 
+`regenerate_privacy_plots.ipynb` preserves the existing table and grayscale chart style while comparing `None`, `Encryption`, `Obfuscation`, and `Combined`. It uses full campaign results when available and otherwise falls back to smoke results.
+
 ## Leonardo
 
 Create the environment once, then submit from the repository root:
