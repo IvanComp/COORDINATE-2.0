@@ -84,7 +84,7 @@ class PrivacyRuntime:
     def _mask(self, destination):
         destination = int(destination)
         if destination not in self.destination_to_mask:
-            masked = str(self.hash_string(str(destination)))
+            masked = str(self.hash_string(f'destination:{destination:08d}'))
             self.destination_to_mask[destination] = masked
             self.mask_to_destination[masked] = destination
         return self.destination_to_mask[destination]

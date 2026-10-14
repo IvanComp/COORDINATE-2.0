@@ -48,6 +48,14 @@ class PrivacyTechniquesTest(unittest.TestCase):
         self.assertEqual(runtime.summary()['adversary_success_rate'], '')
         self.assertGreater(runtime.summary()['expected_distance_error'], 0.0)
 
+    def test_obfuscated_destinations_remain_distinct(self):
+        topology = {node: [] for node in range(25)}
+        runtime = PrivacyRuntime(config(obfuscation=True), topology, 0)
+        masks = [runtime._mask(destination) for destination in topology]
+        self.assertEqual(len(set(masks)), len(topology))
+        for destination in topology:
+            runtime.transmit(0.0, 'assignment', 'coordinator', 'agent:1', destination)
+
     def test_combined_condition_writes_both_metrics(self):
         runtime = PrivacyRuntime(config(encryption=True, obfuscation=True), self.topology, 0)
         runtime.transmit(0.0, 'assignment', 'coordinator', 'agent:1', 2)
