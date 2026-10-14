@@ -4,6 +4,7 @@
 
 import os, sys, random, queue, numpy as np
 from typing import List, Dict, Optional
+from .privacy_techniques import PrivacyRuntime
 
 # A thin read-only config holder (dict-like access with attributes).
 class Cfg:
@@ -373,6 +374,26 @@ class Robot:
             self.dropItem(simTime)
         eff_comp_time = self._effective_comp_time(item)
         eff_comm_time = self._effective_comm_time(item)
+        privacy_delay = 0.0
+        if self.cfg.current_architecture == 'semi-decentralized':
+            privacy_delay = self.space.transmitCoordinationMessage(
+                simTime,
+                'task_assignment',
+                f'peer:{self.getIdx()}',
+                f'agent:{self.getIdx()}',
+                item.getTarget(),
+                {'item_id': item.getIdx(), 'importance': item.getImportance()},
+            )
+        elif 'centralized-' in self.cfg.current_architecture:
+            privacy_delay = self.space.transmitCoordinationMessage(
+                simTime,
+                'task_assignment',
+                'coordinator',
+                f'agent:{self.getIdx()}',
+                item.getTarget(),
+                {'item_id': item.getIdx(), 'importance': item.getImportance()},
+            )
+        eff_comm_time += privacy_delay
         # Pay computation/communication costs depending on mechanism
         if self.cfg.current_architecture == 'semi-decentralized':
             avg = [self.cfg.LOAD_TIME, eff_comp_time, self.cfg.MOVEMENT_TIME, eff_comm_time, self.cfg.DROP_TIME]
@@ -692,11 +713,23 @@ class Space:
             'coordinator_failures': 0,
             'queue_delay_s': 0.0,
         }
+        self.privacy = PrivacyRuntime(cfg, connection_dict, self.source.getIdx())
 
     def getSource(self): return self.source
     def getRooms(self): return self.rooms
     def getClock(self): return self.clock
     def getAllRobots(self): return list(self.robotPositionDict.keys())
+
+    def transmitCoordinationMessage(self, simTime, messageType, sender, receiver, destination, fields=None):
+        destination_id = destination.getIdx() if hasattr(destination, 'getIdx') else int(destination)
+        return self.privacy.transmit(
+            simTime,
+            messageType,
+            sender,
+            receiver,
+            destination_id,
+            fields,
+        )
 
     def nextFDInspectionRoom(self, robot: Robot) -> Optional[Room]:
         """Return the next room in a shared, capacity-limited FD patrol."""
@@ -778,9 +811,17 @@ class Space:
             'position': position,
             'fake': fake,
         }
+        privacy_delay = self.transmitCoordinationMessage(
+            simTime,
+            'peer_rescue_request',
+            f'agent:{requester.getIdx()}',
+            f'agent:{helper.getIdx()}',
+            position,
+            {'importance': itemImportance, 'fake': bool(fake)},
+        )
         self.clock.scheduleEvent(
             f'peer-rescue-{rescue_id}',
-            [self.cfg.COMM_TIME],
+            [self.cfg.COMM_TIME + privacy_delay],
             [self.cfg.COMM_TRACE],
             [self.cfg.COMM_DISTR],
         )
@@ -820,9 +861,17 @@ class Space:
         self.central_coordination_stats['requests'] += 1
         if self.cfg.LOG_HELP and not fake:
             requester._log(simTime, 'centralRequest')
+        privacy_delay = self.transmitCoordinationMessage(
+            simTime,
+            'central_rescue_request',
+            f'agent:{requester.getIdx()}',
+            'coordinator',
+            position,
+            {'importance': itemImportance, 'fake': bool(fake)},
+        )
         self.clock.scheduleEvent(
             f'central-request-{request_id}',
-            [self.cfg.COMM_TIME],
+            [self.cfg.COMM_TIME + privacy_delay],
             [self.cfg.COMM_TRACE],
             [self.cfg.COMM_DISTR],
         )
@@ -931,9 +980,17 @@ class Space:
             'fake': request['fake'],
         }
         self.central_coordination_stats['commands_sent'] += 1
+        privacy_delay = self.transmitCoordinationMessage(
+            simTime,
+            'central_rescue_command',
+            'coordinator',
+            f'agent:{helper.getIdx()}',
+            request['position'],
+            {'importance': request['importance'], 'fake': bool(request['fake'])},
+        )
         self.clock.scheduleEvent(
             f'central-command-{request_id}',
-            [self.cfg.COMM_TIME],
+            [self.cfg.COMM_TIME + privacy_delay],
             [self.cfg.COMM_TRACE],
             [self.cfg.COMM_DISTR],
         )

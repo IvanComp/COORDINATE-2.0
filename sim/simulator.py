@@ -119,6 +119,10 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('EXPIRATION_DISTR', ['exponential', 'exponential', 'exponential'])
     d.setdefault('PRIVACY_COMM_TIME_BONUS', [0.0, 0.0, 0.0])
     d.setdefault('PRIVACY_COMP_TIME_BONUS', [0.0, 0.0, 0.0])
+    d.setdefault('PRIVACY_METRICS_ENABLED', False)
+    d.setdefault('PRIVACY_ENCRYPTION_ENABLED', False)
+    d.setdefault('PRIVACY_OBFUSCATION_ENABLED', False)
+    d.setdefault('PRIVACY_LINK_BYTES_PER_SECOND', 125000.0)
     # Centralized coordination has finite decision capacity; FD patrols are a
     # bounded shared resource rather than a free inspection loop per robot.
     d.setdefault('COORDINATOR_SERVICE_TIME', 0.25)
@@ -478,6 +482,13 @@ def run(config_path='config.json'):
                    'dynamic-adaptation']
     if cfg.ARCHITECTURE not in valid_archs:
         print('Unsupported architecture:', cfg.ARCHITECTURE); sys.exit(-1)
+    privacy_scenario_enabled = (
+        cfg.PRIVACY_METRICS_ENABLED
+        or cfg.PRIVACY_ENCRYPTION_ENABLED
+        or cfg.PRIVACY_OBFUSCATION_ENABLED
+    )
+    if privacy_scenario_enabled and cfg.ARCHITECTURE == 'dynamic-adaptation':
+        raise ValueError('The privacy scenario supports only static coordination mechanisms.')
     
     # Initialize RTLola monitor for dynamic-adaptation
     rtlola_monitor = None
@@ -1183,6 +1194,7 @@ def run(config_path='config.json'):
     wall_time = time.time() - start_wall
     _log_sim_time(cfg, wall_time)
     _sort_events_csv_by_time(logfile)
+    space.privacy.write(logfile)
     
     # Log adaptation overhead statistics
     log_overhead_statistics(

@@ -1,89 +1,81 @@
-# Privacy Scenario Replication Package
+# Privacy Scenario
 
-This folder is a standalone replication package for the privacy-aware case study used in the paper currently under revision for the **20th European Conference on Software Architecture (ECSA 2026)**.
+This campaign compares the three static coordination mechanisms:
 
-The package reproduces the experimental comparison among the three coordination mechanisms discussed in the paper:
+- `CE`: Centralized
+- `SD`: Semi-Decentralized
+- `FD`: Decentralized
 
-- `Centralized`
-- `Semi-Decentralized`
-- `Decentralized`
+Dynamic Adaptation is excluded. Each mechanism is evaluated under four conditions:
 
-The study investigates how privacy-sensitive coordination affects architectural trade-offs in a cyber-physical indoor delivery system. In particular, it evaluates how increasing privacy-related communication overhead changes latency, success rate, expiration rate, and privacy-induced communication cost under different workload conditions.
+- no privacy technique
+- encryption
+- data obfuscation
+- encryption and data obfuscation together
 
-## Standalone Replication Package
+## Implementation
 
-This folder is self-contained and can be moved outside the main repository to reproduce the privacy-aware experiments from the command line.
+Encryption uses Fernet from `cryptography` on coordination messages. Data obfuscation uses `msticpy.data.data_obfus.hash_string` on the transmitted destination. The authorized receiver restores the original destination through a run-local mapping.
 
-### Minimal contents
+Every modeled coordination message executes the selected library operations. The simulator adds the measured encryption, decryption, obfuscation, and restoration time to the simulated communication delay. It also adds the transmission cost of payload expansion at the configured `PRIVACY_LINK_BYTES_PER_SECOND`.
 
-- `run_privacy_scenario.py`: main experiment runner
-- `run_privacy_scenario.sh`: shell wrapper
-- `sim/`: local copy of the simulator modules required by the runner
-- `requirements.txt`: Python dependencies for the replication package
-- `configs/`, `raw_logs/`, `results/`, `plots/`: generated artifacts
-- `privacy_case_study_section.tex`: LaTeX section used to report the case study in the paper draft
+The observers are separate:
 
-### How to run
+- the communication observer reads the wire payload and provides `adversary_success_rate` for encryption conditions;
+- the data observer reads the decrypted payload before authorized restoration and provides `expected_distance_error` for obfuscation conditions.
 
-```bash
-cd Privacy-Scenario
-python3 -m pip install -r requirements.txt
-python3 run_privacy_scenario.py
-```
+Expected Distance Error is measured in shortest-path hops between the estimated and actual destination. When a destination is protected, the observer uses the topology medoid as its prior estimate.
 
-or equivalently:
+## Install
 
 ```bash
-cd Privacy-Scenario
-./run_privacy_scenario.sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-### Useful options
+## Run
+
+The default campaign executes 180 runs: 3 mechanisms, 4 technique conditions, 3 workloads, and 5 repetitions.
 
 ```bash
-python3 run_privacy_scenario.py --repetitions 3
-python3 run_privacy_scenario.py --skip-plots
-python3 run_privacy_scenario.py --skip-report
+./Privacy-Scenario/run_privacy_experiments.sh
 ```
 
-`--skip-plots` is useful if the goal is only to regenerate CSV results quickly.
+A short validation campaign is available with:
 
-## Case Study Summary
+```bash
+./Privacy-Scenario/run_privacy_experiments.sh --smoke --fail-fast
+```
 
-This package contains a privacy-aware experimental campaign in which:
+Useful selections include:
 
-- medium- and high-priority items are treated as privacy-sensitive;
-- privacy-sensitive items incur additional communication overhead;
-- the comparison shows how privacy can reduce the advantage of mechanisms that rely more heavily on coordination exchanges.
+```bash
+./Privacy-Scenario/run_privacy_experiments.sh --repetitions 10
+./Privacy-Scenario/run_privacy_experiments.sh --architectures CE,SD
+./Privacy-Scenario/run_privacy_experiments.sh --techniques encryption,combined
+./Privacy-Scenario/run_privacy_experiments.sh --workloads medium
+```
 
-## Experimental Setup
+Completed runs are skipped unless `--force` is supplied. Seeds are paired across mechanisms and technique conditions for each workload and repetition.
 
-- Topology: `mesh25`
-- Number of agents: `12`
-- Simulation window: `3600 s`
-- Repetitions per condition: `5` by default
-- Workload: low, medium, high
-- Privacy levels: low, medium, high
-- Compared architectures:
-  - `Centralized`
-  - `Semi-Decentralized`
-  - `Decentralized`
+## Outputs
 
-Privacy overhead is modeled through:
+Full campaigns write to `Privacy-Scenario/results/`:
 
-- **Low**: `PRIVACY_COMM_TIME_BONUS = [0, 1, 2]`
-- **Medium**: `PRIVACY_COMM_TIME_BONUS = [0, 5, 10]`
-- **High**: `PRIVACY_COMM_TIME_BONUS = [0, 20, 40]`
+- `privacy_runs.csv`: one row per run
+- `privacy_summary.csv`: averages by mechanism, technique condition, and workload
+- `campaign_metadata.json`: campaign parameters and environment
+- `configs/`: exact configuration for each run
+- `raw_logs/`: simulator events and per-message privacy measurements
 
-## Produced Outputs
+Smoke campaigns use `Privacy-Scenario/results/smoke/` and cannot cause full runs to be skipped.
 
-Running the package generates:
+## Leonardo
 
-- `results/privacy_scenario_raw_runs.csv`: one row per run
-- `results/privacy_scenario_summary.csv`: averaged summary by condition
-- `results/privacy_scenario_winners.csv`: winning mechanism by condition and metric
-- `plots/*.pdf` and `plots/*.png`: paper-ready plots
+Create the environment once, then submit from the repository root:
 
-## Notes
+```bash
+./scripts/submit_privacy_scenario.sh
+```
 
-This package is intended to support replication, inspection, and parameter tuning during the revision process. The script can be re-executed after adjusting repetitions or scenario parameters in order to regenerate the reported results.
+Additional runner options can be passed after the script name.

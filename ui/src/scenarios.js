@@ -1,7 +1,6 @@
 export const PRIVACY_SCENARIO = {
     id: 'privacy',
     label: 'Scenario Privacy',
-    description: 'Privacy-sensitive tasks add communication and computation overhead according to their priority.',
     config: {
         SCENARIO_ID: 'privacy',
         RESULTS_DIR: 'results/privacy-scenario',
@@ -41,8 +40,12 @@ export const PRIVACY_SCENARIO = {
         RECOVERY_TIME: 300.0,
         RECOVERY_DISTR: 'exponential',
         RECOVERY_TRACE: '_',
-        PRIVACY_COMM_TIME_BONUS: [0.0, 5.0, 10.0],
-        PRIVACY_COMP_TIME_BONUS: [0.0, 0.20, 0.50],
+        PRIVACY_COMM_TIME_BONUS: [0.0, 0.0, 0.0],
+        PRIVACY_COMP_TIME_BONUS: [0.0, 0.0, 0.0],
+        PRIVACY_METRICS_ENABLED: true,
+        PRIVACY_ENCRYPTION_ENABLED: false,
+        PRIVACY_OBFUSCATION_ENABLED: false,
+        PRIVACY_LINK_BYTES_PER_SECOND: 125000.0,
         PHASES: [],
         LOG_ITEM: true,
         LOG_DELIVERY: true,

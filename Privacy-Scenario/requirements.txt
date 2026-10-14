@@ -2,3 +2,5 @@ numpy
 pandas
 matplotlib
 Pillow
+cryptography>=43.0
+msticpy>=3.0

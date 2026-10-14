@@ -74,6 +74,10 @@ const DEFAULTS = {
     COMP_TIME: 0.1, COMP_DISTR: "exponential", COMP_TRACE: "_",
     COMM_TIME: 0.03, COMM_DISTR: "exponential", COMM_TRACE: "_",
     RECOVERY_TIME: 1800.0, RECOVERY_DISTR: "exponential", RECOVERY_TRACE: "_",
+    PRIVACY_METRICS_ENABLED: false,
+    PRIVACY_ENCRYPTION_ENABLED: false,
+    PRIVACY_OBFUSCATION_ENABLED: false,
+    PRIVACY_LINK_BYTES_PER_SECOND: 125000.0,
     PHASES: [],
     LOG_ITEM: true,
     LOG_DELIVERY: true,
@@ -707,6 +711,35 @@ function ConfigForm({ onRun, loading, hasSimulation = false, scenario = null, sc
                     {activeTab === 'runtime' && (
                         <>
 
+                    {config.SCENARIO_ID === 'privacy' && (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                            <Typography variant="subtitle2" sx={{ color: '#fff', fontWeight: 700 }}>
+                                Privacy Techniques
+                            </Typography>
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={Boolean(config.PRIVACY_ENCRYPTION_ENABLED)}
+                                        onChange={(e) => handleChange('PRIVACY_ENCRYPTION_ENABLED', e.target.checked)}
+                                    />
+                                }
+                                label="Encryption"
+                                sx={{ color: '#fff', m: 0 }}
+                            />
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={Boolean(config.PRIVACY_OBFUSCATION_ENABLED)}
+                                        onChange={(e) => handleChange('PRIVACY_OBFUSCATION_ENABLED', e.target.checked)}
+                                    />
+                                }
+                                label="Data Obfuscation"
+                                sx={{ color: '#fff', m: 0 }}
+                            />
+                            <Divider sx={{ borderColor: 'rgba(255,255,255,0.15)' }} />
+                        </Box>
+                    )}
+
                     <FormControl fullWidth size="small" sx={{
                         '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.7)' },
                         '& .MuiInputLabel-root.Mui-focused': { color: '#fff' },
@@ -731,7 +764,11 @@ function ConfigForm({ onRun, loading, hasSimulation = false, scenario = null, sc
                             label="Coordination Mechanism"
                             onChange={(e) => handleChange('ARCHITECTURE', e.target.value)}
                         >
-                            {ARCHITECTURES.map(a => (
+                            {ARCHITECTURES.filter(a => config.SCENARIO_ID !== 'privacy' || [
+                                'decentralized',
+                                'semi-decentralized',
+                                'centralized-impprox',
+                            ].includes(a)).map(a => (
                                 <MenuItem
                                     key={a}
                                     value={a}
