@@ -1,0 +1,60 @@
+\begin{table*}[!t]
+\centering
+\caption{Overhead introduced by the privacy techniques under different topology, workload, and coordination conditions.}
+\label{tab:privacy_overhead}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lllccc ccc}
+\toprule
+\multirow{2}{*}{\textbf{Topology}} & \multirow{2}{*}{\textbf{Workload}} & \multirow{2}{*}{\textbf{Privacy}}
+& \multicolumn{3}{c}{\textbf{Added Delay (sec.)}} & \multicolumn{3}{c}{\textbf{Processing Time (ms)}} \\
+\cmidrule(lr){4-6}
+\cmidrule(lr){7-9}
+& & & \textbf{CE} & \textbf{SD} & \textbf{FD} & \textbf{CE} & \textbf{SD} & \textbf{FD} \\
+\midrule
+\multirow{12}{*}{Mesh} & \multirow{4}{*}{Low} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.03 & 0.02 & \cellcolor[gray]{0.70}0.00 & 1.38 & 0.64 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.00 & 0.00 & \cellcolor[gray]{0.70}0.00 & 0.10 & 0.16 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.03 & 0.03 & \cellcolor[gray]{0.70}0.00 & 0.91 & 1.88 & \cellcolor[gray]{0.70}0.00 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{Medium} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.05 & 0.05 & \cellcolor[gray]{0.70}0.00 & 1.00 & 1.08 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.01 & 0.01 & \cellcolor[gray]{0.70}0.00 & 0.14 & 0.16 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.06 & 0.06 & \cellcolor[gray]{0.70}0.00 & 1.15 & 1.26 & \cellcolor[gray]{0.70}0.00 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{High} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.15 & 0.13 & \cellcolor[gray]{0.70}0.00 & 3.01 & 2.66 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.02 & 0.02 & \cellcolor[gray]{0.70}0.00 & 0.23 & 0.22 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.18 & 0.15 & \cellcolor[gray]{0.70}0.00 & 3.18 & 3.31 & \cellcolor[gray]{0.70}0.00 \\
+\midrule
+\multirow{12}{*}{Ring} & \multirow{4}{*}{Low} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.03 & 0.03 & \cellcolor[gray]{0.70}0.00 & 1.73 & 0.53 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.00 & 0.00 & \cellcolor[gray]{0.70}0.00 & 0.09 & 0.13 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.03 & 0.03 & \cellcolor[gray]{0.70}0.00 & 0.67 & 0.65 & \cellcolor[gray]{0.70}0.00 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{Medium} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.06 & 0.05 & \cellcolor[gray]{0.70}0.00 & 1.19 & 1.74 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.01 & 0.01 & \cellcolor[gray]{0.70}0.00 & 0.21 & 0.12 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.08 & 0.06 & \cellcolor[gray]{0.70}0.00 & 1.47 & 1.11 & \cellcolor[gray]{0.70}0.00 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{High} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.18 & 0.15 & \cellcolor[gray]{0.70}0.00 & 4.12 & 3.02 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.03 & 0.02 & \cellcolor[gray]{0.70}0.00 & 0.21 & 0.20 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.22 & 0.17 & \cellcolor[gray]{0.70}0.00 & 7.47 & 4.30 & \cellcolor[gray]{0.70}0.00 \\
+\midrule
+\multirow{12}{*}{Star} & \multirow{4}{*}{Low} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.02 & 0.02 & \cellcolor[gray]{0.70}0.00 & 0.84 & 0.49 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.00 & 0.00 & \cellcolor[gray]{0.70}0.00 & 0.13 & 0.09 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.02 & 0.03 & \cellcolor[gray]{0.70}0.00 & 0.76 & 0.80 & \cellcolor[gray]{0.70}0.00 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{Medium} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.04 & 0.04 & \cellcolor[gray]{0.70}0.00 & 0.82 & 0.77 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.01 & 0.01 & \cellcolor[gray]{0.70}0.00 & 0.12 & 0.11 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.05 & 0.05 & \cellcolor[gray]{0.70}0.00 & 0.97 & 0.88 & \cellcolor[gray]{0.70}0.00 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{High} & None & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Encryption & 0.12 & 0.14 & \cellcolor[gray]{0.70}0.00 & 2.29 & 2.32 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Obfuscation & 0.02 & 0.02 & \cellcolor[gray]{0.70}0.00 & 0.18 & 0.17 & \cellcolor[gray]{0.70}0.00 \\
+ &  & Combined & 0.15 & 0.16 & \cellcolor[gray]{0.70}0.00 & 2.34 & 2.60 & \cellcolor[gray]{0.70}0.00 \\
+\bottomrule
+\end{tabular}
+\end{table*}

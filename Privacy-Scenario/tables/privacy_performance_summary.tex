@@ -1,0 +1,60 @@
+\begin{table*}[!t]
+\centering
+\caption{Impact of coordination mechanisms on system latency and throughput under different topology, workload, and privacy conditions.}
+\label{tab:privacy_performance}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lllccc ccc}
+\toprule
+\multirow{2}{*}{\textbf{Topology}} & \multirow{2}{*}{\textbf{Workload}} & \multirow{2}{*}{\textbf{Privacy}}
+& \multicolumn{3}{c}{\textbf{Avg. Latency (sec.)}} & \multicolumn{3}{c}{\textbf{Throughput (tasks/hour)}} \\
+\cmidrule(lr){4-6}
+\cmidrule(lr){7-9}
+& & & \textbf{CE} & \textbf{SD} & \textbf{FD} & \textbf{CE} & \textbf{SD} & \textbf{FD} \\
+\midrule
+\multirow{12}{*}{Mesh} & \multirow{4}{*}{Low} & None & 25.77 & \cellcolor[gray]{0.70}25.73 & 36.39 & \cellcolor[gray]{0.70}23.40 & 19.60 & 20.20 \\
+ &  & Encryption & 25.77 & \cellcolor[gray]{0.70}25.73 & 36.39 & \cellcolor[gray]{0.70}23.40 & 19.60 & 20.20 \\
+ &  & Obfuscation & 25.77 & \cellcolor[gray]{0.70}25.73 & 36.39 & \cellcolor[gray]{0.70}23.40 & 19.60 & 20.20 \\
+ &  & Combined & 25.77 & \cellcolor[gray]{0.70}25.73 & 36.39 & \cellcolor[gray]{0.70}23.40 & 19.60 & 20.20 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{Medium} & None & \cellcolor[gray]{0.70}22.26 & 25.55 & 28.47 & 38.00 & \cellcolor[gray]{0.70}40.00 & 38.80 \\
+ &  & Encryption & \cellcolor[gray]{0.70}22.26 & 25.55 & 28.47 & 38.00 & \cellcolor[gray]{0.70}40.00 & 38.80 \\
+ &  & Obfuscation & \cellcolor[gray]{0.70}22.26 & 25.55 & 28.47 & 38.00 & \cellcolor[gray]{0.70}40.00 & 38.80 \\
+ &  & Combined & \cellcolor[gray]{0.70}22.26 & 25.55 & 28.47 & 38.00 & \cellcolor[gray]{0.70}40.00 & 38.80 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{High} & None & \cellcolor[gray]{0.70}24.41 & 27.13 & 28.51 & \cellcolor[gray]{0.70}116.40 & 112.40 & 113.80 \\
+ &  & Encryption & \cellcolor[gray]{0.70}24.42 & 27.13 & 28.51 & \cellcolor[gray]{0.70}116.40 & 112.40 & 113.80 \\
+ &  & Obfuscation & \cellcolor[gray]{0.70}24.41 & 27.13 & 28.51 & \cellcolor[gray]{0.70}116.40 & 112.40 & 113.80 \\
+ &  & Combined & \cellcolor[gray]{0.70}24.42 & 27.13 & 28.51 & \cellcolor[gray]{0.70}116.40 & 112.40 & 113.80 \\
+\midrule
+\multirow{12}{*}{Ring} & \multirow{4}{*}{Low} & None & \cellcolor[gray]{0.70}43.07 & 47.07 & 49.17 & 21.00 & 20.60 & \cellcolor[gray]{0.70}22.20 \\
+ &  & Encryption & \cellcolor[gray]{0.70}43.07 & 47.07 & 49.17 & 21.00 & 20.60 & \cellcolor[gray]{0.70}22.20 \\
+ &  & Obfuscation & \cellcolor[gray]{0.70}43.07 & 47.07 & 49.17 & 21.00 & 20.60 & \cellcolor[gray]{0.70}22.20 \\
+ &  & Combined & \cellcolor[gray]{0.70}43.07 & 47.07 & 49.17 & 21.00 & 20.60 & \cellcolor[gray]{0.70}22.20 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{Medium} & None & \cellcolor[gray]{0.70}36.98 & 55.38 & 52.77 & \cellcolor[gray]{0.70}42.00 & 41.00 & 39.40 \\
+ &  & Encryption & \cellcolor[gray]{0.70}36.98 & 55.39 & 52.77 & \cellcolor[gray]{0.70}42.00 & 41.00 & 39.40 \\
+ &  & Obfuscation & \cellcolor[gray]{0.70}36.98 & 55.39 & 52.77 & \cellcolor[gray]{0.70}42.00 & 41.00 & 39.40 \\
+ &  & Combined & \cellcolor[gray]{0.70}36.98 & 55.39 & 52.77 & \cellcolor[gray]{0.70}42.00 & 41.00 & 39.40 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{High} & None & \cellcolor[gray]{0.70}37.54 & 45.08 & 44.54 & \cellcolor[gray]{0.70}121.80 & 117.80 & 121.40 \\
+ &  & Encryption & \cellcolor[gray]{0.70}38.16 & 45.50 & 44.54 & 118.40 & 112.20 & \cellcolor[gray]{0.70}121.40 \\
+ &  & Obfuscation & \cellcolor[gray]{0.70}37.54 & 43.22 & 44.54 & \cellcolor[gray]{0.70}121.80 & 118.80 & 121.40 \\
+ &  & Combined & \cellcolor[gray]{0.70}38.06 & 45.50 & 44.54 & 119.00 & 112.20 & \cellcolor[gray]{0.70}121.40 \\
+\midrule
+\multirow{12}{*}{Star} & \multirow{4}{*}{Low} & None & \cellcolor[gray]{0.70}7.03 & 7.08 & 7.05 & \cellcolor[gray]{0.70}19.20 & \cellcolor[gray]{0.70}19.20 & \cellcolor[gray]{0.70}19.20 \\
+ &  & Encryption & \cellcolor[gray]{0.70}7.03 & 7.08 & 7.05 & \cellcolor[gray]{0.70}19.20 & \cellcolor[gray]{0.70}19.20 & \cellcolor[gray]{0.70}19.20 \\
+ &  & Obfuscation & \cellcolor[gray]{0.70}7.03 & 7.08 & 7.05 & \cellcolor[gray]{0.70}19.20 & \cellcolor[gray]{0.70}19.20 & \cellcolor[gray]{0.70}19.20 \\
+ &  & Combined & \cellcolor[gray]{0.70}7.03 & 7.08 & 7.05 & \cellcolor[gray]{0.70}19.20 & \cellcolor[gray]{0.70}19.20 & \cellcolor[gray]{0.70}19.20 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{Medium} & None & 7.30 & \cellcolor[gray]{0.70}7.15 & 7.42 & \cellcolor[gray]{0.70}38.60 & 38.20 & 38.00 \\
+ &  & Encryption & 7.30 & \cellcolor[gray]{0.70}7.15 & 7.42 & \cellcolor[gray]{0.70}38.60 & 38.20 & 38.00 \\
+ &  & Obfuscation & 7.30 & \cellcolor[gray]{0.70}7.15 & 7.42 & \cellcolor[gray]{0.70}38.60 & 38.20 & 38.00 \\
+ &  & Combined & 7.30 & \cellcolor[gray]{0.70}7.15 & 7.42 & \cellcolor[gray]{0.70}38.60 & 38.20 & 38.00 \\
+\cmidrule(lr){2-9}
+ & \multirow{4}{*}{High} & None & 6.90 & 7.01 & \cellcolor[gray]{0.70}6.80 & 116.80 & \cellcolor[gray]{0.70}126.20 & 121.40 \\
+ &  & Encryption & 6.90 & 7.01 & \cellcolor[gray]{0.70}6.80 & 116.80 & \cellcolor[gray]{0.70}126.20 & 121.40 \\
+ &  & Obfuscation & 6.90 & 7.01 & \cellcolor[gray]{0.70}6.80 & 116.80 & \cellcolor[gray]{0.70}126.20 & 121.40 \\
+ &  & Combined & 6.90 & 7.01 & \cellcolor[gray]{0.70}6.80 & 116.80 & \cellcolor[gray]{0.70}126.20 & 121.40 \\
+\bottomrule
+\end{tabular}
+\end{table*}
