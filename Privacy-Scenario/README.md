@@ -35,7 +35,7 @@ python3 -m venv .venv
 
 ## Run
 
-The default campaign executes 180 runs: 3 mechanisms, 4 technique conditions, 3 workloads, and 5 repetitions.
+The default campaign executes 540 runs: 3 topologies, 3 mechanisms, 4 technique conditions, 3 workloads, and 5 repetitions.
 
 ```bash
 ./Privacy-Scenario/run_privacy_experiments.sh
@@ -51,12 +51,13 @@ Useful selections include:
 
 ```bash
 ./Privacy-Scenario/run_privacy_experiments.sh --repetitions 10
+./Privacy-Scenario/run_privacy_experiments.sh --topologies ring,star
 ./Privacy-Scenario/run_privacy_experiments.sh --architectures CE,SD
 ./Privacy-Scenario/run_privacy_experiments.sh --techniques encryption,combined
 ./Privacy-Scenario/run_privacy_experiments.sh --workloads medium
 ```
 
-Completed runs are skipped unless `--force` is supplied. Seeds are paired across mechanisms and technique conditions for each workload and repetition.
+Completed runs are skipped unless `--force` is supplied. Existing run identifiers without a topology prefix are retained as Mesh results, so extending an earlier Mesh campaign runs only Ring and Star. Seeds are paired across topologies, mechanisms, and technique conditions for each workload and repetition.
 
 ## Outputs
 

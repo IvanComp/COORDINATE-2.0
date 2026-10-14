@@ -32,6 +32,12 @@ TECHNIQUES = {
     'combined': (True, True),
 }
 
+TOPOLOGIES = {
+    'mesh': 'mesh25',
+    'ring': 'ring25',
+    'star': 'star25',
+}
+
 WORKLOADS = {
     'low': 180.0,
     'medium': 90.0,
@@ -176,7 +182,14 @@ def build_summary(rows):
     for row in rows:
         if row.get('status') != 'ok':
             continue
-        key = (row['architecture_label'], row['architecture'], row['technique'], row['workload'])
+        key = (
+            row['topology_label'],
+            row['topology_name'],
+            row['architecture_label'],
+            row['architecture'],
+            row['technique'],
+            row['workload'],
+        )
         groups.setdefault(key, []).append(row)
     summary = []
     metric_names = [
@@ -199,10 +212,12 @@ def build_summary(rows):
     ]
     for key, group in sorted(groups.items()):
         record = {
-            'architecture_label': key[0],
-            'architecture': key[1],
-            'technique': key[2],
-            'workload': key[3],
+            'topology_label': key[0],
+            'topology_name': key[1],
+            'architecture_label': key[2],
+            'architecture': key[3],
+            'technique': key[4],
+            'workload': key[5],
             'repetitions': len(group),
         }
         for metric in metric_names:
@@ -217,6 +232,7 @@ def build_summary(rows):
 def run_campaign(args):
     architectures = parse_list(args.architectures, ARCHITECTURES)
     techniques = parse_list(args.techniques, TECHNIQUES)
+    topologies = parse_list(args.topologies, TOPOLOGIES)
     workloads = parse_list(args.workloads, WORKLOADS)
     repetitions = 1 if args.smoke else args.repetitions
     sim_time = min(args.sim_time, 300.0) if args.smoke else args.sim_time
@@ -227,91 +243,108 @@ def run_campaign(args):
     summary_path = results_root / 'privacy_summary.csv'
     metadata_path = results_root / 'campaign_metadata.json'
     existing = read_rows(runs_path)
+    for row in existing:
+        row['topology_label'] = row.get('topology_label') or 'mesh'
+        row['topology_name'] = row.get('topology_name') or TOPOLOGIES[row['topology_label']]
     completed = {row['run_id'] for row in existing if row.get('status') == 'ok'}
     rows = [row for row in existing if row.get('run_id')]
-    total = len(architectures) * len(techniques) * len(workloads) * repetitions
+    total = len(topologies) * len(architectures) * len(techniques) * len(workloads) * repetitions
     current = 0
-    for workload_index, workload in enumerate(workloads):
-        for repetition in range(1, repetitions + 1):
-            seed = args.seed + workload_index * 1000 + repetition
-            for architecture_label in architectures:
-                architecture = ARCHITECTURES[architecture_label]
-                for technique in techniques:
-                    current += 1
-                    run_id = f'{workload}__{architecture_label}__{technique}__r{repetition}'
-                    if run_id in completed and not args.force:
-                        print(f'[{current}/{total}] skip {run_id}', flush=True)
-                        continue
-                    print(f'[{current}/{total}] run {run_id}', flush=True)
-                    run_dir = raw_root / run_id
-                    config_path = config_root / f'{run_id}.json'
-                    logfile = run_dir / 'simulation_log.csv'
-                    encryption, obfuscation = TECHNIQUES[technique]
-                    config = {
-                        **BASE_CONFIG,
-                        'SIM_TIME': sim_time,
-                        'ARCHITECTURE': architecture,
-                        'ITEM_SPAWNING_TIME': WORKLOADS[workload],
-                        'RANDOM_SEED': seed,
-                        'PRIVACY_ENCRYPTION_ENABLED': encryption,
-                        'PRIVACY_OBFUSCATION_ENABLED': obfuscation,
-                        'PRIVACY_LINK_BYTES_PER_SECOND': args.link_bytes_per_second,
-                        'RESULTS_DIR': str(run_dir),
-                        'LOGFILE': str(logfile),
-                        'SIMTIME_LOGFILE': str(run_dir / 'sim_time.csv'),
-                    }
-                    config_path.parent.mkdir(parents=True, exist_ok=True)
-                    run_dir.mkdir(parents=True, exist_ok=True)
-                    config_path.write_text(json.dumps(config, indent=2))
-                    rows = [row for row in rows if row.get('run_id') != run_id]
-                    try:
-                        _, wall_time, event_count = simulator.run(str(config_path))
-                        operational = analyze_log(logfile, sim_time)
-                        privacy = read_single_row(logfile.with_name('simulation_log_privacy_summary.csv'))
-                        row = {
-                            'run_id': run_id,
-                            'status': 'ok',
-                            'architecture_label': architecture_label,
-                            'workload': workload,
-                            'item_spawning_time_s': WORKLOADS[workload],
-                            'repetition': repetition,
-                            'random_seed': seed,
-                            'sim_time_s': sim_time,
-                            **operational,
-                            **privacy,
-                            'architecture': architecture,
-                            'technique': technique,
-                            'wall_time_s': wall_time,
-                            'event_count': event_count,
-                            'error': '',
+    for topology_label in topologies:
+        topology_name = TOPOLOGIES[topology_label]
+        for workload_index, workload in enumerate(workloads):
+            for repetition in range(1, repetitions + 1):
+                seed = args.seed + workload_index * 1000 + repetition
+                for architecture_label in architectures:
+                    architecture = ARCHITECTURES[architecture_label]
+                    for technique in techniques:
+                        current += 1
+                        legacy_run_id = f'{workload}__{architecture_label}__{technique}__r{repetition}'
+                        run_id = legacy_run_id if topology_label == 'mesh' else f'{topology_label}__{legacy_run_id}'
+                        if run_id in completed and not args.force:
+                            print(f'[{current}/{total}] skip {run_id}', flush=True)
+                            continue
+                        print(f'[{current}/{total}] run {run_id}', flush=True)
+                        run_dir = raw_root / run_id
+                        config_path = config_root / f'{run_id}.json'
+                        logfile = run_dir / 'simulation_log.csv'
+                        encryption, obfuscation = TECHNIQUES[technique]
+                        config = {
+                            **BASE_CONFIG,
+                            'SIM_TIME': sim_time,
+                            'TOPOLOGY_NAME': topology_name,
+                            'ARCHITECTURE': architecture,
+                            'ITEM_SPAWNING_TIME': WORKLOADS[workload],
+                            'RANDOM_SEED': seed,
+                            'PRIVACY_ENCRYPTION_ENABLED': encryption,
+                            'PRIVACY_OBFUSCATION_ENABLED': obfuscation,
+                            'PRIVACY_LINK_BYTES_PER_SECOND': args.link_bytes_per_second,
+                            'RESULTS_DIR': str(run_dir),
+                            'LOGFILE': str(logfile),
+                            'SIMTIME_LOGFILE': str(run_dir / 'sim_time.csv'),
                         }
-                    except Exception as exc:
-                        row = {
-                            'run_id': run_id,
-                            'status': 'error',
-                            'architecture_label': architecture_label,
-                            'architecture': architecture,
-                            'technique': technique,
-                            'workload': workload,
-                            'repetition': repetition,
-                            'random_seed': seed,
-                            'sim_time_s': sim_time,
-                            'error': str(exc),
-                        }
+                        config_path.parent.mkdir(parents=True, exist_ok=True)
+                        run_dir.mkdir(parents=True, exist_ok=True)
+                        config_path.write_text(json.dumps(config, indent=2))
+                        rows = [row for row in rows if row.get('run_id') != run_id]
+                        try:
+                            _, wall_time, event_count = simulator.run(str(config_path))
+                            operational = analyze_log(logfile, sim_time)
+                            privacy = read_single_row(logfile.with_name('simulation_log_privacy_summary.csv'))
+                            row = {
+                                'run_id': run_id,
+                                'status': 'ok',
+                                'topology_label': topology_label,
+                                'topology_name': topology_name,
+                                'architecture_label': architecture_label,
+                                'workload': workload,
+                                'item_spawning_time_s': WORKLOADS[workload],
+                                'repetition': repetition,
+                                'random_seed': seed,
+                                'sim_time_s': sim_time,
+                                **operational,
+                                **privacy,
+                                'architecture': architecture,
+                                'technique': technique,
+                                'wall_time_s': wall_time,
+                                'event_count': event_count,
+                                'error': '',
+                            }
+                        except Exception as exc:
+                            row = {
+                                'run_id': run_id,
+                                'status': 'error',
+                                'topology_label': topology_label,
+                                'topology_name': topology_name,
+                                'architecture_label': architecture_label,
+                                'architecture': architecture,
+                                'technique': technique,
+                                'workload': workload,
+                                'repetition': repetition,
+                                'random_seed': seed,
+                                'sim_time_s': sim_time,
+                                'error': str(exc),
+                            }
+                            rows.append(row)
+                            write_rows(runs_path, rows)
+                            if args.fail_fast:
+                                raise
+                            continue
                         rows.append(row)
                         write_rows(runs_path, rows)
-                        if args.fail_fast:
-                            raise
-                        continue
-                    rows.append(row)
-                    write_rows(runs_path, rows)
-                    write_rows(summary_path, build_summary(rows))
+                        write_rows(summary_path, build_summary(rows))
     metadata = {
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'python_version': platform.python_version(),
         'platform': platform.platform(),
         'architectures': architectures,
         'techniques': techniques,
+        'topologies': [
+            topology
+            for topology in TOPOLOGIES
+            if any(row.get('status') == 'ok' and row.get('topology_label') == topology for row in rows)
+        ],
+        'requested_topologies': topologies,
         'workloads': workloads,
         'repetitions': repetitions,
         'sim_time_s': sim_time,
@@ -331,6 +364,7 @@ def parse_args():
     parser.add_argument('--link-bytes-per-second', type=float, default=125000.0)
     parser.add_argument('--architectures', default='CE,SD,FD')
     parser.add_argument('--techniques', default='none,encryption,obfuscation,combined')
+    parser.add_argument('--topologies', default='mesh,ring,star')
     parser.add_argument('--workloads', default='low,medium,high')
     parser.add_argument('--force', action='store_true')
     parser.add_argument('--smoke', action='store_true')
