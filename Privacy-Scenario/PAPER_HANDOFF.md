@@ -24,7 +24,7 @@ FD is unchanged across privacy conditions because it exchanges no coordination m
 
 ## Figures
 
-`plots/privacy_results_all_plots.pdf` contains the three radar charts followed by cumulative throughput and cumulative latency. The same figures are also available as individual PDFs. The notebook regenerates both the individual files and the combined document.
+`plots/privacy_results_verified_1256.pdf` contains the three radar charts followed by cumulative throughput and cumulative latency. The same figures are also available as individual PDFs. The notebook regenerates both the individual files and the combined document.
 
 ## Package contents
 
