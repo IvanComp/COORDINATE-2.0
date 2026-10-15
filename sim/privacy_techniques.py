@@ -1,6 +1,7 @@
 import csv
 import json
 import platform
+import secrets
 import time
 from collections import deque
 from importlib.metadata import PackageNotFoundError, version
@@ -27,18 +28,36 @@ class PrivacyRuntime:
         self.connections = {int(node): [int(neighbor) for neighbor in neighbors] for node, neighbors in connections.items()}
         self.source = int(source)
         self.link_bytes_per_second = max(1.0, float(getattr(cfg, 'PRIVACY_LINK_BYTES_PER_SECOND', 125000.0)))
+        self.padding_bytes = max(256, int(getattr(cfg, 'PRIVACY_PADDING_BYTES', 8192)))
+        self.cloaking_size = max(2, int(getattr(cfg, 'PRIVACY_CLOAKING_SIZE', 25)))
+        self.obfuscation_token_bytes = max(64, int(getattr(cfg, 'PRIVACY_OBFUSCATION_TOKEN_BYTES', 256)))
+        self.signing_rotation_messages = max(1, int(getattr(cfg, 'PRIVACY_SIGNING_KEY_ROTATION_MESSAGES', 32)))
         self.records = []
-        self.mask_to_destination = {}
-        self.destination_to_mask = {}
-        self.fernet = None
+        self.mask_to_value = {}
+        self.signing_keys = {}
+        self.signing_counts = {}
+        self.obfuscation_secret = secrets.token_hex(32)
         self.hash_string = None
+        self.crypto = None
         self.prior_destination = self._graph_medoid()
         if self.encryption_enabled:
             try:
-                from cryptography.fernet import Fernet
+                from cryptography.hazmat.primitives import hashes
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+                from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                from cryptography.hazmat.primitives.kdf.hkdf import HKDF
             except ImportError as exc:
                 raise RuntimeError('Encryption requires the cryptography package.') from exc
-            self.fernet = Fernet(Fernet.generate_key())
+            self.crypto = {
+                'hashes': hashes,
+                'Ed25519PrivateKey': Ed25519PrivateKey,
+                'Ed25519PublicKey': Ed25519PublicKey,
+                'X25519PrivateKey': X25519PrivateKey,
+                'X25519PublicKey': X25519PublicKey,
+                'AESGCM': AESGCM,
+                'HKDF': HKDF,
+            }
         if self.obfuscation_enabled:
             try:
                 from msticpy.data.data_obfus import hash_string
@@ -81,13 +100,102 @@ class PrivacyRuntime:
     def _distance(self, left, right):
         return self._distances_from(int(left)).get(int(right), len(self.connections))
 
-    def _mask(self, destination):
-        destination = int(destination)
-        if destination not in self.destination_to_mask:
-            masked = str(self.hash_string(f'destination:{destination:08d}'))
-            self.destination_to_mask[destination] = masked
-            self.mask_to_destination[masked] = destination
-        return self.destination_to_mask[destination]
+    def _mask(self, value, label='destination', salt=None, width=None):
+        salt = salt or secrets.token_hex(16)
+        masked = str(self.hash_string(f'{self.obfuscation_secret}:{salt}:{label}:{value}'))
+        if width and len(masked) < width:
+            remaining = width - len(masked)
+            masked += secrets.token_hex((remaining + 1) // 2)[:remaining]
+        self.mask_to_value[masked] = value
+        return masked
+
+    def _cloaking_candidates(self, destination):
+        nodes = sorted(self.connections)
+        if destination not in nodes:
+            nodes.append(destination)
+        distances = self._distances_from(destination)
+        alternatives = sorted(
+            (node for node in nodes if node != destination),
+            key=lambda node: (-distances.get(node, len(nodes)), node),
+        )
+        return [destination] + alternatives[:max(0, min(self.cloaking_size, len(nodes)) - 1)]
+
+    def _signing_key(self, sender):
+        count = self.signing_counts.get(sender, 0)
+        if sender not in self.signing_keys or count >= self.signing_rotation_messages:
+            self.signing_keys[sender] = self.crypto['Ed25519PrivateKey'].generate()
+            count = 0
+        self.signing_counts[sender] = count + 1
+        return self.signing_keys[sender]
+
+    def _derive_key(self, shared_secret, salt, info):
+        return self.crypto['HKDF'](
+            algorithm=self.crypto['hashes'].SHA256(),
+            length=32,
+            salt=salt,
+            info=info,
+        ).derive(shared_secret)
+
+    def _encrypt(self, payload, sender, receiver, message_type):
+        started = time.perf_counter_ns()
+        sender_ephemeral = self.crypto['X25519PrivateKey'].generate()
+        receiver_prekey = self.crypto['X25519PrivateKey'].generate()
+        sender_public = sender_ephemeral.public_key().public_bytes_raw()
+        receiver_public = receiver_prekey.public_key().public_bytes_raw()
+        shared_secret = sender_ephemeral.exchange(receiver_prekey.public_key())
+        salt = secrets.token_bytes(16)
+        nonce = secrets.token_bytes(12)
+        aad = json.dumps(
+            {'message_type': str(message_type), 'sender': str(sender), 'receiver': str(receiver)},
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')
+        key = self._derive_key(shared_secret, salt, aad)
+        content = len(payload).to_bytes(4, 'big') + payload
+        padding_size = (-len(content)) % self.padding_bytes
+        padded = content + secrets.token_bytes(padding_size)
+        ciphertext = self.crypto['AESGCM'](key).encrypt(nonce, padded, aad)
+        signer = self._signing_key(str(sender))
+        signing_public = signer.public_key().public_bytes_raw()
+        signed = sender_public + receiver_public + signing_public + salt + nonce + ciphertext + aad
+        signature = signer.sign(signed)
+        wire_bytes = sender_public + receiver_public + signing_public + salt + nonce + signature + ciphertext
+        encryption_ns = time.perf_counter_ns() - started
+        return {
+            'wire_bytes': wire_bytes,
+            'sender_public': sender_public,
+            'receiver_private': receiver_prekey,
+            'receiver_public': receiver_public,
+            'signing_public': signing_public,
+            'salt': salt,
+            'nonce': nonce,
+            'signature': signature,
+            'ciphertext': ciphertext,
+            'aad': aad,
+            'padding_size': padding_size,
+            'encryption_ns': encryption_ns,
+        }
+
+    def _decrypt(self, envelope):
+        started = time.perf_counter_ns()
+        signed = (
+            envelope['sender_public']
+            + envelope['receiver_public']
+            + envelope['signing_public']
+            + envelope['salt']
+            + envelope['nonce']
+            + envelope['ciphertext']
+            + envelope['aad']
+        )
+        self.crypto['Ed25519PublicKey'].from_public_bytes(envelope['signing_public']).verify(envelope['signature'], signed)
+        sender_public = self.crypto['X25519PublicKey'].from_public_bytes(envelope['sender_public'])
+        shared_secret = envelope['receiver_private'].exchange(sender_public)
+        key = self._derive_key(shared_secret, envelope['salt'], envelope['aad'])
+        padded = self.crypto['AESGCM'](key).decrypt(envelope['nonce'], envelope['ciphertext'], envelope['aad'])
+        content_size = int.from_bytes(padded[:4], 'big')
+        payload = padded[4:4 + content_size]
+        decryption_ns = time.perf_counter_ns() - started
+        return payload, decryption_ns
 
     def transmit(self, sim_time, message_type, sender, receiver, destination, fields=None):
         if not self.enabled:
@@ -104,18 +212,32 @@ class PrivacyRuntime:
         obfuscation_ns = 0
         deobfuscation_ns = 0
         protected_payload = dict(payload)
+        candidate_count = 0
         if self.obfuscation_enabled:
             started = time.perf_counter_ns()
-            protected_payload['destination'] = self._mask(actual_destination)
+            salt = secrets.token_hex(16)
+            candidates = self._cloaking_candidates(actual_destination)
+            protected_payload['destination'] = self._mask(actual_destination, 'destination', salt, self.obfuscation_token_bytes)
+            protected_payload['destination_candidates'] = [
+                self._mask(node, 'candidate', salt, self.obfuscation_token_bytes)
+                for node in candidates
+            ]
+            protected_payload['sender'] = self._mask(str(sender), 'sender', salt)
+            protected_payload['receiver'] = self._mask(str(receiver), 'receiver', salt)
+            if 'item_id' in protected_payload:
+                protected_payload['item_id'] = self._mask(protected_payload['item_id'], 'item_id', salt)
+            candidate_count = len(candidates)
             obfuscation_ns = time.perf_counter_ns() - started
         visible_bytes = json.dumps(protected_payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
         encryption_ns = 0
         decryption_ns = 0
+        padding_size = 0
         wire_bytes = visible_bytes
+        envelope = None
         if self.encryption_enabled:
-            started = time.perf_counter_ns()
-            wire_bytes = self.fernet.encrypt(visible_bytes)
-            encryption_ns = time.perf_counter_ns() - started
+            envelope = self._encrypt(visible_bytes, sender, receiver, message_type)
+            wire_bytes = envelope['wire_bytes']
+            encryption_ns = envelope['encryption_ns']
         communication_estimate = self.prior_destination
         if not self.encryption_enabled:
             observed = json.loads(wire_bytes.decode('utf-8'))
@@ -123,16 +245,19 @@ class PrivacyRuntime:
                 communication_estimate = observed['destination']
         received_bytes = wire_bytes
         if self.encryption_enabled:
-            started = time.perf_counter_ns()
-            received_bytes = self.fernet.decrypt(wire_bytes)
-            decryption_ns = time.perf_counter_ns() - started
+            received_bytes, decryption_ns = self._decrypt(envelope)
+            padding_size = envelope['padding_size']
         received_payload = json.loads(received_bytes.decode('utf-8'))
         data_estimate = self.prior_destination
         if isinstance(received_payload.get('destination'), int):
             data_estimate = received_payload['destination']
         if self.obfuscation_enabled:
             started = time.perf_counter_ns()
-            received_payload['destination'] = self.mask_to_destination[str(received_payload['destination'])]
+            received_payload['destination'] = self.mask_to_value[str(received_payload['destination'])]
+            received_payload['sender'] = self.mask_to_value[str(received_payload['sender'])]
+            received_payload['receiver'] = self.mask_to_value[str(received_payload['receiver'])]
+            if 'item_id' in received_payload:
+                received_payload['item_id'] = self.mask_to_value[str(received_payload['item_id'])]
             deobfuscation_ns = time.perf_counter_ns() - started
         if int(received_payload['destination']) != actual_destination:
             raise RuntimeError('The authorized receiver could not recover the destination.')
@@ -153,6 +278,8 @@ class PrivacyRuntime:
             'data_observer_distance_error': self._distance(data_estimate, actual_destination),
             'clear_bytes': len(clear_bytes),
             'wire_bytes': len(wire_bytes),
+            'padding_bytes': padding_size,
+            'cloaking_candidates': candidate_count,
             'encryption_ns': encryption_ns,
             'decryption_ns': decryption_ns,
             'obfuscation_ns': obfuscation_ns,
@@ -187,6 +314,10 @@ class PrivacyRuntime:
             'privacy_processing_seconds': processing_ns / 1_000_000_000.0,
             'privacy_added_delay_seconds': sum(row['added_delay_seconds'] for row in self.records),
             'privacy_link_bytes_per_second': self.link_bytes_per_second,
+            'privacy_padding_bytes': self.padding_bytes if self.encryption_enabled else 0,
+            'privacy_cloaking_size': self.cloaking_size if self.obfuscation_enabled else 0,
+            'privacy_obfuscation_token_bytes': self.obfuscation_token_bytes if self.obfuscation_enabled else 0,
+            'privacy_signing_key_rotation_messages': self.signing_rotation_messages if self.encryption_enabled else 0,
             'observer_prior_destination': self.prior_destination,
             'python_version': platform.python_version(),
             'cryptography_version': _package_version('cryptography') if self.encryption_enabled else '',

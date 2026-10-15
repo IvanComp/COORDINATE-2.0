@@ -89,6 +89,10 @@ BASE_CONFIG = {
     'PRIVACY_COMP_TIME_BONUS': [0.0, 0.0, 0.0],
     'PRIVACY_METRICS_ENABLED': True,
     'PRIVACY_LINK_BYTES_PER_SECOND': 125000.0,
+    'PRIVACY_PADDING_BYTES': 8192,
+    'PRIVACY_CLOAKING_SIZE': 25,
+    'PRIVACY_OBFUSCATION_TOKEN_BYTES': 256,
+    'PRIVACY_SIGNING_KEY_ROTATION_MESSAGES': 32,
     'PHASES': [],
     'LOG_ITEM': True,
     'LOG_DELIVERY': True,
@@ -279,6 +283,10 @@ def run_campaign(args):
                             'PRIVACY_ENCRYPTION_ENABLED': encryption,
                             'PRIVACY_OBFUSCATION_ENABLED': obfuscation,
                             'PRIVACY_LINK_BYTES_PER_SECOND': args.link_bytes_per_second,
+                            'PRIVACY_PADDING_BYTES': args.padding_bytes,
+                            'PRIVACY_CLOAKING_SIZE': args.cloaking_size,
+                            'PRIVACY_OBFUSCATION_TOKEN_BYTES': args.obfuscation_token_bytes,
+                            'PRIVACY_SIGNING_KEY_ROTATION_MESSAGES': args.signing_key_rotation_messages,
                             'RESULTS_DIR': str(run_dir),
                             'LOGFILE': str(logfile),
                             'SIMTIME_LOGFILE': str(run_dir / 'sim_time.csv'),
@@ -350,6 +358,10 @@ def run_campaign(args):
         'sim_time_s': sim_time,
         'seed': args.seed,
         'privacy_link_bytes_per_second': args.link_bytes_per_second,
+        'privacy_padding_bytes': args.padding_bytes,
+        'privacy_cloaking_size': args.cloaking_size,
+        'privacy_obfuscation_token_bytes': args.obfuscation_token_bytes,
+        'privacy_signing_key_rotation_messages': args.signing_key_rotation_messages,
     }
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(json.dumps(metadata, indent=2))
@@ -362,6 +374,10 @@ def parse_args():
     parser.add_argument('--sim-time', type=float, default=3600.0)
     parser.add_argument('--seed', type=int, default=26000)
     parser.add_argument('--link-bytes-per-second', type=float, default=125000.0)
+    parser.add_argument('--padding-bytes', type=int, default=8192)
+    parser.add_argument('--cloaking-size', type=int, default=25)
+    parser.add_argument('--obfuscation-token-bytes', type=int, default=256)
+    parser.add_argument('--signing-key-rotation-messages', type=int, default=32)
     parser.add_argument('--architectures', default='CE,SD,FD')
     parser.add_argument('--techniques', default='none,encryption,obfuscation,combined')
     parser.add_argument('--topologies', default='mesh,ring,star')

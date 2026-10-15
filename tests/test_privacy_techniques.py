@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from cryptography.exceptions import InvalidSignature
+
 from sim.privacy_techniques import PrivacyRuntime
 
 
@@ -12,6 +14,9 @@ def config(encryption=False, obfuscation=False):
         PRIVACY_ENCRYPTION_ENABLED=encryption,
         PRIVACY_OBFUSCATION_ENABLED=obfuscation,
         PRIVACY_LINK_BYTES_PER_SECOND=125000.0,
+        PRIVACY_PADDING_BYTES=4096,
+        PRIVACY_CLOAKING_SIZE=3,
+        PRIVACY_SIGNING_KEY_ROTATION_MESSAGES=2,
         current_architecture='semi-decentralized',
     )
 
@@ -35,6 +40,8 @@ class PrivacyTechniquesTest(unittest.TestCase):
         self.assertGreater(record['wire_bytes'], record['clear_bytes'])
         self.assertGreater(record['encryption_ns'], 0)
         self.assertGreater(record['decryption_ns'], 0)
+        self.assertGreaterEqual(record['padding_bytes'], 1)
+        self.assertGreater(record['wire_bytes'], 4096)
         self.assertGreater(delay, 0.0)
         self.assertEqual(runtime.summary()['expected_distance_error'], '')
 
@@ -44,15 +51,26 @@ class PrivacyTechniquesTest(unittest.TestCase):
         record = runtime.records[0]
         self.assertGreater(record['obfuscation_ns'], 0)
         self.assertGreater(record['deobfuscation_ns'], 0)
+        self.assertEqual(record['cloaking_candidates'], 3)
         self.assertGreater(delay, 0.0)
         self.assertEqual(runtime.summary()['adversary_success_rate'], '')
         self.assertGreater(runtime.summary()['expected_distance_error'], 0.0)
+
+    def test_encryption_rejects_tampered_ciphertext(self):
+        runtime = PrivacyRuntime(config(encryption=True), self.topology, 0)
+        envelope = runtime._encrypt(b'protected', 'coordinator', 'agent:1', 'assignment')
+        changed = bytearray(envelope['ciphertext'])
+        changed[-1] ^= 1
+        envelope['ciphertext'] = bytes(changed)
+        with self.assertRaises(InvalidSignature):
+            runtime._decrypt(envelope)
 
     def test_obfuscated_destinations_remain_distinct(self):
         topology = {node: [] for node in range(25)}
         runtime = PrivacyRuntime(config(obfuscation=True), topology, 0)
         masks = [runtime._mask(destination) for destination in topology]
         self.assertEqual(len(set(masks)), len(topology))
+        self.assertNotEqual(runtime._mask(1), runtime._mask(1))
         for destination in topology:
             runtime.transmit(0.0, 'assignment', 'coordinator', 'agent:1', destination)
 

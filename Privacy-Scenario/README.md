@@ -15,16 +15,16 @@ Dynamic Adaptation is excluded. Each mechanism is evaluated under four condition
 
 ## Implementation
 
-Encryption uses Fernet from `cryptography` on coordination messages. Data obfuscation uses `msticpy.data.data_obfus.hash_string` on the transmitted destination. The authorized receiver restores the original destination through a run-local mapping.
+Encryption uses `cryptography` to execute a fresh X25519 key agreement for every coordination message, derive an AES-256-GCM key with HKDF-SHA256, authenticate the sender with Ed25519, rotate signing keys, and pad the encrypted payload to 8 KiB blocks. Data obfuscation uses `msticpy.data.data_obfus.hash_string` with a secret and a fresh salt for every message. It rotates the pseudonyms for the destination, sender, receiver, and item, and transmits 25 independently masked destination candidates as fixed-width opaque tokens. The authorized receiver restores the original values through a run-local token vault.
 
-Every modeled coordination message executes the selected library operations. The simulator adds the measured encryption, decryption, obfuscation, and restoration time to the simulated communication delay. It also adds the transmission cost of payload expansion at the configured `PRIVACY_LINK_BYTES_PER_SECOND`.
+Every modeled coordination message executes the selected library operations. The simulator adds the measured key exchange, encryption, signing, verification, decryption, obfuscation, and restoration time to the simulated communication delay. It also adds the transmission cost of padding and payload expansion at the configured `PRIVACY_LINK_BYTES_PER_SECOND`.
 
 The observers are separate:
 
 - the communication observer reads the wire payload and provides `adversary_success_rate` for encryption conditions;
 - the data observer reads the decrypted payload before authorized restoration and provides `expected_distance_error` for obfuscation conditions.
 
-Expected Distance Error is measured in shortest-path hops between the estimated and actual destination. When a destination is protected, the observer uses the topology medoid as its prior estimate.
+Expected Distance Error is measured in shortest-path hops between the estimated and actual destination. When rotating pseudonyms protect a destination, the observer cannot link it to earlier messages and uses the topology medoid as its prior estimate.
 
 ## Install
 
@@ -71,7 +71,7 @@ Full campaigns write to `Privacy-Scenario/results/`:
 
 Smoke campaigns use `Privacy-Scenario/results/smoke/` and cannot cause full runs to be skipped.
 
-`regenerate_privacy_plots.ipynb` preserves the existing table and grayscale chart style while comparing `None`, `Encryption`, `Obfuscation`, and `Combined`. It uses full campaign results when available and otherwise falls back to smoke results.
+`regenerate_privacy_plots.ipynb` compares `None`, `Encryption`, `Obfuscation`, and `Combined` through one radar for each coordination mechanism and cumulative throughput and latency curves. It uses full campaign results when available and otherwise falls back to smoke results.
 
 ## Leonardo
 
