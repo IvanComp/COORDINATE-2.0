@@ -1,0 +1,8 @@
+Subject: Privacy scenario experiments and results
+
+Hi all,
+
+I completed 540 privacy experiments on CE, SD, and FD using Mesh, Ring, and Star topologies, three workloads, four privacy conditions, and five repetitions per configuration. Each run used 25 rooms, 12 robots, and a 3600-second simulation. The attached package contains the full configurations, raw and aggregated results, notebook, and figures. Privacy increases latency with limited and non-systematic effects on throughput: CE is fastest, SD has competitive throughput, and FD avoids coordination-message exposure but has the highest latency. You can now use this material to draft the paper.
+
+Best,
+Ivan
