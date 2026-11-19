@@ -1,4 +1,0 @@
-arch,space,Nrooms,Nbot,Nmal,failProb,commFailProb,arrival,loadItem,moveItem,dropItem,comp,comm,recovery,simTime
-decentralized,mesh25,25,12,0,2,3,180,1,5,1,0,0,300,0.017144203186035156
-decentralized,mesh25,25,12,0,2,3,180,1,5,1,0,0,300,0.03292417526245117
-decentralized,mesh25,25,12,0,2,3,180,1,5,1,0,0,300,0.006934642791748047
