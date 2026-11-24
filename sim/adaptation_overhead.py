@@ -6,8 +6,13 @@ of dynamic adaptation in the COORDINATE 2.0 simulator.
 """
 
 import csv
-import os
+from pathlib import Path
 from typing import List, Dict
+
+
+def overhead_log_path(logfile):
+    path = Path(logfile)
+    return path.with_name(path.stem + '_overhead.csv')
 
 
 def log_overhead_statistics(
@@ -47,7 +52,7 @@ def log_overhead_statistics(
     print("="*70 + "\n")
     
     # Save detailed overhead data to CSV
-    overhead_csv = logfile.replace('.csv', '_overhead.csv')
+    overhead_csv = overhead_log_path(logfile)
     try:
         with open(overhead_csv, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=[
@@ -96,7 +101,7 @@ def log_overhead_statistics(
             ], extrasaction='ignore')
             writer.writeheader()
             writer.writerows(adaptation_overhead_samples)
-        print(f"[OVERHEAD] Detailed overhead data saved to: {os.path.basename(overhead_csv)}")
+        print(f"[OVERHEAD] Detailed overhead data saved to: {overhead_csv.name}")
     except Exception as e:
         print(f"[WARNING] Could not save overhead CSV: {e}")
 

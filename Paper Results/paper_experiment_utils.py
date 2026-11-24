@@ -41,6 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sim import simulator  # noqa: E402
+from sim.run_statistics import summary_path  # noqa: E402
 from sim.env_maps import topologyName_dict  # noqa: E402
 from sim.rtlola_monitor import resolve_rtlola_binary  # noqa: E402
 
@@ -413,18 +414,21 @@ def row_logs_expiration(row: dict[str, Any]) -> bool:
     return str(row.get("log_expire", "")).lower() == "true"
 
 
+def row_matches_expiration(row: dict[str, Any], expected: dict[str, Any]) -> bool:
+    return (
+        str(row.get("log_expire", "")).lower() == str(expected["log_expire"]).lower()
+        and all(
+            float_matches(row.get(key), value)
+            for key, value in expected.items() if key != "log_expire"
+        )
+    )
+
+
 def row_matches_current_expiration(row: dict[str, Any]) -> bool:
-    if str(row.get("fd_policy_version", "")) != FD_POLICY_VERSION:
-        return False
-    expected = expiration_metadata()
-    for key, expected_value in expected.items():
-        try:
-            actual_value = float(row.get(key, ""))
-        except (TypeError, ValueError):
-            return False
-        if int(round(actual_value)) != int(round(float(expected_value))):
-            return False
-    return True
+    return (
+        str(row.get("fd_policy_version", "")) == FD_POLICY_VERSION
+        and row_matches_expiration(row, expiration_metadata())
+    )
 
 
 def completed_run_ids(rows: list[dict[str, Any]]) -> set[str]:
@@ -466,6 +470,7 @@ def int_matches(left: Any, right: Any) -> bool:
 
 def find_matching_rq1_row(
     *,
+    cfg: dict[str, Any],
     coord_label: str,
     rep: int,
     topology: str | None = None,
@@ -478,12 +483,15 @@ def find_matching_rq1_row(
     comp_time: float = 0.03,
     comm_time: float = 0.03,
 ) -> Optional[dict[str, Any]]:
+    output_fields = {"RESULTS_DIR", "SIMTIME_LOGFILE", "LOGFILE"}
+    requested = {key: value for key, value in cfg.items() if key not in output_fields}
+    expected_expiration = expiration_metadata(cfg)
     rq1_runs = read_rows(PAPER_ROOT / "RQ1" / "runs.csv")
     for row in rq1_runs:
         logfile = Path(str(row.get("logfile", "")))
         if row.get("status") != "ok" or not logfile.exists():
             continue
-        if not row_matches_current_expiration(row):
+        if row.get("fd_policy_version") != FD_POLICY_VERSION or not row_matches_expiration(row, expected_expiration):
             continue
         if not row_logs_expiration(row):
             continue
@@ -509,6 +517,16 @@ def find_matching_rq1_row(
         if not float_matches(row.get("comp_time", 0.03), comp_time, tolerance=0.0005):
             continue
         if not float_matches(row.get("comm_time", 0.03), comm_time, tolerance=0.0005):
+            continue
+        if not float_matches(row.get("seed"), cfg["RANDOM_SEED"]):
+            continue
+        try:
+            source_cfg = json.loads(Path(row.get("config_path") or "").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(source_cfg, dict):
+            continue
+        if {key: value for key, value in source_cfg.items() if key not in output_fields} != requested:
             continue
         return row
     return None
@@ -606,12 +624,22 @@ def minimum_delivery_time(cfg: dict, destination: int) -> float:
     return float(cfg["LOAD_TIME"]) + hops * float(cfg["MOVEMENT_TIME"]) + float(cfg["DROP_TIME"])
 
 
-def analyze_log(logfile: Path, sim_time: float, cfg: Optional[dict] = None) -> dict[str, Any]:
-    """Summarise one simulation trace.
+def metrics_with_trace_sizes(logfile: Path, metrics: dict[str, Any]) -> dict[str, Any]:
+    overhead_path = logfile.with_name(logfile.stem + "_overhead.csv")
+    return {
+        **metrics,
+        "trace_size_mb": file_size_mb(logfile),
+        "overhead_trace_size_mb": file_size_mb(overhead_path),
+    }
 
-    Pass ``cfg`` to also record ``avg_relative_latency_s``. Without it the column
-    is still written as NaN so every RQ shares one result schema.
-    """
+
+def analyze_log(logfile: Path, sim_time: float, cfg: Optional[dict] = None) -> dict[str, Any]:
+    """Read the saved statistics, or reconstruct what is available from a legacy trace."""
+    saved_summary = summary_path(logfile)
+    if saved_summary.exists():
+        summary = json.loads(saved_summary.read_text(encoding="utf-8"))
+        return metrics_with_trace_sizes(logfile, summary["metrics"])
+
     create_events: dict[int, tuple[float, int]] = {}
     delivery_latencies: list[float] = []
     relative_delivery_latencies: list[float] = []
@@ -634,6 +662,8 @@ def analyze_log(logfile: Path, sim_time: float, cfg: Optional[dict] = None) -> d
             sim_t = safe_float(row.get("simTime"))
             if math.isnan(sim_t):
                 sim_t = 0.0
+            if sim_t > sim_time:
+                continue
             last_time = max(last_time, sim_t)
             events[event] = events.get(event, 0) + 1
 
@@ -749,14 +779,13 @@ def run_or_analyze(
     *,
     cfg_path: Path,
     logfile: Path,
-    sim_time: float,
     force: bool,
 ) -> tuple[dict[str, Any], float, float]:
-    wall_time = math.nan
-    event_count = math.nan
-    if logfile.exists() and not force:
-        print("  existing log found; analysing without re-running", flush=True)
-    else:
-        _, wall_time, event_count = simulator.run(str(cfg_path))
-    metrics = analyze_log(logfile, sim_time)
-    return metrics, wall_time, event_count
+    saved_summary = summary_path(logfile)
+    if saved_summary.exists() and logfile.exists() and not force:
+        print("  existing simulation summary found", flush=True)
+        summary = json.loads(saved_summary.read_text(encoding="utf-8"))
+        return metrics_with_trace_sizes(logfile, summary["metrics"]), summary["wall_time_s"], summary["event_count"]
+
+    result = simulator.run_with_stats(str(cfg_path))
+    return metrics_with_trace_sizes(Path(result.logfile), result.metrics), result.wall_time, result.event_count

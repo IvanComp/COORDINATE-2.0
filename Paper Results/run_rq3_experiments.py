@@ -29,6 +29,7 @@ Reuse behavior:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -37,12 +38,12 @@ from pathlib import Path
 from typing import Any
 
 from paper_experiment_utils import (
+    BASE_CONFIG,
     COORD_TO_ARCH,
     PAPER_ROOT,
     build_extended_daily_phases,
     cleanup_transient_artifacts,
     config_with_paths,
-    completed_run_ids,
     ensure_rtlola_available,
     ensure_result_dirs,
     expiration_metadata,
@@ -57,12 +58,15 @@ from paper_experiment_utils import (
     EXTENDED_ROBOT_COUNTS,
     EXTENDED_ROOM_COUNTS,
     extended_scenario_updates,
+    FD_POLICY_VERSION,
     find_matching_rq1_row,
+    float_matches,
     analyze_log,
     malicious_count,
     read_rows,
     replace_row,
     resolve_worker_count,
+    row_matches_expiration,
     run_or_analyze,
     safe_float,
     write_json,
@@ -194,6 +198,26 @@ def run_id(params: dict[str, Any]) -> str:
     )
 
 
+def matches_completed_rq3(row, params, sim_days, expected_expiration):
+    if row.get("status") != "ok" or row.get("experiment_profile") != RQ3_EXPERIMENT_PROFILE:
+        return False
+    if (row.get("fd_policy_version") or FD_POLICY_VERSION) != FD_POLICY_VERSION:
+        return False
+    if row.get("topology") != params["topology"] or row.get("architecture") != params["architecture"]:
+        return False
+    numeric = {
+        "sim_days": sim_days,
+        **{key: params[key] for key in (
+            "seed", "n_rooms", "n_robots", "n_malicious", "item_spawning_time",
+            "malicious_ratio", "fail_prob", "msg_loss_prob", "comp_time", "comm_time",
+        )},
+    }
+    return (
+        row_matches_expiration(row, expected_expiration)
+        and all(float_matches(row.get(key), value) for key, value in numeric.items())
+    )
+
+
 def execute_rq3_job(job: dict[str, Any]) -> dict[str, Any]:
     """Run or reuse one configuration without concurrently writing CSV files."""
     try:
@@ -206,6 +230,7 @@ def execute_rq3_job(job: dict[str, Any]) -> dict[str, Any]:
         reuse_row = None
         if not job["force"] and not job["no_reuse_rq1"]:
             reuse_row = find_matching_rq1_row(
+                cfg=cfg,
                 coord_label=params["coord_label"], rep=params["rep"], topology=params["topology"],
                 n_rooms=params["n_rooms"], item_spawning_time=params["item_spawning_time"],
                 n_robots=params["n_robots"], malicious_ratio=params["malicious_ratio"],
@@ -224,7 +249,7 @@ def execute_rq3_job(job: dict[str, Any]) -> dict[str, Any]:
             logfile = planned_logfile
             metrics, wall_time, event_count = run_or_analyze(
                 cfg_path=Path(job["config_path"]), logfile=logfile,
-                sim_time=cfg["SIM_TIME"], force=job["force"],
+                force=job["force"] or job.get("configuration_changed", False),
             )
         return {"status": "ok", "error": "", "metrics": metrics, "wall_time": wall_time,
                 "event_count": event_count, "logfile": str(logfile), "source_rq": source_rq,
@@ -261,15 +286,18 @@ def run_campaign(args: argparse.Namespace) -> None:
         "fail_prob": args.fail_prob,
         "msg_loss": args.msg_loss,
         "daily_operating_profile": "triangular severity and recovery",
-        "expiration_time": expiration_metadata(extended_scenario_updates(
-            topology_type=EXTENDED_NOMINAL_TOPOLOGY,
-            n_rooms=EXTENDED_NOMINAL_ROOMS,
-            n_robots=EXTENDED_NOMINAL_ROBOTS,
-            n_malicious=EXTENDED_NOMINAL_MALICIOUS,
-            item_spawning_time=EXTENDED_NOMINAL_SPAWN,
-            fail_prob=args.fail_prob,
-            msg_loss_prob=args.msg_loss,
-        )),
+        "expiration_time": expiration_metadata({
+            **BASE_CONFIG,
+            **extended_scenario_updates(
+                topology_type=EXTENDED_NOMINAL_TOPOLOGY,
+                n_rooms=EXTENDED_NOMINAL_ROOMS,
+                n_robots=EXTENDED_NOMINAL_ROBOTS,
+                n_malicious=EXTENDED_NOMINAL_MALICIOUS,
+                item_spawning_time=EXTENDED_NOMINAL_SPAWN,
+                fail_prob=args.fail_prob,
+                msg_loss_prob=args.msg_loss,
+            ),
+        }),
         "reuse_rq1": not args.no_reuse_rq1,
         "purpose": "Measure wall-clock and per-check monitoring/adaptation overhead.",
     }
@@ -286,13 +314,26 @@ def run_campaign(args: argparse.Namespace) -> None:
     raw_logs_dir, configs_dir = ensure_result_dirs(RESULTS_ROOT)
     rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
     errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
-    completed = completed_run_ids(rows)
+    previous_runs = {row["run_id"]: row for row in rows if row.get("run_id")}
     started_at = time.time()
 
     jobs: list[dict[str, Any]] = []
     for idx, params in enumerate(combos, start=1):
         rid = run_id(params)
-        if rid in completed and not args.force:
+        updates = extended_scenario_updates(
+            topology_type=EXTENDED_NOMINAL_TOPOLOGY,
+            n_rooms=params["n_rooms"],
+            n_robots=params["n_robots"],
+            n_malicious=params["n_malicious"],
+            item_spawning_time=params["item_spawning_time"],
+            fail_prob=params["fail_prob"],
+            msg_loss_prob=params["msg_loss_prob"],
+            comp_time=params["comp_time"],
+            comm_time=params["comm_time"],
+        )
+        expected_expiration = expiration_metadata({**BASE_CONFIG, **updates})
+        previous_run = previous_runs.get(rid, {})
+        if not args.force and matches_completed_rq3(previous_run, params, args.sim_days, expected_expiration):
             print(f"[{idx}/{len(combos)}] {rid} already completed; skipping", flush=True)
             continue
 
@@ -315,19 +356,15 @@ def run_campaign(args: argparse.Namespace) -> None:
             architecture=params["architecture"],
             seed=params["seed"],
             sim_days=args.sim_days,
-            updates=extended_scenario_updates(
-                topology_type=EXTENDED_NOMINAL_TOPOLOGY,
-                n_rooms=params["n_rooms"],
-                n_robots=params["n_robots"],
-                n_malicious=params["n_malicious"],
-                item_spawning_time=params["item_spawning_time"],
-                fail_prob=params["fail_prob"],
-                msg_loss_prob=params["msg_loss_prob"],
-                comp_time=params["comp_time"],
-                comm_time=params["comm_time"],
-            ),
+            updates=updates,
             phases=phases,
         )
+        configuration_changed = False
+        if planned_logfile.exists():
+            try:
+                configuration_changed = json.loads(cfg_path.read_text(encoding="utf-8")) != cfg
+            except (OSError, ValueError):
+                configuration_changed = True
         write_json(cfg_path, cfg)
 
         had_previous_error = any(error.get("run_id") == rid for error in errors)
@@ -338,7 +375,8 @@ def run_campaign(args: argparse.Namespace) -> None:
 
         jobs.append({"idx": idx, "run_id": rid, "params": params, "cfg": cfg,
                      "config_path": str(cfg_path), "logfile": str(planned_logfile),
-                     "force": args.force, "no_reuse_rq1": args.no_reuse_rq1})
+                     "force": args.force, "no_reuse_rq1": args.no_reuse_rq1,
+                     "configuration_changed": configuration_changed})
 
     def persist_result(job: dict[str, Any], result: dict[str, Any], completed_count: int) -> None:
         nonlocal rows, errors
@@ -366,6 +404,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         run_meta = {
             "run_id": rid,
             "experiment_profile": RQ3_EXPERIMENT_PROFILE,
+            "fd_policy_version": FD_POLICY_VERSION,
             "analysis_slices": params["analysis_slices"],
             "coord_label": params["coord_label"],
             "architecture": params["architecture"],

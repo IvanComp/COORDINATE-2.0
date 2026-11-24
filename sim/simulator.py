@@ -3,20 +3,21 @@ import os, sys, time, json, random
 from threading import Lock
 import numpy as np
 
-from .core import Cfg, Clock, Room, Space, Item, Robot
+from .core import Cfg, Clock, Room, Space, Item, Robot, EVENT_LOG_HEADER
 from .env_maps import topologyName_dict
-from .adaptation_overhead import log_overhead_statistics
+from .adaptation_overhead import log_overhead_statistics, overhead_log_path
+from .run_statistics import RunResult, TaskRecord, summarize_run, summary_path, write_summary
 
 _simulation_lock = Lock()
 
-def _sort_events_csv_by_time(csv_path: str):
+def _sort_events_csv_by_time(csv_path: str) -> int:
     if not os.path.exists(csv_path):
-        return
+        return 0
     try:
         with open(csv_path, 'r') as f:
             lines = f.readlines()
         if not lines:
-            return
+            return 0
         header, rows = lines[0], lines[1:]
         def keyfun(line):
             try:
@@ -28,14 +29,15 @@ def _sort_events_csv_by_time(csv_path: str):
         with open(csv_path, 'w') as f:
             f.write(header)
             f.writelines(rows)
+        return len(rows)
     except Exception:
-        pass
+        return 0
 
 
 def _log_sim_time(cfg: Cfg, sim_secs: float):
     # write simTime.csv
     path = cfg.SIMTIME_LOGFILE
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     new = not os.path.exists(path)
     with open(path, 'a') as f:
         if new:
@@ -364,16 +366,25 @@ def _apply_malicious_count(cfg: Cfg, bots, value):
     for idx, bot in enumerate(bots):
         bot.malicious = idx < next_count
 
+def _validate_targets(cfg: Cfg, room_count: int):
+    targets = cfg.TARGETS
+    if type(targets) is int and targets == -1:
+        if room_count < 2:
+            raise ValueError('TARGETS=-1 requires a room other than SOURCE')
+        return None
+    if not isinstance(targets, list) or not targets:
+        raise ValueError('TARGETS must be -1 or a non-empty list of room IDs')
+    if any(type(room) is not int or not 0 <= room < room_count for room in targets):
+        raise ValueError(f'TARGETS must contain integer room IDs from 0 to {room_count - 1}')
+    destinations = [room for room in targets if room != cfg.SOURCE]
+    if not destinations:
+        raise ValueError('TARGETS must include a room other than SOURCE')
+    return destinations
+
+
 def getTargetRoom(cfg: Cfg, rooms):
-    if cfg.TARGETS == -1:
-        return None
-    if max(cfg.TARGETS) >= len(rooms):
-        print('[ERROR] TARGETS has an index outside room range'); sys.exit(-1)
-    trg = [t for t in cfg.TARGETS if t != cfg.SOURCE]
-    if len(trg) == 0:
-        return None
-    idx = random.choice(trg)
-    return rooms[idx]
+    destinations = _validate_targets(cfg, len(rooms))
+    return rooms[random.choice(destinations)] if destinations else None
 
 def _resolve_topology_name(cfg: Cfg) -> str:
     """Support both full topology names (mesh25) and shorthand (mesh/ring/tree/etc.)."""
@@ -445,11 +456,16 @@ def _build_custom_topology(cfg: Cfg):
     return {idx: sorted(adjacents) for idx, adjacents in topology.items()}
 
 def run(config_path='config.json'):
+    result = run_with_stats(config_path)
+    return result.logfile, result.wall_time, result.event_count
+
+
+def run_with_stats(config_path='config.json', *, collect_tasks=False):
     with _simulation_lock:
-        return _run(config_path)
+        return _run(config_path, collect_tasks)
 
 
-def _run(config_path):
+def _run(config_path, collect_tasks):
     cfg = _build_cfg(config_path)
     seed = getattr(cfg, 'RANDOM_SEED', None)
     if seed is not None:
@@ -464,6 +480,16 @@ def _run(config_path):
     if cfg.ARCHITECTURE not in valid_archs:
         print('Unsupported architecture:', cfg.ARCHITECTURE); sys.exit(-1)
     
+    if cfg.TOPOLOGY_NAME == 'custom':
+        topo = _build_custom_topology(cfg)
+        cfg.TOPOLOGY_NAME = getattr(cfg, 'CUSTOM_TOPOLOGY_NAME', 'custom')
+    else:
+        cfg.TOPOLOGY_NAME = _resolve_topology_name(cfg)
+        topo = topologyName_dict[cfg.TOPOLOGY_NAME]
+    if cfg.N_ROOMS != len(topo):
+        print('N_ROOMS mismatch with selected TOPOLOGY_NAME'); sys.exit(-1)
+    _validate_targets(cfg, len(topo))
+
     # Initialize RTLola monitor for dynamic-adaptation
     rtlola_monitor = None
     if cfg.ARCHITECTURE == 'dynamic-adaptation':
@@ -489,27 +515,15 @@ def _run(config_path):
             print(f"[ERROR] Ensure 'rtlola-cli' is installed and in your PATH, or configured in config.json.")
             sys.exit(-1)
     
-    if cfg.TOPOLOGY_NAME == 'custom':
-        topo = _build_custom_topology(cfg)
-        resolved_topology_name = getattr(cfg, 'CUSTOM_TOPOLOGY_NAME', 'custom')
-        cfg.TOPOLOGY_NAME = resolved_topology_name
-    else:
-        resolved_topology_name = _resolve_topology_name(cfg)
-        cfg.TOPOLOGY_NAME = resolved_topology_name
-        topo = topologyName_dict[resolved_topology_name]
-    if cfg.N_ROOMS != len(topo.keys()):
-        print('N_ROOMS mismatch with selected TOPOLOGY_NAME'); sys.exit(-1)
-
     # resolve logfile
     logfile = cfg.LOGFILE if cfg.LOGFILE else _logfile_name(cfg)
     cfg.LOGFILE = logfile  # write back
 
-    # Remove existing logfile to ensure fresh simulation data
-    if os.path.exists(logfile):
-        try:
-            os.remove(logfile)
-        except OSError:
-            pass
+    summary_path(logfile).unlink(missing_ok=True)
+    overhead_log_path(logfile).unlink(missing_ok=True)
+    os.makedirs(os.path.dirname(logfile) or '.', exist_ok=True)
+    with open(logfile, 'w') as trace:
+        trace.write(EVENT_LOG_HEADER)
 
     # init env
     start_wall = time.time()
@@ -603,11 +617,17 @@ def _run(config_path):
     item_create_times = {}  # Track when each item was created
     item_min_delivery_times = {}  # Track ideal delivery time by item
     adaptation_latency_history = []  # Store aggregate latency seen at adaptation checks
+    deliveries = []
+    switches = []
+    tasks = {}
+    expired_count = failed_count = recovered_count = 0
     
     try:
-        while clock.getTime() < cfg.SIM_TIME:
+        while True:
             clock.checkClock()
-            ts, event = clock.getNextEvent()
+            ts, event = clock.getNextEvent(through=cfg.SIM_TIME)
+            if event is None:
+                break
             
             # Dynamic Parameter Updates (Scenario A)
             # Check if we have phases defined in config
@@ -659,11 +679,6 @@ def _run(config_path):
             # Artificial delay removed
             # time.sleep(0.001)
             
-            # Check if no more events (simulation complete)
-            if event is None:
-                # print(f"[INFO] No more events at time {clock.getTime()}. Simulation complete.")
-                break
-                
             event_count += 1
             
             # Process simulation event
@@ -673,6 +688,8 @@ def _run(config_path):
                 space.newItem(item)
                 item_create_times[itemIdx] = ts  # Track creation time
                 item_min_delivery_times[itemIdx] = _minimum_delivery_time(cfg, space, item.getTarget())
+                if collect_tasks:
+                    tasks[itemIdx] = TaskRecord(ts, item_min_delivery_times[itemIdx])
                 if rtlola_monitor:
                     rtlola_monitor.send_event(ts, -1, itemIdx, -1, -1, -1, 'create')
                 created_window.append(ts)
@@ -699,6 +716,7 @@ def _run(config_path):
                 was_healthy = bot.isHealthy()
                 delivered_item = bot.move(ts)
                 if was_healthy and not bot.isHealthy():
+                    failed_count += 1
                     failure_window.append(ts)
                     failure_window = _prune_times(failure_window, ts, latency_window_duration)
                     cfg.record_monitor_event(ts, 'agent_failed')
@@ -710,6 +728,10 @@ def _run(config_path):
                     min_delivery_time = item_min_delivery_times.pop(item_id)
                     delivery_latency = ts - item_create_times.pop(item_id)
                     relative_latency = max(0.0, delivery_latency - min_delivery_time)
+                    deliveries.append((delivery_latency, relative_latency))
+                    if collect_tasks:
+                        tasks[item_id].outcome = 'deliver'
+                        tasks[item_id].ended_at = ts
                     if delivery_latency > 0:
                         latency_window.append((ts, relative_latency))
                         latency_window = [(t, lat) for t, lat in latency_window if ts - t <= latency_window_duration]
@@ -720,6 +742,7 @@ def _run(config_path):
                         )
             elif event.startswith('recovery-'):
                 idx = int(event.split('-')[1]); bots[idx].recovery(ts)
+                recovered_count += 1
                 cfg.record_monitor_event(ts, 'agent_recovered')
             elif event.startswith('central-request-'):
                 request_id = int(event.split('-')[2]); space.processCentralRequest(request_id, ts)
@@ -758,6 +781,10 @@ def _run(config_path):
                 if rtlola_monitor:
                     rtlola_monitor.send_event(ts, -1, idx, -1, -1, -1, 'expire')
                 space.expireItem(item, ts)
+                expired_count += 1
+                if collect_tasks:
+                    tasks[idx].outcome = 'expire'
+                    tasks[idx].ended_at = ts
                 item_create_times.pop(idx)
                 item_min_delivery_times.pop(idx)
                 expired_window.append(ts)
@@ -983,6 +1010,7 @@ def _run(config_path):
                 switched_now = best_arch != current_arch
                 if switched_now:
                     adaptation_switch_count += 1
+                    switches.append((ts, best_arch))
                     last_switch_time = ts
                     cfg.set_architecture(best_arch)
                     candidate_history = []
@@ -1128,7 +1156,7 @@ def _run(config_path):
 
     wall_time = time.time() - start_wall
     _log_sim_time(cfg, wall_time)
-    _sort_events_csv_by_time(logfile)
+    trace_rows = _sort_events_csv_by_time(logfile)
     
     # Log adaptation overhead statistics
     log_overhead_statistics(
@@ -1140,8 +1168,15 @@ def _run(config_path):
         logfile
     )
     
+    metrics = summarize_run(
+        cfg.SIM_TIME, clock.getTime(), itemIdx, expired_count, failed_count, recovered_count,
+        deliveries, switches, adaptation_overhead_samples,
+    )
+    metrics['trace_rows'] = trace_rows
+    result = RunResult(logfile, wall_time, event_count, metrics, tasks)
+    write_summary(result)
     print(os.path.basename(logfile), '--> Simulation time (wall):', wall_time, f'({event_count} events)')
-    return logfile, wall_time, event_count
+    return result
 
 if __name__ == '__main__':
     path = sys.argv[1] if len(sys.argv) > 1 else 'config.json'

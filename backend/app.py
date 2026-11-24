@@ -24,53 +24,6 @@ RESULTS_DIR = os.path.join(BASE_DIR, 'results')
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
-def _summarize_log_csv(path):
-    created = 0
-    delivered = 0
-    expired = 0
-    failed = 0
-    recovered = 0
-    delivery_latencies = []
-    create_times = {}
-    last_sim_time = 0.0
-
-    with open(path, newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            sim_time = float(row.get('simTime', 0) or 0)
-            item_id = int(row.get('itemId', -1) or -1)
-            event = row.get('event', '')
-            last_sim_time = max(last_sim_time, sim_time)
-
-            if event == 'create':
-                created += 1
-                if item_id >= 0:
-                    create_times[item_id] = sim_time
-            elif event == 'deliver':
-                delivered += 1
-                if item_id in create_times:
-                    delivery_latencies.append(sim_time - create_times[item_id])
-            elif event == 'expire':
-                expired += 1
-            elif event == 'fail':
-                failed += 1
-            elif event in ('recover', 'recovery'):
-                recovered += 1
-
-    avg_latency = mean(delivery_latencies) if delivery_latencies else 0.0
-    success_rate = (delivered / created) if created > 0 else 0.0
-    return {
-        'created': created,
-        'delivered': delivered,
-        'expired': expired,
-        'failed': failed,
-        'recovered': recovered,
-        'avgDeliveryLatency': avg_latency,
-        'successRate': success_rate,
-        'lastSimTime': last_sim_time,
-    }
-
-
 def _write_aggregate_csv(run_rows, aggregate_filename):
     path = os.path.join(RESULTS_DIR, aggregate_filename)
     fieldnames = [
@@ -174,14 +127,21 @@ def run_simulation():
                 config_path = f.name
                 json.dump(run_config, f, indent=2)
 
-            logfile, wall_time, event_count = simulator.run(config_path)
-            last_logfile = logfile
-            summary = _summarize_log_csv(logfile)
+            result = simulator.run_with_stats(config_path)
+            last_logfile = result.logfile
+            metrics = result.metrics
             run_rows.append({
                 'run': run_idx + 1,
-                **summary,
-                'wallTime': wall_time,
-                'eventCount': event_count,
+                'created': metrics['created'],
+                'delivered': metrics['delivered'],
+                'expired': metrics['expired'],
+                'failed': metrics['failed'],
+                'recovered': metrics['recovered'],
+                'avgDeliveryLatency': metrics['avg_latency_s'] or 0.0,
+                'successRate': metrics['success_rate'],
+                'lastSimTime': metrics['last_sim_time'],
+                'wallTime': result.wall_time,
+                'eventCount': result.event_count,
             })
 
             if config_path and os.path.exists(config_path):

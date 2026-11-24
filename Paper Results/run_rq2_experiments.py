@@ -38,7 +38,6 @@ from paper_experiment_utils import (
     COORD_TO_ARCH,
     FD_POLICY_VERSION,
     PAPER_ROOT,
-    analyze_log,
     config_with_paths,
     cleanup_transient_artifacts,
     completed_run_ids,
@@ -414,7 +413,6 @@ def execute_rq2_job(job: dict[str, Any]) -> dict[str, Any]:
         metrics, wall_time, event_count = run_or_analyze(
             cfg_path=cfg_path,
             logfile=logfile,
-            sim_time=job["sim_time"],
             force=job["force"],
         )
         return {"status": "ok", "error": "", "metrics": metrics,
@@ -565,7 +563,6 @@ def run_campaign(args: argparse.Namespace) -> None:
             "cfg": cfg,
             "config_path": str(cfg_path),
             "logfile": str(planned_logfile),
-            "sim_time": cfg["SIM_TIME"],
             "force": args.force,
         })
 

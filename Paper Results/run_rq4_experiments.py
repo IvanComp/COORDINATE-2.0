@@ -41,7 +41,6 @@ from paper_experiment_utils import (
     COORD_TO_ARCH,
     PAPER_ROOT,
     PROJECT_ROOT,
-    analyze_log,
     build_extended_daily_phases,
     cleanup_transient_artifacts,
     config_with_paths,
@@ -61,6 +60,7 @@ from paper_experiment_utils import (
     extended_scenario_updates,
     file_size_mb,
     malicious_count,
+    metrics_with_trace_sizes,
     read_rows,
     replace_row,
     safe_float,
@@ -344,17 +344,18 @@ from pathlib import Path
 from sim import simulator
 
 cfg_path = Path(sys.argv[1])
-logfile, wall_time, event_count = simulator.run(str(cfg_path))
+result = simulator.run_with_stats(str(cfg_path))
 rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 if sys.platform == "darwin":
     max_rss_mb = rss / (1024 * 1024)
 else:
     max_rss_mb = rss / 1024
 print("{SUBPROCESS_MARKER}" + json.dumps({{
-    "logfile": logfile,
-    "wall_time_s": wall_time,
-    "event_count": event_count,
+    "logfile": result.logfile,
+    "wall_time_s": result.wall_time,
+    "event_count": result.event_count,
     "max_rss_mb": max_rss_mb,
+    "metrics": result.metrics,
 }}))
 """
     proc = subprocess.run(
@@ -382,8 +383,8 @@ def execute_rq4_job(job: dict[str, Any]) -> dict[str, Any]:
         if logfile.exists() and not job["force"]:
             logfile.unlink()
         subprocess_metrics = run_subprocess(Path(job["config_path"]))
-        return {"status": "ok", "error": "", "subprocess_metrics": subprocess_metrics,
-                "metrics": analyze_log(logfile, job["sim_time"])}
+        metrics = metrics_with_trace_sizes(Path(subprocess_metrics["logfile"]), subprocess_metrics.pop("metrics"))
+        return {"status": "ok", "error": "", "subprocess_metrics": subprocess_metrics, "metrics": metrics}
     except BaseException as exc:
         return {"status": "error", "error": str(exc) or exc.__class__.__name__,
                 "subprocess_metrics": {"wall_time_s": math.nan, "event_count": math.nan,
@@ -505,8 +506,7 @@ def run_campaign(args: argparse.Namespace) -> None:
             logfile.unlink()
 
         jobs.append({"idx": idx, "run_id": rid, "params": params, "cfg": cfg,
-                     "config_path": str(cfg_path), "logfile": str(logfile),
-                     "sim_time": cfg["SIM_TIME"], "force": args.force})
+                     "config_path": str(cfg_path), "logfile": str(logfile), "force": args.force})
 
     def persist_result(job: dict[str, Any], result: dict[str, Any], completed_count: int) -> None:
         nonlocal rows, errors, completed, completed_keys

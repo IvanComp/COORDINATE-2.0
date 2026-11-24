@@ -521,141 +521,6 @@ def config_for(params: dict, args: argparse.Namespace, logfile: Path) -> dict:
     return cfg
 
 
-def percentile(values: list[float], q: float) -> float:
-    if not values:
-        return math.nan
-    ordered = sorted(values)
-    idx = int(round((len(ordered) - 1) * q))
-    return ordered[idx]
-
-
-def read_overhead(logfile: Path) -> dict:
-    overhead_path = logfile.with_name(logfile.stem + "_overhead.csv")
-    if not overhead_path.exists():
-        return {
-            "adapt_checks": 0,
-            "adapt_switches_overhead": 0,
-            "adapt_overhead_ms_mean": math.nan,
-            "rtlola_query_ms_mean": math.nan,
-            "scoring_ms_mean": math.nan,
-        }
-
-    with overhead_path.open(newline="") as f:
-        samples = list(csv.DictReader(f))
-    if not samples:
-        return {
-            "adapt_checks": 0,
-            "adapt_switches_overhead": 0,
-            "adapt_overhead_ms_mean": math.nan,
-            "rtlola_query_ms_mean": math.nan,
-            "scoring_ms_mean": math.nan,
-        }
-
-    def mean_field(name: str) -> float:
-        vals = [float(row[name]) for row in samples if row.get(name) not in (None, "")]
-        return statistics.mean(vals) if vals else math.nan
-
-    return {
-        "adapt_checks": len(samples),
-        "adapt_switches_overhead": sum(1 for row in samples if row.get("switched") == "True"),
-        "adapt_overhead_ms_mean": mean_field("total_overhead_ms"),
-        "rtlola_query_ms_mean": mean_field("rtlola_query_ms"),
-        "scoring_ms_mean": mean_field("scoring_ms"),
-    }
-
-
-def _minimum_delivery_time(cfg: dict, destination: int) -> float:
-    """Return the ideal source-to-destination delivery time used in the paper."""
-    topology = topologyName_dict[str(cfg["TOPOLOGY_NAME"])]
-    source = int(cfg.get("SOURCE", 0))
-    if destination == source:
-        hops = 0
-    else:
-        queue = [(source, 0)]
-        visited = {source}
-        hops = None
-        while queue:
-            room, distance = queue.pop(0)
-            for neighbor in topology[room]:
-                if neighbor == destination:
-                    hops = distance + 1
-                    queue = []
-                    break
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append((neighbor, distance + 1))
-    if hops is None:
-        raise ValueError(f"Destination {destination} is unreachable in {cfg['TOPOLOGY_NAME']}.")
-    return (
-        float(cfg["LOAD_TIME"])
-        + hops * float(cfg["MOVEMENT_TIME"])
-        + float(cfg["DROP_TIME"])
-    )
-
-
-def analyze_log(logfile: Path, sim_time: float, cfg: dict) -> dict:
-    create_events: dict[int, tuple[float, int]] = {}
-    delivery_latencies = []
-    relative_delivery_latencies = []
-    events = {}
-    switches = []
-    last_time = 0.0
-
-    with logfile.open(newline="") as f:
-        for row in csv.DictReader(f):
-            event = row.get("event", "")
-            item_id = int(row.get("itemId", -1) or -1)
-            sim_t = float(row.get("simTime", 0.0) or 0.0)
-            last_time = max(last_time, sim_t)
-            events[event] = events.get(event, 0) + 1
-
-            if event == "create" and item_id >= 0:
-                create_events[item_id] = (sim_t, int(row.get("destination", -1) or -1))
-            elif event == "deliver" and item_id in create_events:
-                created_at, destination = create_events[item_id]
-                latency = sim_t - created_at
-                delivery_latencies.append(latency)
-                relative_delivery_latencies.append(
-                    max(0.0, latency - _minimum_delivery_time(cfg, destination))
-                )
-            elif event.startswith("switch_architecture_"):
-                switches.append((sim_t, event.replace("switch_architecture_", "")))
-
-    created = events.get("create", 0)
-    delivered = events.get("deliver", 0)
-    expired = events.get("expire", 0)
-    pending = max(0, created - delivered - expired)
-
-    metrics = {
-        "created": created,
-        "delivered": delivered,
-        "expired": expired,
-        "pending": pending,
-        "failed": events.get("fail", 0),
-        "recovered": events.get("recover", 0) + events.get("recovery", 0),
-        "success_rate": delivered / created if created else 0.0,
-        "completion_rate": delivered / created if created else 0.0,
-        "expiration_rate": expired / created if created else 0.0,
-        "terminal_rate": (delivered + expired) / created if created else 0.0,
-        "throughput_per_hour": delivered / (sim_time / 3600.0) if sim_time else 0.0,
-        "avg_latency_s": statistics.mean(delivery_latencies) if delivery_latencies else math.nan,
-        "avg_relative_latency_s": (
-            statistics.mean(relative_delivery_latencies) if relative_delivery_latencies else math.nan
-        ),
-        "median_latency_s": statistics.median(delivery_latencies) if delivery_latencies else math.nan,
-        "p95_latency_s": percentile(delivery_latencies, 0.95),
-        "max_latency_s": max(delivery_latencies) if delivery_latencies else math.nan,
-        "switch_count": len(switches),
-        "fd_switch_count": sum(1 for _, arch in switches if arch == "decentralized"),
-        "sd_switch_count": sum(1 for _, arch in switches if arch == "semi-decentralized"),
-        "ce_switch_count": sum(1 for _, arch in switches if arch == "centralized-impprox"),
-        "first_switch_time": switches[0][0] if switches else math.nan,
-        "last_sim_time": last_time,
-    }
-    metrics.update(read_overhead(logfile))
-    return metrics
-
-
 def phase_for_time(phases: list[dict], sim_time: float) -> dict:
     for phase in phases:
         if float(phase["start"]) <= sim_time < float(phase["end"]):
@@ -663,43 +528,22 @@ def phase_for_time(phases: list[dict], sim_time: float) -> dict:
     return phases[-1] if phases else {}
 
 
-def analyze_phase_metrics(logfile: Path, phases: list[dict], cfg: dict) -> list[dict]:
-    """Attribute each task outcome to the dynamic phase active at creation."""
-    created: dict[int, tuple[float, int]] = {}
-    outcomes: dict[int, tuple[str, float]] = {}
-    with logfile.open(newline="") as f:
-        for row in csv.DictReader(f):
-            event = row.get("event", "")
-            item_id = int(row.get("itemId", -1) or -1)
-            sim_time = float(row.get("simTime", 0.0) or 0.0)
-            if item_id < 0:
-                continue
-            if event == "create":
-                created[item_id] = (sim_time, int(row.get("destination", -1) or -1))
-            elif event in {"deliver", "expire"} and item_id in created and item_id not in outcomes:
-                outcomes[item_id] = (event, sim_time)
-
+def analyze_phase_metrics(tasks, phases: list[dict]) -> list[dict]:
     groups: dict[tuple[str, float], dict] = {}
-    for item_id, (created_at, destination) in created.items():
-        phase = phase_for_time(phases, created_at)
+    for task in tasks.values():
+        phase = phase_for_time(phases, task.created_at)
         key = (str(phase.get("label", "unknown")), float(phase.get("severity_level", math.nan)))
         group = groups.setdefault(
             key,
             {"created": 0, "delivered": 0, "expired": 0, "latencies": [], "relative_latencies": []},
         )
         group["created"] += 1
-        outcome = outcomes.get(item_id)
-        if outcome is None:
-            continue
-        event, ended_at = outcome
-        if event == "deliver":
+        if task.outcome == "deliver":
             group["delivered"] += 1
-            latency = ended_at - created_at
+            latency = task.ended_at - task.created_at
             group["latencies"].append(latency)
-            group["relative_latencies"].append(
-                max(0.0, latency - _minimum_delivery_time(cfg, destination))
-            )
-        else:
+            group["relative_latencies"].append(max(0.0, latency - task.minimum_delivery_time))
+        elif task.outcome == "expire":
             group["expired"] += 1
 
     rows = []
@@ -798,25 +642,18 @@ def replace_row(rows: list[dict], row: dict) -> list[dict]:
 
 def execute_run_job(job: dict) -> dict:
     """Run one isolated simulation; the parent process persists campaign CSVs."""
-    logfile = Path(job["logfile"])
     cfg_path = Path(job["config_path"])
     cfg = job["cfg"]
     try:
-        # Jobs reach this function only when their run ID is not present in
-        # runs.csv as complete. A logfile may therefore be an interrupted
-        # artifact from a paused campaign and must never be analysed as data.
-        overhead_path = logfile.with_name(logfile.stem + "_overhead.csv")
-        if overhead_path.exists():
-            overhead_path.unlink()
-        _, wall_time, event_count = simulator.run(str(cfg_path))
+        result = simulator.run_with_stats(str(cfg_path), collect_tasks=True)
         return {
             "run_id": job["run_id"],
             "status": "ok",
             "error": "",
-            "wall_time": wall_time,
-            "event_count": event_count,
-            "metrics": analyze_log(logfile, cfg["SIM_TIME"], cfg),
-            "phase_metrics": analyze_phase_metrics(logfile, cfg["PHASES"], cfg),
+            "wall_time": result.wall_time,
+            "event_count": result.event_count,
+            "metrics": result.metrics,
+            "phase_metrics": analyze_phase_metrics(result.tasks, cfg["PHASES"]),
         }
     except BaseException as exc:
         return {

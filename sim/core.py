@@ -6,6 +6,8 @@ import os, sys, random, numpy as np
 from collections import deque
 from typing import List, Dict, Optional
 
+EVENT_LOG_HEADER = 'simTime,robotId,itemId,itemImportance,position,destination,event\n'
+
 # A thin read-only config holder (dict-like access with attributes).
 class Cfg:
     def __init__(self, d: Dict):
@@ -81,11 +83,13 @@ class Clock:
         ts = self.time + inc
         self.eventDict.setdefault(ts, []).append(event)
 
-    def getNextEvent(self):
+    def getNextEvent(self, through=None):
         if not self.eventDict:
             # No more events - simulation complete
             return None, None
         t = min(self.eventDict.keys())
+        if through is not None and t > through:
+            return None, None
         self.time = t
         ev = self.eventDict[t].pop(0)
         if len(self.eventDict[t]) == 0:
@@ -175,11 +179,11 @@ class Item:
     def setUber(self, robot): self.uber = robot
 
     def _log(self, simTime, event):
-        os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
+        os.makedirs(os.path.dirname(self.logfile) or '.', exist_ok=True)
         new = not os.path.exists(self.logfile)
         with open(self.logfile, 'a') as f:
             if new:
-                f.write('simTime,robotId,itemId,itemImportance,position,destination,event\n')
+                f.write(EVENT_LOG_HEADER)
             f.write(f'{simTime},{-1},{self.idx},{self.importance},{self.position.getIdx()},{self.target.getIdx()},{event}\n')
 
 
@@ -312,11 +316,11 @@ class Robot:
         return True
 
     def _log(self, simTime, event):
-        os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
+        os.makedirs(os.path.dirname(self.logfile) or '.', exist_ok=True)
         new = not os.path.exists(self.logfile)
         with open(self.logfile, 'a') as f:
             if new:
-                f.write('simTime,robotId,itemId,itemImportance,position,destination,event\n')
+                f.write(EVENT_LOG_HEADER)
             if self.item is None:
                 f.write(f'{simTime},{self.idx},{-1},{-1},{self.position.getIdx()},{self.destination.getIdx()},{event}\n')
             else:
@@ -565,26 +569,25 @@ class Robot:
 
         resume_item = mission['resume_item']
         resume_room = mission['resume_room']
-        if resume_item is None:
+        can_resume = (
+            resume_item is not None
+            and resume_item in self.space.availItems
+            and resume_item.getLocation() == resume_room
+        )
+        if not can_resume or self.position == resume_room:
             self.rescueMission = None
-            if self.position != self.space.getSource():
-                self.destination = self.space.getSource()
-                self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
-                self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
-            return
+            next_item = resume_item if can_resume else self.space.getMoreImportantItem(room=self.position)
+            if next_item is not None:
+                self.loadItem(next_item, simTime)
+                return
+            self.destination = self.space.getSource()
+        else:
+            mission['stage'] = 'return'
+            self.destination = resume_room
 
-        if self.position == resume_room:
-            self.rescueMission = None
-            if resume_item in self.space.availItems and resume_item.getLocation() == self.position:
-                self.loadItem(resume_item, simTime)
-            elif self.canLoadItem():
-                self.loadItem(self.space.getMoreImportantItem(room=self.position), simTime)
-            return
-
-        mission['stage'] = 'return'
-        self.destination = resume_room
         self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
-        self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
+        if self.optRoute:
+            self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
 
     def _continueRescueMission(self, simTime):
         mission = self.rescueMission
@@ -629,15 +632,16 @@ class Robot:
             self._resumeInterruptedMission(simTime)
 
     def _abortMission(self, newItemImportance, helpRoom, simTime, fake=False):
-        if self.cfg.LOG_RESCUE: self._log(simTime, 'rescue')
         if not self.isAvailableForRescue() or self.getItemImportance() >= newItemImportance:
             return False
+        if self.cfg.LOG_RESCUE: self._log(simTime, 'rescue')
 
         resume_item = self.item
         resume_room = self.position
         if not self.isFree():
             self.dropItem(simTime)
         self.space.clock.removeEvent(f'move-{self.getIdx()}')
+        self.optRoute = []
         self.rescueMission = {
             'fake': bool(fake),
             'help_room': helpRoom,
@@ -671,6 +675,10 @@ class Space:
         self.source.setSource()
         for i, adjs in connection_dict.items():
             rooms[i].setAdjacentRooms([rooms[j] for j in adjs])
+        self._incoming_rooms = {room: [] for room in rooms}
+        for room in rooms:
+            for destination in room.getAdjacentRooms():
+                self._incoming_rooms[destination].append(room)
         self.availItems: List[Item] = []
         self.movingItems: List[Item] = []
         self.robotPositionDict: Dict[Robot, Room] = {}
@@ -749,9 +757,20 @@ class Space:
 
     def getRobotsByProximity(self, askingRobot: Robot, bots: List[Robot], targetRoom: Room) -> List[Robot]:
         bots = [b for b in bots if b != askingRobot and b.isAvailableForRescue()]
-        prox = targetRoom.getProximity()
-        minH = min([prox[self.robotPositionDict[b]] for b in bots], default=10**9)
-        return [b for b in bots if prox[self.robotPositionDict[b]] == minH]
+        if not bots:
+            return []
+        distances = {targetRoom: 0}
+        pending = deque([targetRoom])
+        while pending:
+            room = pending.popleft()
+            for previous in self._incoming_rooms[room]:
+                if previous not in distances:
+                    distances[previous] = distances[room] + 1
+                    pending.append(previous)
+        reachable = [(bot, distances[self.robotPositionDict[bot]]) for bot in bots
+                     if self.robotPositionDict[bot] in distances]
+        minimum = min((distance for _, distance in reachable), default=None)
+        return [bot for bot, distance in reachable if distance == minimum]
 
     def schedulePeerRescue(self, requester: Robot, helper: Robot, itemImportance: int,
                            position: Room, simTime: float, fake: bool = False):
@@ -826,7 +845,7 @@ class Space:
         )
 
     def _selectCentralHelper(self, requester: Robot, itemImportance: int, position: Room, strategy: str):
-        bots = self.getAllRobots()
+        bots = [bot for bot in self.getAllRobots() if bot.getItemImportance() < itemImportance]
         if strategy == 'proximity':
             candidates = self.getRobotsByProximity(requester, bots, position)
         elif strategy == 'importance':
