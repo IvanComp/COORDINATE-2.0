@@ -75,7 +75,7 @@ from paper_experiment_utils import (
 
 
 RESULTS_ROOT = PAPER_ROOT / "RQ3"
-RQ3_EXPERIMENT_PROFILE = "extended-overhead-v2"
+RQ3_EXPERIMENT_PROFILE = "extended-overhead-v3"
 # RQ3 measures the runtime cost of the same nominal configuration analysed in
 # RQ1, so it sweeps exactly the RQ1 factors one at a time from the ring-25
 # baseline. Reusing the RQ1 grid also lets --reuse-rq1 import every run.

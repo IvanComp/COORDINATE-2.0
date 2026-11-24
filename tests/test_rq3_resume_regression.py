@@ -40,6 +40,7 @@ class RQ3ResumeRegression(unittest.TestCase):
                 ('seed', params['seed'] + 1),
                 ('sim_days', args.sim_days + 1),
                 ('log_expire', 'False'),
+                ('experiment_profile', 'extended-overhead-v2'),
                 ('fd_policy_version', 'different-version'),
                 ('expiration_time_high_s', 3600),
             ):
@@ -70,6 +71,7 @@ class RQ3ResumeRegression(unittest.TestCase):
             row = {
                 **matching, **utils.expiration_metadata(requested),
                 'status': 'ok', 'fd_policy_version': utils.FD_POLICY_VERSION,
+                'experiment_profile': utils.RQ1_PROFILE_ID,
                 'seed': 813, 'logfile': str(source_log), 'config_path': str(source_config),
             }
             with patch.object(utils, 'read_rows', return_value=[row]):
@@ -79,3 +81,6 @@ class RQ3ResumeRegression(unittest.TestCase):
                     with self.subTest(override=override):
                         source_config.write_text(json.dumps({**requested, **override}))
                         self.assertIsNone(utils.find_matching_rq1_row(cfg=requested, **matching))
+                source_config.write_text(json.dumps(requested))
+                row['experiment_profile'] = 'table-aligned-rq1-v1'
+                self.assertIsNone(utils.find_matching_rq1_row(cfg=requested, **matching))

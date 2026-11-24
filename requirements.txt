@@ -7,3 +7,4 @@ matplotlib>=3.8
 notebook>=7.0
 ipykernel>=6.0
 scipy>=1.11
+psutil>=5.9

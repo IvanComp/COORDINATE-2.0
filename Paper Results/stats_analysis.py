@@ -8,9 +8,7 @@ effect sizes are reported, and the headline numbers are defined explicitly
 (absolute difference / percentage points and relative %, averaged over
 configurations) with a two-stage bootstrap CI.
 
-Design assumed (as produced by the runners): for each configuration and each
-repetition r, all mechanisms share the same seed, so DA and a baseline form a
-pair (config, r).
+Paired analyses use only runs that share a configuration and random seed.
 
 Outputs in --out:
   descriptive.csv     n, mean, sd, median, 95% t-CI per configuration x mechanism x metric
@@ -63,7 +61,7 @@ METRICS = {
     },
     "RQ4": {
         "wall_time_s": (-1, "Wall time (s)", 1.0),
-        "max_rss_mb": (-1, "Peak memory (MB)", 1.0),
+        "peak_process_tree_rss_mb": (-1, "Peak process-tree RSS (MiB)", 1.0),
         "events_per_wall_s": (+1, "Events per second", 1.0),
         "total_output_size_mb": (-1, "Output size (MB)", 1.0),
     },
@@ -79,11 +77,13 @@ METRICS["RQ1"]["switch_count"] = (0, "Switches (DA)", 1.0)
 
 CONFIG_KEYS = {
     "RQ1": ["topology", "n_rooms", "item_spawning_time", "n_robots", "n_malicious", "fail_prob", "msg_loss"],
-    "RQ3": ["topology", "n_rooms", "item_spawning_time", "n_robots", "malicious_ratio", "fail_prob",
-            "msg_loss_prob", "comp_time", "comm_time", "sim_days"],
-    "RQ4": ["machine_label", "topology", "n_rooms", "item_spawning_time", "n_robots", "malicious_ratio",
-            "fail_prob", "msg_loss_prob", "sim_days"],
-    "RQ2": ["profile"],
+    "RQ3": ["experiment_profile", "topology", "n_rooms", "item_spawning_time", "n_robots",
+            "malicious_ratio", "fail_prob", "msg_loss_prob", "comp_time", "comm_time", "sim_days"],
+    "RQ4": ["experiment_profile", "implementation_sha256", "machine_label", "machine_node", "workers",
+            "machine_platform", "python_version", "topology", "n_rooms",
+            "item_spawning_time", "n_robots", "malicious_ratio", "fail_prob", "msg_loss_prob", "sim_days"],
+    "RQ2": ["profile", "experiment_profile", "adaptation_policy", "bandit_objective_mode",
+            "bandit_completion_weight", "sim_days"],
 }
 
 
@@ -222,16 +222,40 @@ def descriptive(df, keys, metrics):
 
 
 def pair_matrix(df, metric, mechs, scale):
-    """Wide table indexed by (config_id, rep) with one column per mechanism."""
-    w = df.pivot_table(index=["config_id", "rep"], columns="coord_label", values=metric, aggfunc="first")
+    if "seed" not in df:
+        return pd.DataFrame(index=pd.MultiIndex.from_arrays([[], []], names=["config_id", "seed"]),
+                            columns=mechs, dtype=float)
+    values = df[["config_id", "seed", "coord_label", metric]].copy()
+    values["seed"] = pd.to_numeric(values["seed"], errors="coerce")
+    values[metric] = pd.to_numeric(values[metric], errors="coerce")
+    values = values[values["seed"].notna() & np.isfinite(values["seed"])]
+    if values.duplicated(["config_id", "seed", "coord_label"]).any():
+        raise ValueError("Duplicate runs for the same configuration, seed, and mechanism")
+    w = values.pivot(index=["config_id", "seed"], columns="coord_label", values=metric)
     return w.reindex(columns=mechs) * scale
 
 
 def check_pairing(df):
-    if "seed" not in df.columns:
+    if "seed" not in df.columns or "rep" not in df.columns:
         return 0
     s = df.groupby(["config_id", "rep"])["seed"].nunique()
     return int((s > 1).sum())
+
+
+def paired_baselines(w, statics, target, direction):
+    means = w.loc[w[target].notna(), statics].groupby(level=0).mean().dropna(how="all")
+    best = means.idxmax(axis=1) if direction > 0 else means.idxmin(axis=1)
+    complete_statics = w[statics].where(w[statics].notna().all(axis=1), axis=0)
+    comparisons = {mechanism: w[mechanism] for mechanism in statics}
+    comparisons["best_static"] = pd.Series(
+        [w.loc[index, best[index[0]]] if index[0] in best else np.nan for index in w.index],
+        index=w.index, dtype=float,
+    )
+    comparisons["oracle_static"] = (
+        complete_statics.max(axis=1) if direction > 0 else complete_statics.min(axis=1)
+    )
+    comparisons["mean_static"] = complete_statics.mean(axis=1)
+    return comparisons, best
 
 
 def paired_analysis(df, keys, mechs, metrics, target, alpha):
@@ -244,18 +268,7 @@ def paired_analysis(df, keys, mechs, metrics, target, alpha):
         w = pair_matrix(df, metric, mechs, scale)
         if target not in w.columns:
             continue
-        # best static per configuration (by mean, in the metric's better direction)
-        means = w[statics].groupby(level=0).mean()
-        best = (means.idxmax(axis=1) if direction > 0 else means.idxmin(axis=1))
-        # per-seed hindsight oracle among static mechanisms
-        oracle = w[statics].max(axis=1) if direction > 0 else w[statics].min(axis=1)
-        comparisons = {m: w[m] for m in statics}
-        comparisons["best_static"] = pd.Series(
-            [w.loc[idx, best.loc[idx[0]]] if pd.notna(best.loc[idx[0]]) else np.nan for idx in w.index], index=w.index)
-        comparisons["oracle_static"] = oracle
-        # Per-seed average of the static mechanisms: the reference implied by
-        # averaging DA against all static mechanisms (as in the rejected draft).
-        comparisons["mean_static"] = w[statics].mean(axis=1)
+        comparisons, best = paired_baselines(w, statics, target, direction)
         for comp, base_series in comparisons.items():
             for cfg, g in w.groupby(level=0):
                 x = g[target].to_numpy(float)
@@ -377,14 +390,7 @@ def headline(df, paired, mechs, metrics, target, n_boot, seed):
         if direction == 0 or metric not in df.columns:
             continue
         w = pair_matrix(df, metric, mechs, scale)
-        means = w[statics].groupby(level=0).mean()
-        best = means.idxmax(axis=1) if direction > 0 else means.idxmin(axis=1)
-        oracle = w[statics].max(axis=1) if direction > 0 else w[statics].min(axis=1)
-        comp_series = {m: w[m] for m in statics}
-        comp_series["best_static"] = pd.Series(
-            [w.loc[i, best.loc[i[0]]] for i in w.index], index=w.index)
-        comp_series["oracle_static"] = oracle
-        comp_series["mean_static"] = w[statics].mean(axis=1)
+        comp_series, _ = paired_baselines(w, statics, target, direction)
         # "all static pooled": what the original paper averaged (R3.5)
         for comp, ser in comp_series.items():
             name = f"{target}_vs_{comp}"
@@ -427,7 +433,7 @@ def latex_table(head: pd.DataFrame, target: str) -> str:
     h = head[head["slice"] == "all"]
     lines = [
         r"\begin{table}[t]", r"\centering",
-        rf"\caption{{{target} against static mechanisms, averaged over configurations (10 paired repetitions each). "
+        rf"\caption{{{target} against static mechanisms, averaged over configurations using matched seeds. "
         r"$\Delta$: mean of per-configuration differences (percentage points for rates); 95\% CI from a two-stage bootstrap "
         r"(configurations, then repetitions). W/T/L: configurations where the difference is significant in favour of / not significant / "
         r"against " + target + r" (Wilcoxon signed-rank, Benjamini--Hochberg, $\alpha=0.05$).}",
@@ -452,16 +458,15 @@ def latex_table(head: pd.DataFrame, target: str) -> str:
 
 def write_report(out, args, df, keys, mechs, desc, paired, head, worse, unpaired):
     n_cfg = df["config_id"].nunique()
-    reps = df.groupby(["config_id", "coord_label"])["rep"].nunique()
+    reps = df.groupby(["config_id", "coord_label"]).size()
     L = [f"# Statistical analysis: {args.rq}", "",
          f"Input: `{args.runs}`  ", f"Configurations: {n_cfg}; mechanisms: {', '.join(mechs)}; "
          f"repetitions per cell: min {reps.min()}, max {reps.max()}; ok runs: {len(df)}.  ",
          f"Configuration keys: {', '.join(keys)}.  "]
     if unpaired:
-        L.append(f"**Warning:** {unpaired} (configuration, repetition) cells have different seeds across mechanisms.")
-    else:
-        L.append("Pairing check: every (configuration, repetition) uses one seed for all mechanisms.")
-    min_p = 2 / 2 ** int(reps.min()) if len(reps) else math.nan
+        L.append(f"{unpaired} configuration and repetition groups contain different seeds across mechanisms.")
+    L.append(f"Pairs per comparison and configuration range from {paired['n_pairs'].min()} to "
+             f"{paired['n_pairs'].max()}. Comparisons use matching seeds within each configuration.")
     L += ["", "## Headline (all configurations)", "",
           "| Metric | Comparison | Δ (abs) | 95% CI | Rel. % | 95% CI | W/T/L (BH) | global p |",
           "|---|---|---|---|---|---|---|---|"]
@@ -482,22 +487,14 @@ def write_report(out, args, df, keys, mechs, desc, paired, head, worse, unpaired
         if len(worse) > 60:
             L.append(f"| … | {len(worse) - 60} more rows in da_worse.csv | | | |")
         L.append("")
-    L += ["## Power note", "",
-          f"With n = {int(reps.min())} paired repetitions, the smallest two-sided p-value an exact Wilcoxon signed-rank "
-          f"test can return is {min_p:.4f}. A Holm correction over {n_cfg} configurations requires p < {0.05 / max(n_cfg,1):.5f} "
-          "for the first rejection, so per-configuration Holm-significant differences are impossible by construction. "
-          "For this reason the per-configuration outcomes use Benjamini–Hochberg (false discovery rate), Holm-adjusted values "
-          "are reported in paired.csv for completeness, and headline claims rest on the aggregate CI and on the global test "
-          "over configurations.", "",
-          "## Methods paragraph (draft for the paper)", "",
-          f"Each configuration was simulated {int(reps.min())} times per mechanism. Repetition $r$ of a configuration "
-          "uses the same random seed for all mechanisms, so DA and each static mechanism form paired samples. "
+    L += ["## Methods paragraph (draft for the paper)", "",
+          "We paired DA and each static mechanism by configuration and simulation seed. "
           "For every mean we report a 95% confidence interval based on the Student t distribution. "
           "For each configuration we test the paired differences between DA and each baseline with a two-sided "
           "Wilcoxon signed-rank test, correct p-values across configurations with the Benjamini–Hochberg procedure "
-          "(α = 0.05), and report the Vargha–Delaney A12 effect size. Besides the individual static mechanisms, "
+          f"(α = {args.alpha:g}), and report the Vargha–Delaney A12 effect size. Besides the individual static mechanisms, "
           "DA is compared with the best static mechanism of each configuration (selected on the same data, which favours "
-          "the baseline) and with a per-seed hindsight oracle that picks the best static mechanism for every repetition. "
+          "the baseline) and with a hindsight oracle that picks the best static mechanism for each seed shared by all mechanisms. "
           "Aggregate improvements are the mean of per-configuration differences, expressed in percentage points for rates, "
           "and as relative change (mean difference divided by the mean baseline value over configurations); their 95% confidence intervals come from a two-stage "
           f"bootstrap ({args.n_boot} resamples) that resamples configurations and then repetitions within each configuration. "
@@ -527,18 +524,28 @@ def main() -> None:
     desc.to_csv(out / "descriptive.csv", index=False)
     print(f"[stats] {args.rq}: {df['config_id'].nunique()} configurations, {len(df)} ok runs, mechanisms {mechs}")
 
-    if args.target not in mechs or len(mechs) < 2:
-        print("[stats] Only descriptive statistics (no paired comparison possible).")
+    comparable = args.target in mechs and len(mechs) >= 2
+    paired = paired_analysis(df, keys, mechs, metrics, args.target, args.alpha) if comparable else pd.DataFrame()
+    if paired.empty:
+        print("[stats] Descriptive statistics only. No paired comparisons are available.")
         L = [f"# Descriptive statistics: {args.rq}", "", f"Input: `{args.runs}`", "",
+             "Paired comparisons require at least two mechanisms with a shared configuration and seed.", "",
              "| Configuration | Metric | n | mean | 95% CI |", "|---|---|---|---|---|"]
         for _, r in desc.iterrows():
             L.append(f"| {fmt_config(r, keys)} | {r['label']} | {r['n']} | {r['mean']:.3f} | "
                      f"[{r['ci95_low']:.3f}, {r['ci95_high']:.3f}] |")
         (out / "report.md").write_text("\n".join(L) + "\n")
+        for filename, columns in (
+            ("paired.csv", ["config_id", "metric", "comparison", "n_pairs"]),
+            ("friedman.csv", ["config_id", "metric", "n_blocks"]),
+            ("headline.csv", ["comparison", "metric", "slice", "n_configs"]),
+            ("da_worse.csv", ["config_id", "metric", "comparison"]),
+        ):
+            pd.DataFrame(columns=columns).to_csv(out / filename, index=False)
+        (out / "headline.tex").write_text("")
         return
 
     unpaired = check_pairing(df)
-    paired = paired_analysis(df, keys, mechs, metrics, args.target, args.alpha)
     paired.to_csv(out / "paired.csv", index=False)
     friedman(df, keys, mechs, metrics).to_csv(out / "friedman.csv", index=False)
     head = headline(df, paired, mechs, metrics, args.target, args.n_boot, args.seed)

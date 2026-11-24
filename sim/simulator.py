@@ -1,5 +1,7 @@
 
 import os, sys, time, json, random
+from bisect import bisect_right
+from math import isfinite
 from threading import Lock
 import numpy as np
 
@@ -9,6 +11,70 @@ from .adaptation_overhead import log_overhead_statistics, overhead_log_path
 from .run_statistics import RunResult, TaskRecord, summarize_run, summary_path, write_summary
 
 _simulation_lock = Lock()
+
+_PHASE_PARAMETERS = (
+    'N_MALICIOUS', 'FAIL_PROB', 'COMM_FAIL_PROB', 'COORDINATOR_SERVICE_TIME',
+    'COORDINATOR_FAILURE_PROB', 'COORDINATOR_AVAILABLE', 'RECOVERY_TIME',
+    'ITEM_SPAWNING_TIME',
+)
+
+
+def _phase_transitions(cfg, phases):
+    if not phases:
+        return {}
+    base = {name: getattr(cfg, name) for name in _PHASE_PARAMETERS}
+    if cfg.ITEM_SPAWNING_DISTR == 'trace':
+        del base['ITEM_SPAWNING_TIME']
+    transitions = {}
+    previous_end = 0.0
+    for start, end, phase in sorted(
+        ((float(phase['start']), float(phase['end']), phase) for phase in phases),
+        key=lambda entry: entry[0],
+    ):
+        if not isfinite(start) or not isfinite(end) or not previous_end <= start < end:
+            raise ValueError('PHASES must have finite, nonnegative, non-overlapping intervals with start < end')
+        transitions[start] = {name: phase.get(name, value) for name, value in base.items()}
+        transitions[end] = base
+        previous_end = end
+    return transitions
+
+
+class _PhasedArrivals:
+    def __init__(self, cfg, transitions, seed):
+        self.times = [0.0]
+        mean = float(cfg.ITEM_SPAWNING_TIME)
+        self.means = [mean]
+        for time, settings in transitions.items():
+            next_mean = float(settings.get('ITEM_SPAWNING_TIME', mean))
+            if time == 0:
+                self.means[0] = next_mean
+            elif next_mean != self.means[-1]:
+                self.times.append(time)
+                self.means.append(next_mean)
+        self.distribution = cfg.ITEM_SPAWNING_DISTR
+        self.rng = np.random.default_rng(None if seed is None else np.random.SeedSequence([int(seed), 1]))
+        self.variable = len(self.times) > 1 and self.distribution in {'exponential', 'uniform', 'deterministic'}
+        if self.variable and any(not isfinite(mean) or mean <= 0 for mean in self.means):
+            raise ValueError('Phased ITEM_SPAWNING_TIME must be finite and positive')
+
+    def schedule_next(self, clock):
+        if self.distribution == 'exponential':
+            remaining = self.rng.exponential()
+        elif self.distribution == 'uniform':
+            remaining = self.rng.uniform(0.0, 2.0)
+        else:
+            remaining = 1.0
+        now = clock.getTime()
+        index = bisect_right(self.times, now) - 1
+        while index + 1 < len(self.times):
+            boundary = self.times[index + 1]
+            exposure = (boundary - now) / self.means[index]
+            if remaining <= exposure:
+                break
+            remaining -= exposure
+            now = boundary
+            index += 1
+        clock.scheduleAt('item', now + remaining * self.means[index])
 
 def _sort_events_csv_by_time(csv_path: str) -> int:
     if not os.path.exists(csv_path):
@@ -143,6 +209,9 @@ def _build_cfg(config_path: str) -> Cfg:
 
 
 def _get_rtlola_latency(metrics: dict):
+    if metrics.get('monitor_delivered_tasks_1h') == 0:
+        return None, None
+
     metric_names = (
         'mean_relative_latency_1h',
         'mean_latency_1h',
@@ -153,12 +222,12 @@ def _get_rtlola_latency(metrics: dict):
     )
     for metric_name in metric_names:
         value = metrics.get(metric_name)
-        if value is not None and np.isfinite(value) and value > 0:
+        if value is not None and np.isfinite(value) and value >= 0:
             return value, metric_name
     return None, None
 
 
-def _apply_rtlola_context_metrics(cfg: Cfg, metrics: dict, observed: dict) -> dict:
+def _apply_rtlola_context_metrics(cfg: Cfg, metrics: dict, observed: dict, window_duration: float) -> dict:
     def monitor_value(name: str, default: float = 0.0) -> float:
         try:
             value = float(observed.get(name, default))
@@ -222,10 +291,22 @@ def _apply_rtlola_context_metrics(cfg: Cfg, metrics: dict, observed: dict) -> di
             'completion_source': 'rtlola_terminal_outcomes_1h',
             'pending_ratio': pending_tasks / max(1, created_count),
             'deadline_miss_rate': expired_count / max(1, created_count),
-            'throughput_rate': delivered_count / max(1e-9, float(getattr(cfg, 'ADAPTATION_WINDOW', 3600.0))),
+            'throughput_rate': delivered_count / window_duration,
             'throughput_norm': min(1.0, delivered_count / max(1, created_count)),
         })
     return metrics
+
+
+def _rtlola_service_metrics(observed):
+    delivered = int(observed.get('service_delivered_tasks', 0))
+    expired = int(observed.get('service_expired_tasks', 0))
+    terminal = delivered + expired
+    return {
+        'delivered_window': delivered,
+        'terminal_tasks_window': terminal,
+        'completion_available': terminal > 0,
+        'completion_rate': delivered / terminal if terminal else None,
+    }, observed.get('service_relative_latency') if delivered else None
 
 
 def _minimum_delivery_time(cfg: Cfg, space: Space, target_room: Room) -> float:
@@ -297,6 +378,7 @@ def _runtime_adaptation_metrics(
     idle_agents = sum(
         1 for robot in robots
         if robot.isHealthy() and robot.isFree() and not robot.hasOtherTasks()
+        and not robot.isRescuing() and not robot.rescueReserved
     )
     idle_ratio = idle_agents / max(1, len(robots))
 
@@ -488,8 +570,33 @@ def _run(config_path, collect_tasks):
         topo = topologyName_dict[cfg.TOPOLOGY_NAME]
     if cfg.N_ROOMS != len(topo):
         print('N_ROOMS mismatch with selected TOPOLOGY_NAME'); sys.exit(-1)
-    _validate_targets(cfg, len(topo))
+    targets = _validate_targets(cfg, len(topo))
+    arrival_targets = targets if targets is not None else [i for i in range(len(topo)) if i != cfg.SOURCE]
+    transitions = _phase_transitions(cfg, vars(cfg).pop('PHASES', None))
+    phased_arrivals = _PhasedArrivals(cfg, transitions, seed) if transitions else None
+    variable_arrivals = phased_arrivals is not None and phased_arrivals.variable
 
+    from .contextual_bandit import BANDIT_POLICIES, POLICY_VERSION, ConservativeContextualBandit
+
+    adaptation_policy = str(cfg.ADAPTATION_POLICY).lower()
+    contextual = cfg.ARCHITECTURE == 'dynamic-adaptation' and adaptation_policy in BANDIT_POLICIES
+    adaptation_interval = float(cfg.ADAPTATION_CHECK_INTERVAL)
+    latency_window_duration = float(cfg.ADAPTATION_WINDOW)
+    if cfg.ARCHITECTURE == 'dynamic-adaptation' and (not isfinite(adaptation_interval) or adaptation_interval <= 0):
+        raise ValueError('ADAPTATION_CHECK_INTERVAL must be finite and positive')
+    service_window_duration = None
+    if contextual:
+        latency_window_duration = max(
+            latency_window_duration,
+            float(getattr(cfg, 'BANDIT_FEEDBACK_WINDOW', latency_window_duration)),
+        )
+        service_window_duration = float(getattr(cfg, 'ADAPTATION_SERVICE_WINDOW', latency_window_duration / 2))
+        if not 0 < service_window_duration <= latency_window_duration:
+            raise ValueError('ADAPTATION_SERVICE_WINDOW must be positive and no longer than the feedback window')
+    bandit_feedback_window = max(adaptation_interval, latency_window_duration)
+    latency_reassessment_time = float(getattr(cfg, 'ADAPTATION_LATENCY_REASSESSMENT_TIME', 3 * bandit_feedback_window))
+    if contextual and (not isfinite(latency_reassessment_time) or latency_reassessment_time < 0):
+        raise ValueError('ADAPTATION_LATENCY_REASSESSMENT_TIME must be finite and nonnegative')
     # Initialize RTLola monitor for dynamic-adaptation
     rtlola_monitor = None
     if cfg.ARCHITECTURE == 'dynamic-adaptation':
@@ -507,7 +614,10 @@ def _run(config_path, collect_tasks):
                 spec_file = candidate_root if os.path.exists(candidate_root) else candidate_pkg
             
             rtlola_binary = getattr(cfg, 'RTLOLA_BINARY_PATH', None)
-            rtlola_monitor = RTLolaMonitor(spec_file=spec_file, rtlola_binary=rtlola_binary)
+            rtlola_monitor = RTLolaMonitor(
+                spec_file=spec_file, rtlola_binary=rtlola_binary, adaptation_window=latency_window_duration,
+                service_window=service_window_duration,
+            )
             # print(f"[RTLola] Using spec: {spec_file}")
         except Exception as e:
             print(f"[ERROR] Failed to initialize RTLola monitor: {e}")
@@ -528,6 +638,10 @@ def _run(config_path, collect_tasks):
     # init env
     start_wall = time.time()
     clock = Clock()
+    phase_boundaries = iter(boundary for boundary in transitions if boundary <= cfg.SIM_TIME)
+    boundary = next(phase_boundaries, None)
+    if boundary is not None:
+        clock.scheduleAt('phase', boundary)
     rooms = [Room(i) for i in range(cfg.N_ROOMS)]
     space = Space(cfg, rooms, topo, clock, source=rooms[cfg.SOURCE])
     
@@ -570,13 +684,16 @@ def _run(config_path, collect_tasks):
             ['deterministic'],
         )
 
-    # schedule first item
-    clock.scheduleEvent('item', [cfg.ITEM_SPAWNING_TIME], [cfg.ITEM_SPAWNING_TRACE], [cfg.ITEM_SPAWNING_DISTR])
+    if variable_arrivals:
+        phased_arrivals.schedule_next(clock)
+    elif 0.0 in transitions:
+        clock.scheduleAt('start-arrivals', 0.0)
+    else:
+        clock.scheduleEvent('item', [cfg.ITEM_SPAWNING_TIME], [cfg.ITEM_SPAWNING_TRACE], [cfg.ITEM_SPAWNING_DISTR])
 
     itemIdx = 0
     event_count = 0
     last_adaptation_check = 0.0
-    adaptation_interval = getattr(cfg, 'ADAPTATION_CHECK_INTERVAL', 300.0)  # Check every 5 minutes by default
     
     # Overhead tracking for dynamic adaptation
     adaptation_overhead_total = 0.0  # Total wall-clock time spent on adaptation
@@ -590,26 +707,19 @@ def _run(config_path, collect_tasks):
     last_switch_time = -300.0 # Allow immediate switch at start
     min_time_between_switches = float(getattr(cfg, 'ADAPTATION_MIN_SWITCH_INTERVAL', 30.0))
     candidate_history = []
-    adaptation_policy = str(getattr(cfg, 'ADAPTATION_POLICY', 'contextual-bandit')).lower()
-    bandit_policy = None
+    bandit_policy = ConservativeContextualBandit(cfg) if contextual else None
+    bandit_policy_version = POLICY_VERSION if contextual else None
     bandit_pending_action = None
     bandit_pending_context = None
     bandit_pending_started_at = None
-    bandit_feedback_window = max(
-        float(getattr(cfg, 'ADAPTATION_CHECK_INTERVAL', 300.0)),
-        float(getattr(cfg, 'BANDIT_FEEDBACK_WINDOW', getattr(cfg, 'ADAPTATION_WINDOW', 3600.0))),
-    )
-    if cfg.ARCHITECTURE == 'dynamic-adaptation':
-        try:
-            from .contextual_bandit import BANDIT_POLICIES, ConservativeContextualBandit
-            if adaptation_policy in BANDIT_POLICIES:
-                bandit_policy = ConservativeContextualBandit(cfg)
-        except Exception as e:
-            print(f"[WARNING] Could not initialize contextual-bandit policy: {e}")
+    architecture_since = 0.0
+    previous_architecture = None
+    last_service_observation = None
+    degraded_checks = 0
+    required_degraded_checks = max(1, int(getattr(cfg, 'ADAPTATION_PERSISTENCE_CHECKS', 2))) if rtlola_monitor else 2
     
     # Relative-latency tracking for adaptation (Python-based fallback)
     latency_window = []  # Store (timestamp, relative latency) tuples
-    latency_window_duration = float(getattr(cfg, 'ADAPTATION_WINDOW', 3600.0))
     created_window = []
     delivered_window = []
     expired_window = []
@@ -629,63 +739,34 @@ def _run(config_path, collect_tasks):
             if event is None:
                 break
             
-            # Dynamic Parameter Updates (Scenario A)
-            # Check if we have phases defined in config
-            if hasattr(cfg, 'PHASES') and cfg.PHASES:
-                for phase in cfg.PHASES:
-                    if phase['start'] <= ts < phase['end']:
-                        # Apply phase parameters
-                        if 'N_MALICIOUS' in phase:
-                            _apply_malicious_count(cfg, bots, phase['N_MALICIOUS'])
+            if event == 'phase':
+                for name, value in transitions[ts].items():
+                    if name == 'N_MALICIOUS':
+                        _apply_malicious_count(cfg, bots, value)
+                    else:
+                        setattr(cfg, name, value)
+                boundary = next(phase_boundaries, None)
+                if boundary is not None:
+                    clock.scheduleAt('phase', boundary, first=True)
+                continue
+            if event == 'start-arrivals':
+                clock.scheduleEvent('item', [cfg.ITEM_SPAWNING_TIME], [cfg.ITEM_SPAWNING_TRACE], [cfg.ITEM_SPAWNING_DISTR])
+                continue
 
-                        if 'FAIL_PROB' in phase and cfg.FAIL_PROB != phase['FAIL_PROB']:
-                            cfg.FAIL_PROB = phase['FAIL_PROB']
-                            # print(f"[Phase] Time {ts:.1f}: Changed FAIL_PROB to {cfg.FAIL_PROB}")
-                        
-                        if 'COMM_FAIL_PROB' in phase and cfg.COMM_FAIL_PROB != phase['COMM_FAIL_PROB']:
-                            cfg.COMM_FAIL_PROB = phase['COMM_FAIL_PROB']
-                            # print(f"[Phase] Time {ts:.1f}: Changed COMM_FAIL_PROB to {cfg.COMM_FAIL_PROB}")
-
-                        if (
-                            'COORDINATOR_SERVICE_TIME' in phase
-                            and cfg.COORDINATOR_SERVICE_TIME != phase['COORDINATOR_SERVICE_TIME']
-                        ):
-                            cfg.COORDINATOR_SERVICE_TIME = phase['COORDINATOR_SERVICE_TIME']
-                            # print(f"[Phase] Time {ts:.1f}: Changed coordinator service time")
-
-                        if (
-                            'COORDINATOR_FAILURE_PROB' in phase
-                            and cfg.COORDINATOR_FAILURE_PROB != phase['COORDINATOR_FAILURE_PROB']
-                        ):
-                            cfg.COORDINATOR_FAILURE_PROB = phase['COORDINATOR_FAILURE_PROB']
-                            # print(f"[Phase] Time {ts:.1f}: Changed coordinator failure probability")
-
-                        if (
-                            'COORDINATOR_AVAILABLE' in phase
-                            and cfg.COORDINATOR_AVAILABLE != phase['COORDINATOR_AVAILABLE']
-                        ):
-                            cfg.COORDINATOR_AVAILABLE = phase['COORDINATOR_AVAILABLE']
-                            # print(f"[Phase] Time {ts:.1f}: Changed coordinator availability")
-
-                        if 'RECOVERY_TIME' in phase and cfg.RECOVERY_TIME != phase['RECOVERY_TIME']:
-                            cfg.RECOVERY_TIME = phase['RECOVERY_TIME']
-                            # print(f"[Phase] Time {ts:.1f}: Changed RECOVERY_TIME to {cfg.RECOVERY_TIME}")
-                            
-                        if 'ITEM_SPAWNING_TIME' in phase and cfg.ITEM_SPAWNING_TIME != phase['ITEM_SPAWNING_TIME']:
-                            cfg.ITEM_SPAWNING_TIME = phase['ITEM_SPAWNING_TIME']
-                            # print(f"[Phase] Time {ts:.1f}: Changed ITEM_SPAWNING_TIME to {cfg.ITEM_SPAWNING_TIME}")
-                        break
-            
-            # Artificial delay removed
-            # time.sleep(0.001)
-            
             event_count += 1
             
             # Process simulation event
             if event == 'item':
-                trg = getTargetRoom(cfg, rooms)
-                item = Item(cfg, logfile, itemIdx, space, ts, imp=-1, target=trg)
-                space.newItem(item)
+                if variable_arrivals:
+                    rng = phased_arrivals.rng
+                    trg = rooms[rng.choice(arrival_targets)]
+                    item = Item(cfg, logfile, itemIdx, space, ts, target=trg, rng=rng)
+                    space.newItem(item, schedule_next=False)
+                    phased_arrivals.schedule_next(clock)
+                else:
+                    trg = getTargetRoom(cfg, rooms)
+                    item = Item(cfg, logfile, itemIdx, space, ts, target=trg)
+                    space.newItem(item)
                 item_create_times[itemIdx] = ts  # Track creation time
                 item_min_delivery_times[itemIdx] = _minimum_delivery_time(cfg, space, item.getTarget())
                 if collect_tasks:
@@ -732,9 +813,8 @@ def _run(config_path, collect_tasks):
                     if collect_tasks:
                         tasks[item_id].outcome = 'deliver'
                         tasks[item_id].ended_at = ts
-                    if delivery_latency > 0:
-                        latency_window.append((ts, relative_latency))
-                        latency_window = [(t, lat) for t, lat in latency_window if ts - t <= latency_window_duration]
+                    latency_window.append((ts, relative_latency))
+                    latency_window = [(t, lat) for t, lat in latency_window if ts - t <= latency_window_duration]
                     if rtlola_monitor:
                         rtlola_monitor.send_event(
                             ts, -1, item_id, -1, -1, delivered_item.getTarget().getIdx(), 'deliver',
@@ -811,10 +891,14 @@ def _run(config_path, collect_tasks):
                 rtlola_query_start = time.time()
                 monitor_metrics = rtlola_monitor.snapshot(ts)
                 rtlola_latency, rtlola_metric = _get_rtlola_latency(monitor_metrics)
+                latency_window = [(t, lat) for t, lat in latency_window if ts - t <= latency_window_duration]
                 python_latency = sum(lat for _, lat in latency_window) / len(latency_window) if latency_window else None
                 if rtlola_latency is not None:
                     raw_latency = rtlola_latency
                     latency_source = f'rtlola:{rtlola_metric}'
+                elif monitor_metrics.get('monitor_delivered_tasks_1h') == 0:
+                    raw_latency = None
+                    latency_source = 'none'
                 else:
                     raw_latency = python_latency
                     latency_source = 'python_window' if python_latency is not None else 'none'
@@ -831,16 +915,18 @@ def _run(config_path, collect_tasks):
                     latency_window_duration,
                 )
                 runtime_metrics = _apply_rtlola_context_metrics(
-                    cfg, runtime_metrics, monitor_metrics,
+                    cfg, runtime_metrics, monitor_metrics, latency_window_duration,
                 )
+                monitor_window_end = monitor_metrics.get('coordinate_window_end')
+                observation_end = ts
+                if runtime_metrics['completion_source'] == 'rtlola_terminal_outcomes_1h' and monitor_window_end is not None:
+                    observation_end = monitor_window_end
 
-                if raw_latency is not None:
-                    if smoothed_latency is None:
-                        smoothed_latency = raw_latency
-                    else:
-                        smoothed_latency = alpha * raw_latency + (1 - alpha) * smoothed_latency
-
-                effective_latency = smoothed_latency if smoothed_latency is not None else raw_latency
+                if raw_latency is None or smoothed_latency is None:
+                    smoothed_latency = raw_latency
+                else:
+                    smoothed_latency = alpha * raw_latency + (1 - alpha) * smoothed_latency
+                effective_latency = smoothed_latency
 
                 scoring_start = time.time()
                 current_arch = cfg.current_architecture
@@ -861,15 +947,35 @@ def _run(config_path, collect_tasks):
                 reward_details = {}
                 bandit_feedback_elapsed = None
                 bandit_feedback_ready = False
+                service_state = service_reason = service_confirmations = None
+                service_latency = service_sample_end = service_metrics = None
 
                 if bandit_policy is not None:
-                    from .contextual_bandit import build_context, context_reward
+                    from .contextual_bandit import build_context, context_reward, service_status
 
-                    bandit_context = build_context(cfg, runtime_metrics, effective_latency, current_arch)
-                    decision_due = bandit_pending_action is None
+                    bandit_context = build_context(cfg, runtime_metrics, raw_latency, current_arch)
+                    service_metrics, service_latency = _rtlola_service_metrics(monitor_metrics)
+                    service_state, service_reason = service_status(cfg, service_metrics, service_latency)
+                    service_sample_end = monitor_metrics.get('coordinate_service_window_end')
+                    if service_sample_end is not None and (
+                        last_service_observation is None or service_sample_end > last_service_observation
+                    ):
+                        last_service_observation = service_sample_end
+                        full_service_window = service_sample_end >= architecture_since + service_window_duration
+                        degraded_checks = degraded_checks + 1 if full_service_window and service_state == 'degraded' else 0
+                    service_confirmations = degraded_checks
+                    _, feedback_reason = service_status(cfg, runtime_metrics, raw_latency)
+                    sustained_completion_failure = (
+                        'completion_below_target' in service_reason and 'completion_below_target' in feedback_reason
+                    )
+
+                    if bandit_pending_action is None:
+                        bandit_pending_action = current_arch
+                        bandit_pending_context = bandit_context
+                        bandit_pending_started_at = ts
 
                     if bandit_pending_action is not None and bandit_pending_context is not None:
-                        bandit_feedback_elapsed = max(0.0, ts - float(bandit_pending_started_at or ts))
+                        bandit_feedback_elapsed = max(0.0, observation_end - bandit_pending_started_at)
                         if bandit_feedback_elapsed >= bandit_feedback_window:
                             bandit_reward, reward_details = context_reward(
                                 cfg,
@@ -884,19 +990,49 @@ def _run(config_path, collect_tasks):
                                 bandit_pending_action = None
                                 bandit_pending_context = None
                                 bandit_pending_started_at = None
-                                decision_due = True
                                 bandit_feedback_ready = True
                             else:
-                                switch_reason = 'waiting_terminal_outcomes'
+                                switch_reason = (
+                                    'waiting_latency_observations'
+                                    if reward_details.get('reward_mode') == 'insufficient_latency_observations'
+                                    else 'waiting_terminal_outcomes'
+                                )
                         else:
                             switch_reason = 'waiting_feedback_window'
 
+                    decision_due = False
+                    if service_state == 'healthy':
+                        switch_reason = 'service_healthy'
+                    elif service_state == 'unknown':
+                        if switch_reason not in {'waiting_terminal_outcomes', 'waiting_latency_observations'}:
+                            switch_reason = 'waiting_service_evidence'
+                    elif observation_end < architecture_since + bandit_feedback_window:
+                        switch_reason = 'waiting_feedback_window'
+                    elif service_confirmations < required_degraded_checks:
+                        switch_reason = 'waiting_service_persistence'
+                    elif ts - last_switch_time < min_time_between_switches:
+                        switch_reason = 'cooldown'
+                    else:
+                        decision_due = True
+
                     if decision_due:
-                        decision = bandit_policy.select(bandit_context, current_arch)
+                        decision = bandit_policy.select_recovery(bandit_context, current_arch)
                         candidate_arch = decision['candidate_architecture']
                         best_arch = candidate_arch
                         scores = decision.get('scores', {})
                         switch_reason = decision.get('reason', 'bandit')
+                        if latency_reassessment_time > 0 and best_arch != current_arch and not sustained_completion_failure:
+                            if (best_arch == previous_architecture
+                                    and observation_end < architecture_since + latency_reassessment_time):
+                                best_arch = current_arch
+                                switch_reason = 'waiting_latency_reassessment'
+                            elif not decision['initial_sampling']:
+                                estimates = decision['estimated_values']
+                                active_estimate = estimates.get(current_arch)
+                                if (active_estimate is not None
+                                        and estimates[best_arch] < active_estimate + bandit_policy.improvement_margin):
+                                    best_arch = current_arch
+                                    switch_reason = 'insufficient_expected_latency_recovery'
                         selected_value = scores.get(best_arch)
                         current_value = scores.get(current_arch)
                         score_details = {
@@ -926,14 +1062,14 @@ def _run(config_path, collect_tasks):
                         selected_value = scores.get(current_arch)
                         score_details = {
                             'policy': 'contextual-bandit',
-                            'state': 'waiting_feedback',
+                            'state': service_state,
                             'score': selected_value,
                             'selected_value': selected_value,
                             'current_value': selected_value,
                             'estimated_values': {},
                             'confidence_bounds': confidence_bounds,
                             'selection_switch_cost': bandit_policy.selection_switch_cost,
-                            'epsilon': bandit_policy.epsilon,
+                            'epsilon': 0.0,
                             'explored': False,
                             'initial_sampling': False,
                             'improvement_margin': bandit_policy.improvement_margin,
@@ -981,11 +1117,8 @@ def _run(config_path, collect_tasks):
                     if time_since_last_switch < min_time_between_switches:
                         best_arch = current_arch
                         switch_reason = 'cooldown'
-                    elif adaptation_policy not in {'latency-threshold', 'legacy', 'latency'}:
-                        required_checks = (
-                            1 if bandit_policy is not None
-                            else max(1, int(getattr(cfg, 'ADAPTATION_PERSISTENCE_CHECKS', 2)))
-                        )
+                    elif bandit_policy is None and adaptation_policy not in {'latency-threshold', 'legacy', 'latency'}:
+                        required_checks = required_degraded_checks
                         bypass_persistence = (
                             score_details.get('critical_override', False)
                             and _cfg_bool(cfg, 'ADAPTATION_CRITICAL_BYPASS_PERSISTENCE', True)
@@ -1012,12 +1145,15 @@ def _run(config_path, collect_tasks):
                     adaptation_switch_count += 1
                     switches.append((ts, best_arch))
                     last_switch_time = ts
+                    architecture_since = ts
+                    previous_architecture = current_arch
+                    degraded_checks = 0
                     cfg.set_architecture(best_arch)
                     candidate_history = []
                     with open(logfile, 'a') as f:
                         f.write(f'{ts},-2,-1,-1,-1,-1,switch_architecture_{best_arch}\n')
 
-                if bandit_policy is not None and bandit_pending_action is None:
+                if bandit_policy is not None and (switched_now or bandit_pending_action is None):
                     bandit_pending_action = best_arch
                     bandit_pending_context = bandit_context
                     bandit_pending_started_at = ts
@@ -1043,6 +1179,18 @@ def _run(config_path, collect_tasks):
                     'latency': effective_latency,
                     'raw_latency': raw_latency,
                     'latency_source': latency_source,
+                    'service_state': service_state,
+                    'service_reason': service_reason,
+                    'service_degraded_checks': service_confirmations,
+                    'service_required_checks': required_degraded_checks if bandit_policy is not None else None,
+                    'service_window_s': service_window_duration,
+                    'service_window_end': service_sample_end,
+                    'service_relative_latency_s': service_latency,
+                    'service_terminal_tasks': service_metrics['terminal_tasks_window'] if service_metrics else None,
+                    'service_completion_rate': service_metrics['completion_rate'] if service_metrics else None,
+                    'bandit_policy_version': bandit_policy_version,
+                    'monitor_window_end': monitor_window_end,
+                    'monitor_window_s': latency_window_duration,
                     'threshold_low': threshold_context.get('low'),
                     'threshold_high': threshold_context.get('high'),
                     'threshold_mode': threshold_context.get('mode'),
@@ -1093,6 +1241,7 @@ def _run(config_path, collect_tasks):
                     'bandit_pending_action': bandit_pending_action,
                     'bandit_reward_version': score_details.get('reward_details', {}).get('reward_version'),
                     'bandit_reward_ready': score_details.get('reward_details', {}).get('reward_ready'),
+                    'bandit_reward_no_service': score_details.get('reward_details', {}).get('no_service'),
                     'bandit_reward_mode': score_details.get('reward_details', {}).get('reward_mode'),
                     'bandit_completion_target': score_details.get('reward_details', {}).get('completion_target'),
                     'bandit_completion_rate': score_details.get('reward_details', {}).get('completion_rate'),
@@ -1131,7 +1280,7 @@ def _run(config_path, collect_tasks):
                     'bandit_context_key': score_details.get('context_key'),
                     'bandit_regime': score_details.get('regime'),
                     'context_latency_norm': bandit_context.get('latency_norm'),
-                    'context_latency_missing': bandit_context.get('latency_missing'),
+                    'context_latency_missing': not bandit_context['latency_available'] if bandit_context else None,
                     'context_completion_rate': bandit_context.get('completion_rate'),
                     'context_terminal_tasks_window': bandit_context.get('terminal_tasks_window'),
                     'context_arrival_rate_norm': bandit_context.get('arrival_rate_norm'),
@@ -1173,6 +1322,8 @@ def _run(config_path, collect_tasks):
         deliveries, switches, adaptation_overhead_samples,
     )
     metrics['trace_rows'] = trace_rows
+    if bandit_policy_version is not None:
+        metrics['bandit_policy_version'] = bandit_policy_version
     result = RunResult(logfile, wall_time, event_count, metrics, tasks)
     write_summary(result)
     print(os.path.basename(logfile), '--> Simulation time (wall):', wall_time, f'({event_count} events)')

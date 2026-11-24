@@ -21,9 +21,10 @@ from paper_plot_style import (  # noqa: E402
     COLORS, MARKER_EDGE_COLOR, SECONDARY_HATCH, STYLE,
     add_legend, apply_rc, pending_text, save, style_axes,
 )
+from run_rq4_experiments import NOMINAL_SIM_DAYS, RQ4_EXPERIMENT_PROFILE  # noqa: E402
 
 
-PROFILE = "extended-wallclock-v2"
+LEGACY_PROFILE = "extended-wallclock-v2"
 MECHANISMS = ("CE", "DA")
 SERIES = (
     ("CE", "mac", "CE - Commodity"),
@@ -52,9 +53,15 @@ def load_runs(path: Path) -> pd.DataFrame:
     runs = pd.read_csv(path)
     runs = runs[
         runs["status"].fillna("ok").astype(str).eq("ok")
-        & runs["experiment_profile"].fillna("").astype(str).eq(PROFILE)
         & runs["coord_label"].astype(str).str.upper().isin(MECHANISMS)
+        & pd.to_numeric(runs["sim_days"], errors="coerce").eq(NOMINAL_SIM_DAYS)
     ].copy()
+    current = runs[runs["experiment_profile"].eq(RQ4_EXPERIMENT_PROFILE)]
+    if current.empty:
+        runs = runs[runs["experiment_profile"].eq(LEGACY_PROFILE)].copy()
+    else:
+        latest = current["implementation_sha256"].dropna().iloc[-1]
+        runs = current[current["implementation_sha256"].eq(latest)].copy()
     for column in (
         "item_spawning_time", "n_robots", "n_rooms", "wall_time_s", "max_rss_mb",
         "event_count", "total_output_size_mb",

@@ -73,20 +73,24 @@ output global_latency eval when delivered with if time - create_item(itemId).hol
 output latest_relative_latency eval @0.1Hz with global_relative_latency.hold(or: 0.0)
 output latest_latency eval @0.1Hz with global_relative_latency.hold(or: 0.0)
 
-// Calculate mean relative latency over delivered items in the last simulated hour.
-output mean_relative_latency_1h eval @0.1Hz with global_relative_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0)
-output mean_latency_1h eval @0.1Hz with global_relative_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0)
+// Window durations marked below are configured by the simulator. Stream names are retained for compatibility.
+output mean_relative_latency_1h eval @0.1Hz with global_relative_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0) // coordinate-adaptation-window
+output mean_latency_1h eval @0.1Hz with global_relative_latency.aggregate(over: 3600s, using: avg).defaults(to: 0.0) // coordinate-adaptation-window
 
-// One-hour evidence windows, sampled at adaptation-check frequency.
-output monitor_created_tasks_1h eval @0.1Hz with monitor_created_task_event.aggregate(over: 3600s, using: count)
-output monitor_delivered_tasks_1h eval @0.1Hz with monitor_delivered_task_event.aggregate(over: 3600s, using: count)
-output monitor_expired_tasks_1h eval @0.1Hz with monitor_expired_task_event.aggregate(over: 3600s, using: count)
-output monitor_message_count_1h eval @0.1Hz with monitor_message_event.aggregate(over: 3600s, using: count)
-output monitor_message_losses_1h eval @0.1Hz with monitor_message_loss_event.aggregate(over: 3600s, using: count)
-output monitor_network_probe_count_1h eval @0.1Hz with monitor_network_probe_event.aggregate(over: 3600s, using: count)
-output monitor_network_probe_losses_1h eval @0.1Hz with monitor_network_probe_loss_event.aggregate(over: 3600s, using: count)
-output monitor_failures_1h eval @0.1Hz with monitor_failure_event.aggregate(over: 3600s, using: count)
-output monitor_rescue_requests_1h eval @0.1Hz with monitor_rescue_request_event.aggregate(over: 3600s, using: count)
-output monitor_fake_evidence_1h eval @0.1Hz with monitor_fake_evidence_event.aggregate(over: 3600s, using: count)
-output monitor_suspicious_signals_1h eval @0.1Hz with monitor_suspicious_signal_event.aggregate(over: 3600s, using: count)
-output monitor_coordinator_outages_1h eval @0.1Hz with monitor_coordinator_outage_event.aggregate(over: 3600s, using: count)
+// Evidence windows sampled every 10 simulated seconds.
+output monitor_created_tasks_1h eval @0.1Hz with monitor_created_task_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_delivered_tasks_1h eval @0.1Hz with monitor_delivered_task_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_expired_tasks_1h eval @0.1Hz with monitor_expired_task_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_message_count_1h eval @0.1Hz with monitor_message_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_message_losses_1h eval @0.1Hz with monitor_message_loss_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_network_probe_count_1h eval @0.1Hz with monitor_network_probe_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_network_probe_losses_1h eval @0.1Hz with monitor_network_probe_loss_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_failures_1h eval @0.1Hz with monitor_failure_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_rescue_requests_1h eval @0.1Hz with monitor_rescue_request_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_fake_evidence_1h eval @0.1Hz with monitor_fake_evidence_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_suspicious_signals_1h eval @0.1Hz with monitor_suspicious_signal_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+output monitor_coordinator_outages_1h eval @0.1Hz with monitor_coordinator_outage_event.aggregate(over: 3600s, using: count) // coordinate-adaptation-window
+
+output service_relative_latency eval @0.1Hz with global_relative_latency.aggregate(over: 1800s, using: avg).defaults(to: 0.0) // coordinate-service-window
+output service_delivered_tasks eval @0.1Hz with monitor_delivered_task_event.aggregate(over: 1800s, using: count) // coordinate-service-window
+output service_expired_tasks eval @0.1Hz with monitor_expired_task_event.aggregate(over: 1800s, using: count) // coordinate-service-window

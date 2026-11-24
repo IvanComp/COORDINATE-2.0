@@ -36,6 +36,8 @@ OBJECTIVE_MODES = {
     "weighted",
     "completion-constrained",
 }
+REWARD_VERSION = "completion-constrained-v2"
+POLICY_VERSION = "service-gated-linucb-v2"
 
 # Each feature describes an observable operating condition available before
 # choosing the next coordination mechanism. Performance outcomes are not
@@ -155,7 +157,7 @@ def context_reward(cfg, context):
         )
     completion_weight = clamp(cfg_float(cfg, "BANDIT_COMPLETION_WEIGHT", 0.5))
     details = {
-        "reward_version": "completion-constrained-v1",
+        "reward_version": REWARD_VERSION,
         "reward_ready": False,
         "reward_mode": "insufficient_terminal_outcomes",
         "objective_mode": objective_mode,
@@ -172,24 +174,32 @@ def context_reward(cfg, context):
         objective_mode in {"completion-only", "completion-constrained"}
         or (objective_mode == "weighted" and completion_weight > 0.0)
     )
-    needs_latency = (
-        objective_mode == "latency-only"
-        or (objective_mode == "weighted" and completion_weight < 1.0)
-    )
-    if needs_completion and (not completion_available or terminal_tasks < min_outcomes):
-        return None, details
-    if needs_latency and not latency_available:
-        details["reward_mode"] = "insufficient_latency_observations"
+    completion_ready = completion_available and terminal_tasks >= min_outcomes
+    if needs_completion and not completion_ready:
         return None, details
 
     completion = clamp(safe_float(context.get("completion_rate"), 0.0))
+    needs_latency = (
+        objective_mode == "latency-only"
+        or (objective_mode == "weighted" and completion_weight < 1.0)
+        or (objective_mode == "completion-constrained" and completion >= target)
+    )
+    no_service = completion_ready and context.get("completion_rate") == 0.0
+    if needs_latency and not latency_available and not no_service:
+        details["reward_mode"] = "insufficient_latency_observations"
+        return None, details
+
     deficit = max(0.0, target - completion) / target
     details["reward_ready"] = True
     details["completion_deficit"] = deficit
-    latency_quality = 0.5
-    if latency_available:
+    if no_service:
+        latency_quality = 0.0
+    elif latency_available:
         latency_quality = 1.0 - clamp(safe_float(context.get("latency_norm"), 1.0))
+    else:
+        latency_quality = None
     details["latency_quality"] = latency_quality
+    details["no_service"] = no_service
 
     if objective_mode == "completion-only":
         reward = completion
@@ -198,7 +208,9 @@ def context_reward(cfg, context):
         reward = latency_quality
         details["reward_mode"] = "latency_optimisation"
     elif objective_mode == "weighted":
-        reward = completion_weight * completion + (1.0 - completion_weight) * latency_quality
+        reward = completion_weight * completion
+        if needs_latency:
+            reward += (1.0 - completion_weight) * latency_quality
         details["reward_mode"] = "weighted_optimisation"
     elif completion < target:
         # Below the service floor, recovering successful task completion is the
@@ -216,6 +228,30 @@ def context_reward(cfg, context):
     reward = max(-1.0, min(1.0, reward))
     details["reward"] = reward
     return reward, details
+
+
+def service_status(cfg, metrics, latency):
+    minimum = max(1, cfg_int(cfg, "BANDIT_MIN_TERMINAL_OUTCOMES", 3))
+    completion_target = clamp(cfg_float(cfg, "BANDIT_COMPLETION_TARGET", 0.65))
+    latency_limit = max(0.0, cfg_float(cfg, "LATENCY_THRESHOLD_HIGH", 40.0))
+    completion = safe_float(metrics.get("completion_rate"), None)
+    completion_ready = (
+        metrics.get("completion_available")
+        and metrics.get("terminal_tasks_window", 0) >= minimum
+        and completion is not None
+    )
+    observed_latency = safe_float(latency, None)
+    latency_ready = metrics.get("delivered_window", 0) >= minimum and observed_latency is not None
+    reasons = []
+    if completion_ready and completion < completion_target:
+        reasons.append("completion_below_target")
+    if latency_ready and observed_latency > latency_limit:
+        reasons.append("latency_above_limit")
+    if reasons:
+        return "degraded", ",".join(reasons)
+    if completion_ready and latency_ready:
+        return "healthy", "targets_met"
+    return "unknown", "insufficient_service_evidence"
 
 
 class ConservativeContextualBandit:
@@ -295,9 +331,9 @@ class ConservativeContextualBandit:
     def _least_observed_action(self, candidates):
         return min(candidates, key=lambda action: (self.counts[action], self.actions.index(action)))
 
-    def _initial_sample_action(self):
+    def _initial_sample_action(self, actions):
         candidates = [
-            action for action in self.actions
+            action for action in actions
             if self.counts[action] < self.initial_samples_per_action
         ]
         return self._least_observed_action(candidates) if candidates else None
@@ -314,12 +350,12 @@ class ConservativeContextualBandit:
             )
         )
 
-    def _context_sample_action(self, context):
+    def _context_sample_action(self, context, actions):
         if self.context_min_samples_per_action <= 0:
             return None
         context_key = self._context_key(context)
         candidates = [
-            action for action in self.actions
+            action for action in actions
             if self.context_counts[action].get(context_key, 0) < self.context_min_samples_per_action
         ]
         if not candidates:
@@ -329,34 +365,71 @@ class ConservativeContextualBandit:
             key=lambda action: (self.context_counts[action].get(context_key, 0), self.counts[action], self.actions.index(action)),
         )
 
+    def select_recovery(self, context, current_architecture):
+        estimates, confidences, raw_scores = self.values(context)
+        alternatives = [action for action in self.actions if action != current_architecture]
+        scores = {
+            action: (
+                1.0 if self.counts[action] == 0 else min(1.0, raw_scores[action])
+            ) - self.selection_switch_cost
+            for action in alternatives
+        }
+        current_value, _ = context_reward(self.cfg, context)
+        if current_value is None:
+            current_value = estimates.get(current_architecture, 0.0)
+        scores[current_architecture] = current_value
+        best_alternative = max(alternatives, key=lambda action: (scores[action], estimates[action]))
+        promising = scores[best_alternative] >= current_value + self.improvement_margin
+        candidate = best_alternative if promising else current_architecture
+        exploring = promising and self.counts[best_alternative] == 0
+        return {
+            "candidate_architecture": candidate,
+            "greedy_architecture": best_alternative,
+            "scores": scores,
+            "estimated_values": estimates,
+            "confidence_bounds": confidences,
+            "selection_switch_cost": self.selection_switch_cost,
+            "epsilon": 0.0,
+            "explored": exploring,
+            "initial_sampling": exploring,
+            "improvement_margin": self.improvement_margin,
+            "reason": (
+                "untried_recovery_option" if exploring
+                else "linucb_recovery" if promising
+                else "insufficient_ucb_improvement"
+            ),
+            "context_key": self._context_key(context),
+        }
+
     def select(self, context, current_architecture):
         estimates, confidences, raw_scores = self.values(context)
         scores = {
             action: raw_scores[action] - (self.selection_switch_cost if action != current_architecture else 0.0)
             for action in self.actions
         }
+        actions = self.actions
         current_value = scores.get(current_architecture, 0.0)
-        greedy_architecture = max(self.actions, key=lambda action: (scores[action], -self.counts[action]))
+        greedy_architecture = max(actions, key=lambda action: (scores[action], -self.counts[action]))
         candidate = greedy_architecture
         explored = False
         initial_sampling = False
         reason = "linucb"
 
-        initial_action = self._initial_sample_action()
+        initial_action = self._initial_sample_action(actions)
         if initial_action is not None:
             candidate = initial_action
             explored = True
             initial_sampling = True
             reason = "initial_balanced_exploration"
         else:
-            context_action = self._context_sample_action(context)
+            context_action = self._context_sample_action(context, actions)
             if context_action is not None:
                 candidate = context_action
                 explored = True
                 initial_sampling = True
                 reason = "context_balanced_exploration"
         if not initial_sampling and random.random() < self.epsilon:
-            candidate = self._least_observed_action(self.actions)
+            candidate = self._least_observed_action(actions)
             explored = True
             reason = "epsilon_least_observed"
 

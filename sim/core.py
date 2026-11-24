@@ -80,8 +80,14 @@ class Clock:
             else:
                 print('[ERROR] Unsupported distribution:', distr)
                 sys.exit(-1)
-        ts = self.time + inc
-        self.eventDict.setdefault(ts, []).append(event)
+        self.scheduleAt(event, self.time + inc)
+
+    def scheduleAt(self, event, timestamp, *, first=False):
+        events = self.eventDict.setdefault(timestamp, [])
+        if first:
+            events.insert(0, event)
+        else:
+            events.append(event)
 
     def getNextEvent(self, through=None):
         if not self.eventDict:
@@ -146,22 +152,22 @@ class Room:
 
 
 class Item:
-    def __init__(self, cfg: Cfg, logfile: str, idx: int, space: 'Space', simTime: float, imp=-1, target: Optional[Room]=None):
+    def __init__(self, cfg: Cfg, logfile: str, idx: int, space: 'Space', simTime: float, imp=-1, target: Optional[Room]=None, *, rng=None):
         self.cfg = cfg
         self.idx = idx
         self.position = space.getSource()
         self.target = target if target is not None else random.choice([r for r in space.getRooms() if r != space.getSource()])
-        self.importance = self._randImportance(cfg.IMPORTANCE_PROBABILITIES) if imp == -1 else imp
+        self.importance = self._randImportance(cfg.IMPORTANCE_PROBABILITIES, rng=rng) if imp == -1 else imp
         self.uber = None
         self.logfile = logfile
         if cfg.LOG_ITEM:
             self._log(simTime, 'create')
 
-    def _randImportance(self, probs):
+    def _randImportance(self, probs, *, rng=None):
         if abs(sum(probs) - 1.0) > 1e-9:
             print('[ERROR] IMPORTANCE_PROBABILITIES must sum to 1')
             sys.exit(-1)
-        r = np.random.uniform()
+        r = (np.random if rng is None else rng).uniform()
         s = 0.0
         for k, p in enumerate(probs):
             s += p
@@ -353,7 +359,7 @@ class Robot:
                 self.loadItem(next_item, simTime)
                 return
 
-        if len(self.space.getItemsByImportance(imp=-1, room=self.position)) == 0 and self.isHealthy():
+        if self.isHealthy() and (delivered or not self.space.getItemsByImportance(imp=-1, room=self.position)):
             self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
             if self.optRoute:
                 self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
@@ -965,14 +971,15 @@ class Space:
         command['helper']._abortMission(command['importance'], command['position'], simTime, fake=command['fake'])
 
     # items
-    def newItem(self, item: Item):
+    def newItem(self, item: Item, *, schedule_next=True):
         self.availItems.append(item)
         impIdx = item.getImportance()
         expireTime = self.cfg.EXPIRATION_TIME[impIdx]
         if expireTime != -1:
             expireDistr = self.cfg.EXPIRATION_DISTR[impIdx]
             self.clock.scheduleEvent(f'expire-{item.getIdx()}', [expireTime], ['_'], [expireDistr])
-        self.clock.scheduleEvent('item', [self.cfg.ITEM_SPAWNING_TIME], [self.cfg.ITEM_SPAWNING_TRACE], [self.cfg.ITEM_SPAWNING_DISTR])
+        if schedule_next:
+            self.clock.scheduleEvent('item', [self.cfg.ITEM_SPAWNING_TIME], [self.cfg.ITEM_SPAWNING_TRACE], [self.cfg.ITEM_SPAWNING_DISTR])
 
     def getItembyId(self, idx: int) -> Item:
         for item in self.availItems + self.movingItems:

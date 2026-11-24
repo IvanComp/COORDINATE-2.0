@@ -4,6 +4,7 @@ Manages RTLola subprocess for runtime monitoring and architecture adaptation.
 """
 
 import json
+import math
 import os
 import platform
 import re
@@ -15,6 +16,13 @@ import threading
 import time
 from pathlib import Path
 from typing import Optional, Dict
+
+_ADAPTATION_WINDOW = re.compile(
+    r"(?m)(\bover\s*:\s*)\d+(?:\.\d+)?s(?=[^\n]*// coordinate-adaptation-window\s*$)"
+)
+_SERVICE_WINDOW = re.compile(
+    r"(?m)(\bover\s*:\s*)\d+(?:\.\d+)?s(?=[^\n]*// coordinate-service-window\s*$)"
+)
 
 
 def _candidate_label(path: str) -> str:
@@ -166,7 +174,8 @@ class RTLolaMonitor:
     Manages RTLola CLI process for monitoring simulation events and extracting metrics.
     """
     
-    def __init__(self, spec_file: str, rtlola_binary: str = None):
+    def __init__(self, spec_file: str, rtlola_binary: str = None, *,
+                 adaptation_window: float = 3600.0, service_window: Optional[float] = None):
         """
         Initialize RTLola monitor.
         
@@ -206,6 +215,19 @@ class RTLolaMonitor:
             raise FileNotFoundError(f"RTLola spec file not found: {self.spec_file}")
 
         spec = Path(spec_file).read_text(encoding="utf-8")
+        if not math.isfinite(adaptation_window) or adaptation_window < 1e-9:
+            raise ValueError("ADAPTATION_WINDOW must be a finite duration of at least one nanosecond")
+        duration = f"{adaptation_window:.9f}".rstrip("0").rstrip(".")
+        spec, windows = _ADAPTATION_WINDOW.subn(lambda match: f"{match[1]}{duration}s", spec)
+        if windows == 0 and adaptation_window != 3600.0:
+            raise ValueError("A nondefault ADAPTATION_WINDOW requires RTLola aggregates marked with // coordinate-adaptation-window")
+        if service_window is not None:
+            if not math.isfinite(service_window) or service_window < 1e-9:
+                raise ValueError("ADAPTATION_SERVICE_WINDOW must be a finite duration of at least one nanosecond")
+            duration = f"{service_window:.9f}".rstrip("0").rstrip(".")
+            spec, windows = _SERVICE_WINDOW.subn(lambda match: f"{match[1]}{duration}s", spec)
+            if windows != 3:
+                raise ValueError("The RTLola spec must provide the three // coordinate-service-window aggregates")
         self.has_delivery_reference = bool(re.search(r"(?m)^\s*input\s+minimum_delivery_time\s*:", spec))
         self.spec_directory = tempfile.TemporaryDirectory(prefix="coordinate-rtlola-")
         try:
@@ -295,7 +317,7 @@ class RTLolaMonitor:
                         continue
                     verdict = json.loads(line)
                     checkpoint = verdict.pop("coordinate_check_complete", None)
-                    verdict.pop("time", None)
+                    verdict_time = verdict.pop("time", None)
                     values = {}
                     for metric, updates in verdict.items():
                         if isinstance(updates, list):
@@ -303,6 +325,10 @@ class RTLolaMonitor:
                                 value = update.get("eval")
                                 if type(value) in (int, float):
                                     values[metric] = float(value)
+                    if "monitor_delivered_tasks_1h" in values and verdict_time is not None:
+                        values["coordinate_window_end"] = float(verdict_time)
+                    if "service_delivered_tasks" in values and verdict_time is not None:
+                        values["coordinate_service_window_end"] = float(verdict_time)
                     with self.metrics_lock:
                         self.latest_metrics.update(values)
                         if checkpoint:

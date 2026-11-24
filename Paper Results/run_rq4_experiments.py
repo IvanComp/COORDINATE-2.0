@@ -23,6 +23,7 @@ Resume behavior:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -34,7 +35,10 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 from pathlib import Path
+from tempfile import TemporaryFile
 from typing import Any
+
+import psutil
 
 from paper_experiment_utils import (
     BASE_CONFIG,
@@ -44,7 +48,6 @@ from paper_experiment_utils import (
     build_extended_daily_phases,
     cleanup_transient_artifacts,
     config_with_paths,
-    completed_run_ids,
     ensure_rtlola_available,
     ensure_result_dirs,
     expiration_metadata,
@@ -62,7 +65,6 @@ from paper_experiment_utils import (
     malicious_count,
     metrics_with_trace_sizes,
     read_rows,
-    replace_row,
     safe_float,
     resolve_worker_count,
     write_json,
@@ -71,7 +73,9 @@ from paper_experiment_utils import (
 
 
 RESULTS_ROOT = PAPER_ROOT / "RQ4"
-RQ4_EXPERIMENT_PROFILE = "extended-wallclock-v2"
+RQ4_EXPERIMENT_PROFILE = "extended-wallclock-v3"
+RSS_SAMPLE_INTERVAL_S = 0.02
+RSS_MEASUREMENT = "sampled-process-tree-rss-v1"
 # RQ4 compares two hardware profiles and two mechanisms on the nominal
 # configuration of the paper. No parameter is swept: the only factors are the
 # execution platform and the coordination mechanism.
@@ -147,6 +151,18 @@ def hardware_metadata(label: str) -> dict[str, Any]:
     }
 
 
+def implementation_hash() -> str:
+    files = [*sorted((PROJECT_ROOT / "sim").glob("*.py")), PROJECT_ROOT / "spec2.rtlola",
+             Path(__file__), PAPER_ROOT / "paper_experiment_utils.py"]
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def selected_coord_labels(args: argparse.Namespace) -> list[str]:
     labels = [label.strip().upper() for label in args.coord_labels.split(",") if label.strip()]
     unknown = [label for label in labels if label not in COORD_TO_ARCH]
@@ -205,8 +221,8 @@ def build_campaign_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     combo_idx = 0
     label = machine_label(args)
-    for (analysis_slices, sim_days, item_spawn, n_robots, n_rooms), coord_label in product(
-        conditions, coord_labels,
+    for (condition_idx, (analysis_slices, sim_days, item_spawn, n_robots, n_rooms)), coord_label in product(
+        enumerate(conditions, start=1), coord_labels,
     ):
         combo_idx += 1
         for rep in range(1, repetitions + 1):
@@ -214,7 +230,7 @@ def build_campaign_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "combo_idx": combo_idx,
                 "analysis_slices": analysis_slices,
                 "rep": rep,
-                "seed": args.base_seed + combo_idx * 1000 + rep,
+                "seed": args.base_seed + condition_idx * 1000 + rep,
                 "machine_label": label,
                 "coord_label": coord_label,
                 "architecture": COORD_TO_ARCH[coord_label],
@@ -248,91 +264,57 @@ def campaign(args: argparse.Namespace) -> list[dict[str, Any]]:
     return rows[: args.limit] if args.limit else rows
 
 
-def run_id(params: dict[str, Any]) -> str:
+def run_id(params: dict[str, Any], configuration_hash: str) -> str:
     return (
         f"{params['machine_label']}_c{params['combo_idx']:03d}_r{params['rep']:02d}_"
         f"{params['coord_label']}_{params['topology']}_days{params['sim_days']}_"
-        f"spawn{params['item_spawning_time']}_bots{params['n_robots']}_{RQ4_EXPERIMENT_PROFILE}"
+        f"spawn{params['item_spawning_time']}_bots{params['n_robots']}_{RQ4_EXPERIMENT_PROFILE}_{configuration_hash[:16]}"
     )
 
 
-def normalize_machine_label(value: Any) -> str:
-    label = sanitize_label(str(value or ""))
-    if label in {"linux", "workstation"}:
-        return "workstation"
-    if label in {"darwin", "macos", "mac"}:
-        return "mac"
-    return label or "workstation"
+def configuration_hash(cfg: dict[str, Any], workers: int) -> str:
+    output_fields = {"RESULTS_DIR", "SIMTIME_LOGFILE", "LOGFILE"}
+    content = {
+        "experiment_profile": RQ4_EXPERIMENT_PROFILE,
+        "workers": workers,
+        "rss_measurement": RSS_MEASUREMENT,
+        "rss_sample_interval_s": RSS_SAMPLE_INTERVAL_S,
+        "simulation": {key: value for key, value in cfg.items() if key not in output_fields},
+    }
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def legacy_machine_label_from_run_id(run_id_value: str) -> str:
-    if run_id_value.startswith("mac_"):
-        return "mac"
-    if run_id_value.startswith("linux_") or run_id_value.startswith("workstation_"):
-        return "workstation"
-    return "workstation"
+def completed_configuration_hashes(rows: list[dict[str, Any]]) -> set[str]:
+    return {
+        row["configuration_sha256"] for row in rows
+        if row.get("status") == "ok"
+        and row.get("experiment_profile") == RQ4_EXPERIMENT_PROFILE
+        and row.get("rss_measurement") == RSS_MEASUREMENT
+        and safe_float(row.get("peak_process_tree_rss_mb")) > 0
+        and row.get("configuration_sha256")
+    }
 
 
-def resume_key_from_params(params: dict[str, Any]) -> tuple[Any, ...]:
-    expiration = tuple(int(round(float(value))) for value in BASE_CONFIG["EXPIRATION_TIME"])
-    return (
-        normalize_machine_label(params.get("machine_label")),
-        str(params.get("coord_label", "")),
-        str(params.get("architecture", "")),
-        str(params.get("topology", "")),
-        int(params.get("n_rooms", 0)),
-        int(params.get("rep", 0)),
-        int(params.get("sim_days", 0)),
-        int(params.get("item_spawning_time", 0)),
-        int(params.get("n_robots", 0)),
-        int(params.get("n_malicious", 0)),
-        round(float(params.get("malicious_ratio", 0.0)), 6),
-        round(float(params.get("fail_prob", 0.0)), 6),
-        round(float(params.get("msg_loss_prob", 0.0)), 6),
-        *expiration,
-    )
-
-
-def resume_key_from_row(row: dict[str, Any]) -> tuple[Any, ...]:
-    run_id_value = str(row.get("run_id", ""))
-    machine = row.get("machine_label") or legacy_machine_label_from_run_id(run_id_value)
-    return (
-        normalize_machine_label(machine),
-        str(row.get("coord_label", "")),
-        str(row.get("architecture", "")),
-        str(row.get("topology", "")),
-        int(float(row.get("n_rooms", 0) or 0)),
-        int(float(row.get("rep", 0) or 0)),
-        int(float(row.get("sim_days", 0) or 0)),
-        int(float(row.get("item_spawning_time", 0) or 0)),
-        int(float(row.get("n_robots", 0) or 0)),
-        int(float(row.get("n_malicious", 0) or 0)),
-        round(float(row.get("malicious_ratio", 0.0) or 0.0), 6),
-        round(float(row.get("fail_prob", 0.0) or 0.0), 6),
-        round(float(row.get("msg_loss_prob", 0.0) or 0.0), 6),
-        int(float(row.get("expiration_time_low_s", 0) or 0)),
-        int(float(row.get("expiration_time_medium_s", 0) or 0)),
-        int(float(row.get("expiration_time_high_s", 0) or 0)),
-    )
-
-
-def completed_resume_keys(rows: list[dict[str, Any]]) -> set[tuple[Any, ...]]:
-    keys: set[tuple[Any, ...]] = set()
-    for row in rows:
-        if row.get("status") != "ok":
-            continue
-        keys.add(resume_key_from_row(row))
-    return keys
-
-
-def replace_row_by_resume_key(rows: list[dict[str, Any]], row: dict[str, Any]) -> list[dict[str, Any]]:
-    key = resume_key_from_row(row)
-    run_id_value = row.get("run_id")
+def replace_row_by_configuration(rows: list[dict[str, Any]], row: dict[str, Any]) -> list[dict[str, Any]]:
     return [
-        existing
-        for existing in rows
-        if existing.get("run_id") != run_id_value and resume_key_from_row(existing) != key
+        existing for existing in rows
+        if existing.get("configuration_sha256") != row["configuration_sha256"]
     ] + [row]
+
+
+def sample_process_tree(root: psutil.Process) -> tuple[int, int]:
+    try:
+        children = root.children(recursive=True)
+        root_rss = root.memory_info().rss
+    except psutil.NoSuchProcess:
+        return 0, 0
+    child_rss = 0
+    for child in children:
+        try:
+            child_rss += child.memory_info().rss
+        except psutil.NoSuchProcess:
+            continue
+    return root_rss + child_rss, child_rss
 
 
 def run_subprocess(cfg_path: Path) -> dict[str, Any]:
@@ -358,22 +340,43 @@ print("{SUBPROCESS_MARKER}" + json.dumps({{
     "metrics": result.metrics,
 }}))
 """
-    proc = subprocess.run(
-        [sys.executable, "-c", code, str(cfg_path)],
-        cwd=str(PROJECT_ROOT),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        tail = "\n".join((proc.stdout + "\n" + proc.stderr).splitlines()[-30:])
-        raise RuntimeError(f"subprocess failed with code {proc.returncode}\n{tail}")
+    peak_tree = 0
+    peak_children = 0
+    with TemporaryFile(mode="w+t", encoding="utf-8") as stdout, TemporaryFile(mode="w+t", encoding="utf-8") as stderr:
+        with subprocess.Popen(
+            [sys.executable, "-c", code, str(cfg_path)],
+            cwd=str(PROJECT_ROOT),
+            stdout=stdout,
+            stderr=stderr,
+        ) as proc:
+            try:
+                root = psutil.Process(proc.pid)
+            except psutil.NoSuchProcess:
+                root = None
+            while root is not None and proc.poll() is None:
+                tree_rss, child_rss = sample_process_tree(root)
+                peak_tree = max(peak_tree, tree_rss)
+                peak_children = max(peak_children, child_rss)
+                time.sleep(RSS_SAMPLE_INTERVAL_S)
+            returncode = proc.wait()
+        stdout.seek(0)
+        stderr.seek(0)
+        stdout_text, stderr_text = stdout.read(), stderr.read()
+    if returncode != 0:
+        tail = "\n".join((stdout_text + "\n" + stderr_text).splitlines()[-30:])
+        raise RuntimeError(f"subprocess failed with code {returncode}\n{tail}")
 
-    result_lines = [line for line in proc.stdout.splitlines() if line.startswith(SUBPROCESS_MARKER)]
+    result_lines = [line for line in stdout_text.splitlines() if line.startswith(SUBPROCESS_MARKER)]
     if not result_lines:
-        tail = "\n".join(proc.stdout.splitlines()[-30:])
+        tail = "\n".join(stdout_text.splitlines()[-30:])
         raise RuntimeError(f"subprocess completed but no result marker was found\n{tail}")
-    return json.loads(result_lines[-1].removeprefix(SUBPROCESS_MARKER))
+    result = json.loads(result_lines[-1].removeprefix(SUBPROCESS_MARKER))
+    result.update(
+        peak_process_tree_rss_mb=max(peak_tree / (1024 * 1024), result["max_rss_mb"]),
+        peak_child_rss_mb=peak_children / (1024 * 1024),
+        rss_measurement=RSS_MEASUREMENT,
+    )
+    return result
 
 
 def execute_rq4_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -395,9 +398,19 @@ def run_campaign(args: argparse.Namespace) -> None:
     args.workers = resolve_worker_count(args.workers)
     label = machine_label(args)
     hardware = hardware_metadata(label)
+    hardware["implementation_sha256"] = implementation_hash()
     coord_labels = selected_coord_labels(args)
+    monitor_metadata = {}
     if not args.dry_run and "DA" in coord_labels:
         rtlola_binary = ensure_rtlola_available()
+        rtlola_version = subprocess.check_output([rtlola_binary, "--version"], text=True).strip()
+        with open(rtlola_binary, "rb") as executable:
+            binary_hash = hashlib.file_digest(executable, "sha256").hexdigest()
+        monitor_metadata = {
+            "RTLOLA_BINARY_PATH": rtlola_binary,
+            "RQ4_RTLOLA_VERSION": rtlola_version,
+            "RQ4_RTLOLA_BINARY_SHA256": binary_hash,
+        }
         print(f"[preflight] RTLola binary: {rtlola_binary}")
     all_combos = build_campaign_rows(args)
     shard_combos = shard_rows(all_combos, args)
@@ -423,16 +436,21 @@ def run_campaign(args: argparse.Namespace) -> None:
         "fail_prob": args.fail_prob,
         "msg_loss": args.msg_loss,
         "daily_operating_profile": "triangular severity and recovery",
-        "expiration_time": expiration_metadata(extended_scenario_updates(
-            topology_type=EXTENDED_NOMINAL_TOPOLOGY,
-            n_rooms=EXTENDED_NOMINAL_ROOMS,
-            n_robots=EXTENDED_NOMINAL_ROBOTS,
-            n_malicious=malicious_count(EXTENDED_NOMINAL_ROBOTS, args.malicious_ratio),
-            item_spawning_time=EXTENDED_NOMINAL_SPAWN,
-            fail_prob=args.fail_prob,
-            msg_loss_prob=args.msg_loss,
-        )),
-        "purpose": "Measure execution time, peak RSS, event throughput, and trace size.",
+        "expiration_time": expiration_metadata({
+            **BASE_CONFIG,
+            **extended_scenario_updates(
+                topology_type=EXTENDED_NOMINAL_TOPOLOGY,
+                n_rooms=EXTENDED_NOMINAL_ROOMS,
+                n_robots=EXTENDED_NOMINAL_ROBOTS,
+                n_malicious=malicious_count(EXTENDED_NOMINAL_ROBOTS, args.malicious_ratio),
+                item_spawning_time=EXTENDED_NOMINAL_SPAWN,
+                fail_prob=args.fail_prob,
+                msg_loss_prob=args.msg_loss,
+            ),
+        }),
+        "rss_measurement": RSS_MEASUREMENT,
+        "rss_sample_interval_s": RSS_SAMPLE_INTERVAL_S,
+        "purpose": "Measure execution time, process-tree peak RSS, event throughput, and trace size.",
     }
     print("=" * 80)
     print("RQ4 SCALABILITY CAMPAIGN")
@@ -450,24 +468,13 @@ def run_campaign(args: argparse.Namespace) -> None:
     machine_raw_logs_dir.mkdir(parents=True, exist_ok=True)
     machine_configs_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = [] if args.force else read_rows(RESULTS_ROOT / "runs.csv")
-    errors = [] if args.force else read_rows(RESULTS_ROOT / "errors.csv")
-    completed = completed_run_ids(rows)
-    completed_keys = completed_resume_keys(rows)
+    rows = read_rows(RESULTS_ROOT / "runs.csv")
+    errors = read_rows(RESULTS_ROOT / "errors.csv")
+    completed = completed_configuration_hashes(rows)
     started_at = time.time()
 
     jobs: list[dict[str, Any]] = []
     for idx, params in enumerate(combos, start=1):
-        rid = run_id(params)
-        resume_key = resume_key_from_params(params)
-        if (rid in completed or resume_key in completed_keys) and not args.force:
-            print(f"[{idx}/{len(combos)}] {rid} already completed; skipping", flush=True)
-            continue
-
-        run_dir = machine_raw_logs_dir / rid
-        run_dir.mkdir(parents=True, exist_ok=True)
-        logfile = run_dir / "simulation_log.csv"
-        cfg_path = machine_configs_dir / f"{rid}.json"
         phases = build_extended_daily_phases(
             sim_days=params["sim_days"],
             base_fail_prob=params["fail_prob"],
@@ -478,7 +485,7 @@ def run_campaign(args: argparse.Namespace) -> None:
         )
         cfg = config_with_paths(
             results_root=RESULTS_ROOT,
-            logfile=logfile,
+            logfile=machine_raw_logs_dir / "simulation_log.csv",
             architecture=params["architecture"],
             seed=params["seed"],
             sim_days=params["sim_days"],
@@ -494,9 +501,21 @@ def run_campaign(args: argparse.Namespace) -> None:
                 ),
                 "MACHINE_LABEL": label,
                 "MACHINE_METADATA": hardware,
+                **(monitor_metadata if params["coord_label"] == "DA" else {}),
             },
             phases=phases,
         )
+        digest = configuration_hash(cfg, args.workers)
+        rid = run_id(params, digest)
+        if digest in completed and not args.force:
+            print(f"[{idx}/{len(combos)}] {rid} already completed; skipping", flush=True)
+            continue
+
+        run_dir = machine_raw_logs_dir / rid
+        run_dir.mkdir(parents=True, exist_ok=True)
+        logfile = run_dir / "simulation_log.csv"
+        cfg_path = machine_configs_dir / f"{rid}.json"
+        cfg.update(RESULTS_DIR=str(run_dir), LOGFILE=str(logfile), SIMTIME_LOGFILE=str(run_dir / "sim_time.csv"))
         write_json(cfg_path, cfg)
 
         had_previous_error = any(error.get("run_id") == rid for error in errors)
@@ -506,10 +525,11 @@ def run_campaign(args: argparse.Namespace) -> None:
             logfile.unlink()
 
         jobs.append({"idx": idx, "run_id": rid, "params": params, "cfg": cfg,
-                     "config_path": str(cfg_path), "logfile": str(logfile), "force": args.force})
+                     "config_path": str(cfg_path), "logfile": str(logfile), "force": args.force,
+                     "configuration_sha256": digest})
 
     def persist_result(job: dict[str, Any], result: dict[str, Any], completed_count: int) -> None:
-        nonlocal rows, errors, completed, completed_keys
+        nonlocal rows, errors
         params = job["params"]
         cfg = job["cfg"]
         rid = job["run_id"]
@@ -558,14 +578,20 @@ def run_campaign(args: argparse.Namespace) -> None:
             "event_count": event_count,
             "events_per_wall_s": event_count / wall_time if wall_time and not math.isnan(wall_time) else math.nan,
             "max_rss_mb": subprocess_metrics.get("max_rss_mb"),
+            "peak_process_tree_rss_mb": subprocess_metrics.get("peak_process_tree_rss_mb"),
+            "peak_child_rss_mb": subprocess_metrics.get("peak_child_rss_mb"),
+            "rss_measurement": subprocess_metrics.get("rss_measurement"),
+            "rss_sample_interval_s": RSS_SAMPLE_INTERVAL_S,
+            "rtlola_version": cfg.get("RQ4_RTLOLA_VERSION"),
+            "rtlola_binary_sha256": cfg.get("RQ4_RTLOLA_BINARY_SHA256"),
+            "configuration_sha256": job["configuration_sha256"],
+            "workers": args.workers,
             "config_size_kb": cfg_path.stat().st_size / 1024 if cfg_path.exists() else 0.0,
             "total_output_size_mb": file_size_mb(logfile)
             + file_size_mb(logfile.with_name(logfile.stem + "_overhead.csv")),
             **metrics,
         }
-        rows = replace_row_by_resume_key(rows, row)
-        completed.add(rid)
-        completed_keys.add(resume_key)
+        rows = replace_row_by_configuration(rows, row)
 
         write_rows(RESULTS_ROOT / "runs.csv", rows)
         if errors:

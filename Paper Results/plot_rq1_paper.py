@@ -24,9 +24,9 @@ from paper_plot_style import (  # noqa: E402
     save,
     style_axes,
 )
+from paper_experiment_utils import RQ1_PROFILE_ID
 
 
-PROFILE = "table-aligned-rq1-v1"
 METRIC_VERSION = "relative-latency-v1"
 FD_POLICY_VERSION = "legacy-local-retry-v7"
 TOPOLOGIES = (("mesh25", "Mesh"), ("ring25", "Ring"), ("tree25", "Tree"))
@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
 
 def load_runs(path: Path) -> pd.DataFrame:
     runs = pd.read_csv(path)
-    runs = runs[(runs["status"].astype(str) == "ok") & (runs["experiment_profile"].astype(str) == PROFILE)].copy()
+    runs = runs[(runs["status"].astype(str) == "ok") & (runs["experiment_profile"].astype(str) == RQ1_PROFILE_ID)].copy()
     if "analysis_metric_version" not in runs or "fd_policy_version" not in runs:
         raise RuntimeError("RQ1 data predates the current relative-latency and FD-policy analysis.")
     runs = runs[runs["analysis_metric_version"].astype(str) == METRIC_VERSION].copy()

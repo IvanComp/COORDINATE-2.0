@@ -30,9 +30,9 @@ from paper_plot_style import (  # noqa: E402
     save,
     style_axes,
 )
+from run_rq2_experiments import RQ2_EXPERIMENT_PROFILE
 
 
-PROFILE = "table-aligned-operating-cycle-v1"
 FD_POLICY = "legacy-local-retry-v7"
 SECONDS_PER_DAY = 24 * 3600
 
@@ -279,7 +279,7 @@ def load_datasets(data_dir: Path) -> list[dict]:
     runs = pd.read_csv(data_dir / "runs.csv")
     timeline = pd.read_csv(data_dir / "adaptation_state_timeseries.csv.gz", low_memory=False)
     runs = runs[
-        runs["experiment_profile"].eq(PROFILE)
+        runs["experiment_profile"].eq(RQ2_EXPERIMENT_PROFILE)
         & runs["fd_policy_version"].eq(FD_POLICY)
         & runs["status"].fillna("ok").astype(str).str.lower().eq("ok")
     ].copy()

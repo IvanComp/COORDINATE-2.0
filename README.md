@@ -191,30 +191,59 @@ The dynamic-adaptation architecture monitors recent runtime indicators and uses
 a conservative contextual bandit to learn online which coordination mechanism is
 expected to perform best in the current operating context. The default policy
 chooses among `centralized-impprox` (CE), `semi-decentralized` (SD), and
-`decentralized` (FD) using relative latency, pending tasks, failures,
-coordination-message losses, throughput, idle agents, deadline misses, and the
-currently active mechanism.
+`decentralized` (FD). The context uses observed arrivals, robot failures,
+network probes, and suspicious signals. The reward uses completion among
+terminal tasks, relative delivery latency, or both, depending on the objective.
 
-At each adaptation interval, the policy updates the value estimator associated
-with the mechanism used in the previous window, then selects the mechanism with
-the best estimated reward for the current context. Small exploration, switch
-penalties, a minimum switch interval, a persistence condition, and critical
-overrides keep switching conservative.
+The bandit starts by observing the configured initial architecture. An update
+requires enough evidence for the selected objective and a complete observation
+window under the action. RTLola samples the rolling window every ten simulated
+seconds. The runtime uses the timestamp of that sample when checking whether
+the feedback window is complete. The reward uses the current window's latency.
+The smoothed latency is available in the trace and resets when observations are
+missing.
+
+When enough tasks reach a terminal state and all of them expire, latency
+quality is zero for latency-based objectives.
+
+DA uses a shorter RTLola window to detect service degradation and a longer
+window to observe reward under the active mechanism. It keeps that mechanism
+while the service meets its targets or the evidence is insufficient. The
+bandit compares the best alternative to the active mechanism's measured
+reward, including the switch cost and improvement margin. A previously
+tried alternative must also offer a gain in expected reward when reacting
+to latency. Returning to the previous mechanism for latency is deferred
+for three feedback periods by default. Completion below target in both
+windows can trigger reassessment after the first full feedback period.
+
+Fault phases change simulator parameters at the start of each interval.
+Gaps use the baseline parameters. A change in the arrival interval applies
+from the boundary, including the remaining time until the next arrival.
+Exponential arrivals use the integrated rate, and trace-based arrivals follow
+their recorded times. Movement, repair, and communication already scheduled
+retain their scheduled completion times. The adaptation policy receives
+observed runtime metrics and has no access to the calendar of phases.
 
 **Configuration Parameters:**
 - `INITIAL_ARCHITECTURE`: Starting strategy (default: `semi-decentralized`)
-- `ADAPTATION_CHECK_INTERVAL`: How often to check metrics in seconds (default: 300)
+- `ADAPTATION_CHECK_INTERVAL`: Minimum interval between checks in simulated seconds (default: 300)
+- `ADAPTATION_WINDOW`: Minimum rolling feedback duration in simulated seconds (default: 3600)
+- `ADAPTATION_SERVICE_WINDOW`: RTLola service detection window in seconds (default: half the rolling feedback duration)
+- `ADAPTATION_PERSISTENCE_CHECKS`: Consecutive degraded observations required before considering a switch (default: 2)
+- `BANDIT_FEEDBACK_WINDOW`: Duration of the rolling reward and context aggregates, at least `ADAPTATION_WINDOW`. Decisions also wait at least one check interval under the active mechanism.
+- `ADAPTATION_LATENCY_REASSESSMENT_TIME`: Minimum time before a return driven by latency or unconfirmed completion degradation (default: three feedback periods). Zero disables the return wait and the extra expected-gain check.
 - `ADAPTATION_POLICY`: Adaptation policy (default: `contextual-bandit`)
-- `BANDIT_EXPLORATION_EPSILON`: Initial online exploration probability (default: 0.08)
-- `BANDIT_LEARNING_RATE`: Linear value-estimator update rate (default: 0.05)
-- `BANDIT_IMPROVEMENT_MARGIN`: Minimum estimated reward gain before a non-exploratory switch (default: 0.02)
-- `BANDIT_SWITCH_PENALTY`: Reward penalty applied to unnecessary switching (default: 0.03)
-- `BANDIT_REWARD_VERSION`: Reward configuration tag (default: `completion_v2`)
-- `BANDIT_WEIGHT_LATENCY`: Reward penalty weight for relative latency (default: 0.20)
-- `BANDIT_WEIGHT_PENDING`: Reward penalty weight for backlog pressure (default: 0.30)
-- `BANDIT_WEIGHT_DEADLINE_MISS`: Reward penalty weight for deadline misses (default: 0.30)
-- `BANDIT_WEIGHT_THROUGHPUT_SHORTFALL`: Reward penalty weight for low delivered/created ratio in the current window (default: 0.25)
-- `BANDIT_WEIGHT_THROUGHPUT`: Reward bonus weight for delivered/created ratio in the current window (default: 0.20)
+- `BANDIT_OBJECTIVE_MODE`: `completion-only`, `latency-only`, `weighted`, or `completion-constrained` (default)
+- `BANDIT_COMPLETION_WEIGHT`: Completion weight in the weighted objective (default: 0.5)
+- `BANDIT_COMPLETION_TARGET`: Minimum acceptable completion rate among terminal tasks (default: 0.65)
+- `LATENCY_THRESHOLD_HIGH`: Maximum acceptable mean relative delivery latency in seconds (default: 40)
+- `BANDIT_MIN_TERMINAL_OUTCOMES`: Minimum terminal task count for completion feedback or confirmed failure to deliver (default: 3)
+- `BANDIT_IMPROVEMENT_MARGIN`: Minimum estimated reward gain after the switch cost (default: 0.02)
+- `BANDIT_SWITCH_PENALTY`: Selection cost applied when considering a switch (default: 0.03)
+
+Custom RTLola specifications mark feedback aggregates with
+`// coordinate-adaptation-window` and the three service detection aggregates
+with `// coordinate-service-window`, as in `spec2.rtlola`.
 
 **Centralized Coordination Parameters:**
 - `COORDINATOR_SERVICE_TIME`: Deterministic time required by the central coordinator to process one rescue request; concurrent requests wait in a FIFO service queue (default: `0.0`).

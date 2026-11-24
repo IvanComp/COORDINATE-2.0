@@ -46,6 +46,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 from pathlib import Path
 
+from paper_experiment_utils import RQ1_PROFILE_ID
 
 PAPER_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PAPER_ROOT.parent
@@ -140,11 +141,11 @@ BASE_CONFIG = {
     "BANDIT_IMPROVEMENT_MARGIN": 0.03,
     "BANDIT_SWITCH_PENALTY": 0.03,
     "NETWORK_PROBE_SAMPLES_PER_CHECK": 5,
-    "ADAPTATION_CHECK_INTERVAL": 60 * 60.0,
+    "ADAPTATION_CHECK_INTERVAL": 15 * 60.0,
     "ADAPTATION_WINDOW": 60 * 60.0,
     "BANDIT_FEEDBACK_WINDOW": 60 * 60.0,
     "ADAPTATION_MIN_SWITCH_INTERVAL": 60 * 60.0,
-    "ADAPTATION_PERSISTENCE_CHECKS": 1,
+    "ADAPTATION_PERSISTENCE_CHECKS": 2,
     "BANDIT_EXPLORATION_EPSILON": 0.02,
     "BANDIT_MIN_EXPLORATION_EPSILON": 0.0,
     "BANDIT_EXPLORATION_BYPASS_PERSISTENCE": False,
@@ -181,7 +182,6 @@ PAPER_BASE_ITEM_SPAWNING_TIME = 120
 PAPER_BASE_TOPOLOGY = "ring25"
 PAPER_BASE_N_ROOMS = 25
 DEFAULT_COORD_LABELS = ["CE", "SD", "FD", "DA"]
-RQ1_PROFILE_ID = "table-aligned-rq1-v1"
 RQ1_METRIC_VERSION = "relative-latency-v1"
 FD_POLICY_VERSION = "legacy-local-retry-v7"
 RQ1_WORKLOAD_SLICE = "workload"

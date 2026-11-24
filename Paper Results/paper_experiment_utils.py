@@ -55,6 +55,7 @@ COORD_TO_ARCH = {
 
 ARCH_TO_COORD = {arch: label for label, arch in COORD_TO_ARCH.items()}
 FD_POLICY_VERSION = "legacy-local-retry-v7"
+RQ1_PROFILE_ID = "table-aligned-rq1-v2"
 
 EXTENDED_ROOM_COUNTS = [4, 9, 16, 25, 36, 49]
 EXTENDED_ITEM_SPAWNING_TIMES = [90, 120, 150, 180, 210, 240, 270, 300]
@@ -187,11 +188,11 @@ def extended_scenario_updates(
         "COMM_FAIL_PROB": msg_loss_prob,
         "COMP_TIME": comp_time,
         "COMM_TIME": comm_time,
-        "ADAPTATION_CHECK_INTERVAL": 60 * 60.0,
+        "ADAPTATION_CHECK_INTERVAL": 15 * 60.0,
         "ADAPTATION_WINDOW": 60 * 60.0,
         "BANDIT_FEEDBACK_WINDOW": 60 * 60.0,
         "ADAPTATION_MIN_SWITCH_INTERVAL": 60 * 60.0,
-        "ADAPTATION_PERSISTENCE_CHECKS": 1,
+        "ADAPTATION_PERSISTENCE_CHECKS": 2,
         "BANDIT_EXPLORATION_EPSILON": 0.02,
         "BANDIT_MIN_EXPLORATION_EPSILON": 0.0,
         "BANDIT_EXPLORATION_BYPASS_PERSISTENCE": False,
@@ -489,7 +490,7 @@ def find_matching_rq1_row(
     rq1_runs = read_rows(PAPER_ROOT / "RQ1" / "runs.csv")
     for row in rq1_runs:
         logfile = Path(str(row.get("logfile", "")))
-        if row.get("status") != "ok" or not logfile.exists():
+        if row.get("status") != "ok" or row.get("experiment_profile") != RQ1_PROFILE_ID or not logfile.exists():
             continue
         if row.get("fd_policy_version") != FD_POLICY_VERSION or not row_matches_expiration(row, expected_expiration):
             continue
