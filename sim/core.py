@@ -2,7 +2,8 @@
 # core.py
 # Discrete-Event core used by simulator.py. No external deps except numpy.
 
-import os, sys, random, queue, numpy as np
+import os, sys, random, numpy as np
+from collections import deque
 from typing import List, Dict, Optional
 
 # A thin read-only config holder (dict-like access with attributes).
@@ -38,12 +39,9 @@ class Cfg:
     def record_monitor_event(self, simTime: float, event: str):
         """Forward an observable runtime event to RTLola when it is active."""
         monitor = getattr(self, 'rtlola_monitor', None)
-        if monitor is None or not monitor.is_running():
+        if monitor is None:
             return
-        try:
-            monitor.send_event(simTime, -1, -1, -1, -1, -1, event)
-        except Exception as exc:
-            print(f'[RTLola] Error sending {event}: {exc}')
+        monitor.send_event(simTime, -1, -1, -1, -1, -1, event)
 
 class Clock:
     def __init__(self):
@@ -131,16 +129,15 @@ class Room:
         return self.idx
 
     def getProximity(self) -> Dict['Room', int]:
-        # BFS distances from self
-        prox = {}
-        q = queue.Queue()
-        q.put((self, 0))
-        while not q.empty():
-            r, d = q.get()
-            if r not in prox:
-                prox[r] = d
-                for n in r.adjacents:
-                    q.put((n, d + 1))
+        prox = {self: 0}
+        pending = deque([self])
+        while pending:
+            room = pending.popleft()
+            distance = prox[room] + 1
+            for neighbor in room.adjacents:
+                if neighbor not in prox:
+                    prox[neighbor] = distance
+                    pending.append(neighbor)
         return prox
 
 
@@ -325,9 +322,8 @@ class Robot:
             else:
                 f.write(f'{simTime},{self.idx},{self.item.getIdx()},{self.item.getImportance()},{self.position.getIdx()},{self.destination.getIdx()},{event}\n')
 
-    def dropItem(self, simTime, itemExpired=False):
-        delivered_item = self.item
-        delivered = self.position == self.destination
+    def dropItem(self, simTime, itemExpired=False, delivered=False):
+        item = self.item
         if delivered:
             if self.cfg.LOG_DELIVERY: self._log(simTime, 'deliver')
             self.space.deliverItem(self.item)
@@ -335,25 +331,17 @@ class Robot:
             if self.cfg.LOG_DROP: self._log(simTime, 'drop')
             if itemExpired:
                 self.space.clock.removeEvent(f'move-{self.getIdx()}')
+                self.optRoute = []
             else:
                 self.item.setLocation(self.position)
                 self.space.switchItem(self.item)
         self.unsetItem()
         self.destination = self.space.getSource()
-        if (
-            delivered
-            and self.cfg.current_architecture == 'decentralized'
-            and self.isHealthy()
-            and self._fd_recovery_item is delivered_item
-        ):
+        if (itemExpired or delivered) and self._fd_recovery_item is item:
             self._fd_recovery_item = None
 
-        # A fully decentralized robot can use only what it observes locally.
-        # When a failed peer has left a task in this room, continue with that
-        # task instead of becoming idle after the delivery.
         if (
-            delivered
-            and self.cfg.current_architecture == 'decentralized'
+            (itemExpired or (delivered and self.cfg.current_architecture == 'decentralized'))
             and self.isHealthy()
         ):
             next_item = self.space.getMoreImportantItem(room=self.position)
@@ -363,9 +351,7 @@ class Robot:
 
         if len(self.space.getItemsByImportance(imp=-1, room=self.position)) == 0 and self.isHealthy():
             self.optRoute = self.space.findRoute(self.position, self.destination, strategy=self.cfg.FIND_ROUTE_STRATEGY)
-            if itemExpired and self.position != self.space.getSource():
-                self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
-            elif not itemExpired and self.optRoute:
+            if self.optRoute:
                 self.space.clock.scheduleEvent(f'move-{self.getIdx()}', [self.cfg.MOVEMENT_TIME], [self.cfg.MOVEMENT_TRACE], [self.cfg.MOVEMENT_DISTR])
 
     def loadItem(self, item: Item, simTime):
@@ -374,7 +360,11 @@ class Robot:
         eff_comp_time = self._effective_comp_time(item)
         eff_comm_time = self._effective_comm_time(item)
         # Pay computation/communication costs depending on mechanism
-        if self.cfg.current_architecture == 'semi-decentralized':
+        if self.position == item.getTarget():
+            avg = [self.cfg.DROP_TIME]
+            trc = [self.cfg.DROP_TRACE]
+            dst = [self.cfg.DROP_DISTR]
+        elif self.cfg.current_architecture == 'semi-decentralized':
             avg = [self.cfg.LOAD_TIME, eff_comp_time, self.cfg.MOVEMENT_TIME, eff_comm_time, self.cfg.DROP_TIME]
             trc = [self.cfg.LOAD_TRACE, self.cfg.COMP_TRACE, self.cfg.MOVEMENT_TRACE, self.cfg.COMM_TRACE, self.cfg.DROP_TRACE]
             dst = [self.cfg.LOAD_DISTR, self.cfg.COMP_DISTR, self.cfg.MOVEMENT_DISTR, self.cfg.COMM_DISTR, self.cfg.DROP_DISTR]
@@ -404,7 +394,12 @@ class Robot:
         return len(impItems) > 0
 
     def move(self, simTime):
+        delivered_item = None
         if len(self.optRoute) == 0:
+            if self.isHealthy() and self.item is not None and self.position == self.item.getTarget():
+                delivered_item = self.item
+                self.dropItem(simTime, delivered=True)
+                return delivered_item
             print(f'[ERROR] Robot {self.getIdx()} stuck in Room {self.position.getIdx()}'); sys.exit(-1)
         nextRoom = self.optRoute.pop(0)
         self.setLocation(nextRoom)
@@ -417,7 +412,9 @@ class Robot:
             self._continueRescueMission(simTime)
             return
         elif self.destination == nextRoom and not self.isFree():
-            self.dropItem(simTime); self.memoryItem = None
+            delivered_item = self.item
+            self.dropItem(simTime, delivered=True)
+            self.memoryItem = None
         elif self._fd_recovery_item is not None and self.position == self.destination:
             recovery_item = self._fd_recovery_item
             self._fd_recovery_item = None
@@ -445,6 +442,7 @@ class Robot:
             # The coordination layer models delivery (or loss) of the actual
             # rescue request.  A malicious agent still attempts the request.
             self._fakeFailure(nextRoom, simTime)
+        return delivered_item
 
     def _fail(self, simTime):
         if np.random.uniform() < self.cfg.FAIL_PROB:
@@ -1024,20 +1022,45 @@ class Space:
         return routes
 
     def _routes_bfs(self, start: Room, target: Room):
-        q = queue.Queue()
-        q.put([start])
+        distances = {start: 0}
+        predecessors = {start: []}
+        pending = deque([start])
+        while pending:
+            room = pending.popleft()
+            if distances[room] == distances.get(target):
+                break
+            distance = distances[room] + 1
+            for neighbor in room.getAdjacentRooms():
+                if neighbor not in distances:
+                    distances[neighbor] = distance
+                    predecessors[neighbor] = []
+                    pending.append(neighbor)
+                if distances[neighbor] == distance:
+                    predecessors[neighbor].append(room)
+
+        if target not in distances:
+            return {}
+
+        shortest_path_rooms = {target}
+        ancestors = [target]
+        while ancestors:
+            for predecessor in predecessors[ancestors.pop()]:
+                if predecessor not in shortest_path_rooms:
+                    shortest_path_rooms.add(predecessor)
+                    ancestors.append(predecessor)
+
         routes = {}
-        while not q.empty():
-            path = q.get()
-            if target in path:
-                cost = len(path) - 1
-                if len(routes) == 0 or cost < min(routes.values()):
-                    routes = {str([r.getIdx() for r in path]): cost}
-                elif cost == min(routes.values()):
-                    routes[str([r.getIdx() for r in path])] = cost
-            elif len(routes) == 0:
-                for adj in path[-1].getAdjacentRooms():
-                    if adj not in path: q.put(path + [adj])
+        paths = [[start]]
+        while paths:
+            path = paths.pop()
+            room = path[-1]
+            if room == target:
+                routes[str([r.getIdx() for r in path])] = distances[target]
+                continue
+            next_distance = distances[room] + 1
+            for neighbor in reversed(room.getAdjacentRooms()):
+                if neighbor in shortest_path_rooms and distances[neighbor] == next_distance:
+                    paths.append([*path, neighbor])
         return routes
 
     def findRoute(self, start: Room, target: Room, strategy='breadth') -> List[Room]:

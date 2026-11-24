@@ -1,0 +1,60 @@
+\begin{table}[t]
+\centering
+\caption{DA against static mechanisms, averaged over configurations (10 paired repetitions each). $\Delta$: mean of per-configuration differences (percentage points for rates); 95\% CI from a two-stage bootstrap (configurations, then repetitions). W/T/L: configurations where the difference is significant in favour of / not significant / against DA (Wilcoxon signed-rank, Benjamini--Hochberg, $\alpha=0.05$).}
+\label{tab:stats-headline}
+\small
+\begin{tabular}{llrrrc}
+\toprule
+Metric & Baseline & $\Delta$ & 95\% CI & Rel. (\%) & W/T/L \\
+\midrule
+Completion rate (\%) & CE & -0.38 & [-0.89, +0.10] & -0.4 & 26/86/13 \\
+Completion rate (\%) & SD & -3.11 & [-4.50, -1.75] & -3.3 & 47/18/60 \\
+Completion rate (\%) & FD & +10.75 & [+7.60, +14.05] & +13.2 & 41/15/69 \\
+Completion rate (\%) & Best static & -3.95 & [-5.23, -2.81] & -4.1 & 1/4/120 \\
+Completion rate (\%) & Oracle (per seed) & -3.97 & [-5.19, -2.79] & -4.1 & 0/4/121 \\
+Completion rate (\%) & Mean of static & +2.42 & [+1.65, +3.25] & +2.7 & 23/100/2 \\
+\midrule
+Expiration rate (\%) & CE & +0.37 & [-0.08, +0.89] & +5.0 & 28/86/11 \\
+Expiration rate (\%) & SD & +3.10 & [+1.77, +4.44] & +64.7 & 48/16/61 \\
+Expiration rate (\%) & FD & -10.71 & [-14.15, -7.54] & -57.5 & 41/15/69 \\
+Expiration rate (\%) & Best static & +3.93 & [+2.78, +5.19] & +99.2 & 1/4/120 \\
+Expiration rate (\%) & Oracle (per seed) & +3.96 & [+2.82, +5.24] & +100.2 & 0/5/120 \\
+Expiration rate (\%) & Mean of static & -2.41 & [-3.26, -1.64] & -23.4 & 19/105/1 \\
+\midrule
+Relative latency (min) & CE & +1.94 & [-0.09, +4.15] & +5.2 & 41/48/36 \\
+Relative latency (min) & SD & +3.08 & [+0.43, +5.69] & +8.6 & 54/12/59 \\
+Relative latency (min) & FD & +1.68 & [-1.48, +4.88] & +4.5 & 23/23/79 \\
+Relative latency (min) & Best static & +13.98 & [+11.78, +16.50] & +55.9 & 0/1/124 \\
+Relative latency (min) & Oracle (per seed) & +14.02 & [+11.74, +16.45] & +56.1 & 0/1/124 \\
+Relative latency (min) & Mean of static & +2.23 & [+1.09, +3.38] & +6.1 & 0/105/20 \\
+\midrule
+Latency (min) & CE & +1.95 & [-0.04, +4.10] & +5.2 & 41/48/36 \\
+Latency (min) & SD & +3.08 & [+0.32, +5.75] & +8.5 & 54/12/59 \\
+Latency (min) & FD & +1.68 & [-1.49, +4.89] & +4.4 & 23/23/79 \\
+Latency (min) & Best static & +13.99 & [+11.63, +16.42] & +55.1 & 0/1/124 \\
+Latency (min) & Oracle (per seed) & +14.02 & [+11.75, +16.55] & +55.3 & 0/1/124 \\
+Latency (min) & Mean of static & +2.23 & [+1.13, +3.38] & +6.0 & 0/105/20 \\
+\midrule
+P95 latency (min) & CE & -1.30 & [-7.27, +4.94] & -0.7 & 41/54/30 \\
+P95 latency (min) & SD & +9.08 & [-4.02, +21.97] & +5.3 & 50/13/62 \\
+P95 latency (min) & FD & +11.71 & [-0.25, +23.85] & +6.9 & 22/39/64 \\
+P95 latency (min) & Best static & +55.82 & [+46.80, +64.75] & +44.4 & 0/1/124 \\
+P95 latency (min) & Oracle (per seed) & +56.86 & [+47.94, +66.15] & +45.7 & 0/1/124 \\
+P95 latency (min) & Mean of static & +6.49 & [+2.31, +10.94] & +3.7 & 3/98/24 \\
+\midrule
+Throughput (tasks/h) & CE & -0.16 & [-0.36, +0.02] & -0.5 & 0/125/0 \\
+Throughput (tasks/h) & SD & -1.18 & [-1.71, -0.71] & -3.7 & 14/70/41 \\
+Throughput (tasks/h) & FD & +3.94 & [+2.76, +5.21] & +14.6 & 41/74/10 \\
+Throughput (tasks/h) & Best static & -1.44 & [-1.94, -1.01] & -4.5 & 0/74/51 \\
+Throughput (tasks/h) & Oracle (per seed) & -1.48 & [-1.96, -1.05] & -4.6 & 0/48/77 \\
+Throughput (tasks/h) & Mean of static & +0.87 & [+0.58, +1.18] & +2.9 & 18/107/0 \\
+\midrule
+Pending at end (tasks) & CE & +2.95 & [+0.48, +5.40] & +8.0 & 0/125/0 \\
+Pending at end (tasks) & SD & +8.85 & [+4.49, +13.46] & +28.8 & 8/110/7 \\
+Pending at end (tasks) & FD & -25.82 & [-33.43, -18.81] & -39.5 & 41/76/8 \\
+Pending at end (tasks) & Best static & +14.29 & [+10.86, +17.97] & +56.4 & 0/125/0 \\
+Pending at end (tasks) & Oracle (per seed) & +15.81 & [+12.27, +19.67] & +66.4 & 0/113/12 \\
+Pending at end (tasks) & Mean of static & -4.67 & [-6.96, -2.36] & -10.6 & 0/125/0 \\
+\bottomrule
+\end{tabular}
+\end{table}

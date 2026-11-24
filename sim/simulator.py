@@ -1,10 +1,13 @@
 
 import os, sys, time, json, random
+from threading import Lock
 import numpy as np
 
 from .core import Cfg, Clock, Room, Space, Item, Robot
 from .env_maps import topologyName_dict
 from .adaptation_overhead import log_overhead_statistics
+
+_simulation_lock = Lock()
 
 def _sort_events_csv_by_time(csv_path: str):
     if not os.path.exists(csv_path):
@@ -85,7 +88,6 @@ def _build_cfg(config_path: str) -> Cfg:
     d.setdefault('BANDIT_INITIAL_SAMPLING_BYPASS_PERSISTENCE', True)
     d.setdefault('LATENCY_THRESHOLD_LOW', 10.0)
     d.setdefault('LATENCY_THRESHOLD_HIGH', 40.0)
-    d.setdefault('RTLOLA_METRIC_TIMEOUT', 0.05)
     d.setdefault('ADAPTIVE_THRESHOLDS', True)
     d.setdefault('ADAPTIVE_THRESHOLD_WINDOW', 12)
     d.setdefault('ADAPTIVE_THRESHOLD_WARMUP', 4)
@@ -138,10 +140,7 @@ def _build_cfg(config_path: str) -> Cfg:
     return Cfg(d)
 
 
-def _get_rtlola_latency(rtlola_monitor, timeout: float = 0.0):
-    if not rtlola_monitor:
-        return None, None
-
+def _get_rtlola_latency(metrics: dict):
     metric_names = (
         'mean_relative_latency_1h',
         'mean_latency_1h',
@@ -150,33 +149,14 @@ def _get_rtlola_latency(rtlola_monitor, timeout: float = 0.0):
         'global_relative_latency',
         'global_latency',
     )
-    deadline = time.time() + max(0.0, timeout)
-
-    while True:
-        metrics = rtlola_monitor.get_all_metrics(timeout=0.0)
-        for metric_name in metric_names:
-            value = metrics.get(metric_name)
-            if value is None:
-                continue
-            try:
-                value = float(value)
-            except (TypeError, ValueError):
-                continue
-            if np.isfinite(value) and value > 0:
-                return value, metric_name
-
-        if time.time() >= deadline:
-            return None, None
-        time.sleep(0.001)
+    for metric_name in metric_names:
+        value = metrics.get(metric_name)
+        if value is not None and np.isfinite(value) and value > 0:
+            return value, metric_name
+    return None, None
 
 
-def _apply_rtlola_context_metrics(cfg: Cfg, metrics: dict, rtlola_monitor) -> dict:
-    """Use RTLola task outcomes and observed runtime evidence when available."""
-    if not rtlola_monitor:
-        return metrics
-
-    observed = rtlola_monitor.get_all_metrics(timeout=0.0)
-
+def _apply_rtlola_context_metrics(cfg: Cfg, metrics: dict, observed: dict) -> dict:
     def monitor_value(name: str, default: float = 0.0) -> float:
         try:
             value = float(observed.get(name, default))
@@ -251,7 +231,7 @@ def _minimum_delivery_time(cfg: Cfg, space: Space, target_room: Room) -> float:
         return 0.0
 
     try:
-        distance = target_room.getProximity()[space.getSource()]
+        distance = space.getSource().getProximity()[target_room]
     except KeyError:
         return 0.0
 
@@ -465,6 +445,11 @@ def _build_custom_topology(cfg: Cfg):
     return {idx: sorted(adjacents) for idx, adjacents in topology.items()}
 
 def run(config_path='config.json'):
+    with _simulation_lock:
+        return _run(config_path)
+
+
+def _run(config_path):
     cfg = _build_cfg(config_path)
     seed = getattr(cfg, 'RANDOM_SEED', None)
     if seed is not None:
@@ -681,37 +666,6 @@ def run(config_path='config.json'):
                 
             event_count += 1
             
-            # Send event to RTLola if monitoring is active
-            if rtlola_monitor and rtlola_monitor.is_running():
-                # Determine event details for RTLola (spec2.rtlola format: time,itemId,event,destination)
-                item_id = -1
-                destination = -1
-                event_type = ""
-                
-                if event == 'item':
-                    event_type = "create"
-                    item_id = itemIdx
-                    destination = -1  # Not yet assigned
-                elif event.startswith('move-'):
-                    idx = int(event.split('-')[1])
-                    if bots[idx].getItem():
-                        item_id = bots[idx].getItem().getIdx()
-                        destination = bots[idx].destination.getIdx()
-                        event_type = "move"
-                elif event.startswith('recovery-'):
-                    event_type = "recover"
-                elif event.startswith('expire-'):
-                    item_id = int(event.split('-')[1])
-                    event_type = "expire"
-                
-                # Send task lifecycle events to RTLola. The monitor derives
-                # completion from delivered and expired terminal outcomes.
-                if event_type in ["create", "deliver", "expire"]:
-                    try:
-                        rtlola_monitor.send_event(ts, -1, item_id, -1, -1, destination, event_type)
-                    except Exception as e:
-                        print(f"[RTLola] Error sending event: {e}")
-            
             # Process simulation event
             if event == 'item':
                 trg = getTargetRoom(cfg, rooms)
@@ -719,6 +673,8 @@ def run(config_path='config.json'):
                 space.newItem(item)
                 item_create_times[itemIdx] = ts  # Track creation time
                 item_min_delivery_times[itemIdx] = _minimum_delivery_time(cfg, space, item.getTarget())
+                if rtlola_monitor:
+                    rtlola_monitor.send_event(ts, -1, itemIdx, -1, -1, -1, 'create')
                 created_window.append(ts)
                 created_window = _prune_times(created_window, ts, latency_window_duration)
                 itemIdx += 1
@@ -740,37 +696,28 @@ def run(config_path='config.json'):
                 idx = int(event.split('-')[1])
                 bot = bots[idx]
 
-                item_before_move = bot.getItem()
-                delivery_item_id = item_before_move.getIdx() if item_before_move is not None else None
-                delivery_destination = bot.destination if item_before_move is not None else None
-                delivery_destination_id = delivery_destination.getIdx() if delivery_destination is not None else -1
-
-                # Process the move first: delivery is triggered inside Robot.move().
                 was_healthy = bot.isHealthy()
-                bots[idx].move(ts)
+                delivered_item = bot.move(ts)
                 if was_healthy and not bot.isHealthy():
                     failure_window.append(ts)
                     failure_window = _prune_times(failure_window, ts, latency_window_duration)
                     cfg.record_monitor_event(ts, 'agent_failed')
 
-                if item_before_move is not None and bot.getLocation() == delivery_destination:
+                if delivered_item is not None:
                     delivered_window.append(ts)
                     delivered_window = _prune_times(delivered_window, ts, latency_window_duration)
-                    if delivery_item_id in item_create_times:
-                        delivery_latency = ts - item_create_times[delivery_item_id]
-                        min_delivery_time = item_min_delivery_times.get(delivery_item_id, 0.0)
-                        relative_latency = max(0.0, delivery_latency - min_delivery_time)
-                        
-                        if delivery_latency > 0:
-                            latency_window.append((ts, relative_latency))
-                            
-                            latency_window = [(t, lat) for t, lat in latency_window if ts - t <= latency_window_duration]
-                    
-                    if rtlola_monitor and rtlola_monitor.is_running():
-                        try:
-                            rtlola_monitor.send_event(ts, -1, delivery_item_id, -1, -1, delivery_destination_id, "deliver")
-                        except Exception as e:
-                            print(f"[RTLola] Error sending delivery event: {e}")
+                    item_id = delivered_item.getIdx()
+                    min_delivery_time = item_min_delivery_times.pop(item_id)
+                    delivery_latency = ts - item_create_times.pop(item_id)
+                    relative_latency = max(0.0, delivery_latency - min_delivery_time)
+                    if delivery_latency > 0:
+                        latency_window.append((ts, relative_latency))
+                        latency_window = [(t, lat) for t, lat in latency_window if ts - t <= latency_window_duration]
+                    if rtlola_monitor:
+                        rtlola_monitor.send_event(
+                            ts, -1, item_id, -1, -1, delivered_item.getTarget().getIdx(), 'deliver',
+                            minimum_delivery_time=min_delivery_time,
+                        )
             elif event.startswith('recovery-'):
                 idx = int(event.split('-')[1]); bots[idx].recovery(ts)
                 cfg.record_monitor_event(ts, 'agent_recovered')
@@ -806,17 +753,19 @@ def run(config_path='config.json'):
                     ['deterministic'],
                 )
             elif event.startswith('expire-'):
-                idx = int(event.split('-')[1]); item = space.getItembyId(idx); space.expireItem(item, ts)
+                idx = int(event.split('-')[1])
+                item = space.getItembyId(idx)
+                if rtlola_monitor:
+                    rtlola_monitor.send_event(ts, -1, idx, -1, -1, -1, 'expire')
+                space.expireItem(item, ts)
+                item_create_times.pop(idx)
+                item_min_delivery_times.pop(idx)
                 expired_window.append(ts)
                 expired_window = _prune_times(expired_window, ts, latency_window_duration)
             
             # Check for architecture adaptation.
-            if rtlola_monitor and rtlola_monitor.is_running() and (ts - last_adaptation_check) >= adaptation_interval:
+            if rtlola_monitor and (ts - last_adaptation_check) >= adaptation_interval:
                 last_adaptation_check = ts
-                try:
-                    rtlola_monitor.send_event(ts, -1, -1, -1, -1, -1, "adaptation_check")
-                except Exception as e:
-                    print(f"[RTLola] Error sending adaptation check: {e}")
                 probe_samples = max(1, int(getattr(cfg, 'NETWORK_PROBE_SAMPLES_PER_CHECK', 5)))
                 probe_loss_probability = max(0.0, min(1.0, float(cfg.COMM_FAIL_PROB)))
                 for _ in range(probe_samples):
@@ -825,10 +774,7 @@ def run(config_path='config.json'):
                         if np.random.uniform() < probe_loss_probability
                         else 'network_probe_delivered'
                     )
-                    try:
-                        rtlola_monitor.send_event(ts, -1, -1, -1, -1, -1, probe_event)
-                    except Exception as e:
-                        print(f"[RTLola] Error sending network probe: {e}")
+                    rtlola_monitor.send_event(ts, -1, -1, -1, -1, -1, probe_event)
                 
                 # Start overhead measurement
                 adaptation_start_time = time.time()
@@ -836,8 +782,8 @@ def run(config_path='config.json'):
                 
                 # Prefer the live RTLola metric, with the Python window as a safe fallback.
                 rtlola_query_start = time.time()
-                metric_timeout = getattr(cfg, 'RTLOLA_METRIC_TIMEOUT', 0.0)
-                rtlola_latency, rtlola_metric = _get_rtlola_latency(rtlola_monitor, timeout=metric_timeout)
+                monitor_metrics = rtlola_monitor.snapshot(ts)
+                rtlola_latency, rtlola_metric = _get_rtlola_latency(monitor_metrics)
                 python_latency = sum(lat for _, lat in latency_window) / len(latency_window) if latency_window else None
                 if rtlola_latency is not None:
                     raw_latency = rtlola_latency
@@ -858,7 +804,7 @@ def run(config_path='config.json'):
                     latency_window_duration,
                 )
                 runtime_metrics = _apply_rtlola_context_metrics(
-                    cfg, runtime_metrics, rtlola_monitor,
+                    cfg, runtime_metrics, monitor_metrics,
                 )
 
                 if raw_latency is not None:

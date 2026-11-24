@@ -3,15 +3,18 @@ RTLola Monitor Module
 Manages RTLola subprocess for runtime monitoring and architecture adaptation.
 """
 
+import json
 import os
 import platform
+import re
 import shutil
 import sys
-import queue
 import subprocess
+import tempfile
 import threading
 import time
-from typing import Optional, Dict, Any
+from pathlib import Path
+from typing import Optional, Dict
 
 
 def _candidate_label(path: str) -> str:
@@ -183,7 +186,11 @@ class RTLolaMonitor:
         
         # Metric storage
         self.latest_metrics: Dict[str, float] = {}
-        self.metrics_lock = threading.Lock()
+        self.metrics_lock = threading.Condition()
+        self.completed_checks = 0
+        self.check_metrics = {}
+        self.reader_closed = False
+        self.reader_error = None
         
         self.event_counter = 0
         
@@ -197,10 +204,22 @@ class RTLolaMonitor:
         # Verify spec file exists
         if not os.path.exists(self.spec_file):
             raise FileNotFoundError(f"RTLola spec file not found: {self.spec_file}")
-        
-        self._start_process()
+
+        spec = Path(spec_file).read_text(encoding="utf-8")
+        self.has_delivery_reference = bool(re.search(r"(?m)^\s*input\s+minimum_delivery_time\s*:", spec))
+        self.spec_directory = tempfile.TemporaryDirectory(prefix="coordinate-rtlola-")
+        try:
+            runtime_spec = Path(self.spec_directory.name) / "monitor.rtlola"
+            runtime_spec.write_text(
+                spec + '\noutput coordinate_check_complete eval when event == "adaptation_check" with 1\n',
+                encoding="utf-8",
+            )
+            self._start_process(str(runtime_spec))
+        except BaseException:
+            self.shutdown()
+            raise
     
-    def _start_process(self):
+    def _start_process(self, runtime_spec):
         """Start the RTLola CLI process."""
         try:
             self.proc = subprocess.Popen(
@@ -208,13 +227,15 @@ class RTLolaMonitor:
                     self.rtlola_binary,
                     "monitor",
                     "--stdin",
-                    self.spec_file,
+                    runtime_spec,
                     "--offline",
                     "relative",
                     "--csv-time-column",
                     "1",
                     "-v",
-                    "outputs"
+                    "outputs",
+                    "--output-format",
+                    "json",
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -244,13 +265,11 @@ class RTLolaMonitor:
             # 1 is also used as the monitor timestamp, so RTLola windows are
             # evaluated over simulation time rather than wall-clock time.
             # We write this directly to ensure it goes first
-            header = "time,itemId,event,destination\n"
-            self.proc.stdin.write(header)
+            header = "time,itemId,event,destination"
+            if self.has_delivery_reference:
+                header += ",minimum_delivery_time"
+            self.proc.stdin.write(header + "\n")
             self.proc.stdin.flush()
-            # Give the CLI a short startup window before the simulator begins
-            # streaming accelerated traces; otherwise the first adaptation
-            # query can race with monitor initialization.
-            time.sleep(0.2)
             
             # print(f"[RTLola] Monitor started with PID {self.proc.pid}")
             
@@ -269,49 +288,50 @@ class RTLolaMonitor:
             print(f"[RTLola] Error reading stderr: {e}")
     
     def _read_stdout(self, pipe):
-        """Read stdout from RTLola process and update metrics."""
         try:
             with pipe:
                 for line in pipe:
-                    line = line.strip()
-                    if not line:
+                    if not line.strip():
                         continue
-                    
-                    # print(f"[DEBUG] RTLola output: {line}") # Uncomment to see all output
-                        
-                    # Parse metric from line
-                    # RTLola format: [timestamp][Output][stream_name][Value] = value
-                    if '=' in line and '[Output]' in line and '[Value]' in line:
-                        try:
-                            # Extract stream name: ...[Output][stream_name][Value]...
-                            parts = line.split('=')
-                            value_str = parts[1].strip()
-                            
-                            # Extract name between [Output] and [Value]
-                            left_part = parts[0]
-                            start_idx = left_part.find('[Output]') + 8
-                            end_idx = left_part.find('[Value]')
-                            
-                            if start_idx < end_idx:
-                                raw_name = left_part[start_idx:end_idx]
-                                # Clean up brackets if any (e.g. "[mean_latency]")
-                                metric_name = raw_name.strip('[] ')
-                                
-                                try:
-                                    value = float(value_str)
-                                    with self.metrics_lock:
-                                        self.latest_metrics[metric_name] = value
-                                    # print(f"[DEBUG] Updated metric '{metric_name}' to {value}")
-                                except ValueError:
-                                    pass
-                        except Exception as e:
-                            print(f"[DEBUG] Error parsing line '{line}': {e}")
-                            
+                    verdict = json.loads(line)
+                    checkpoint = verdict.pop("coordinate_check_complete", None)
+                    verdict.pop("time", None)
+                    values = {}
+                    for metric, updates in verdict.items():
+                        if isinstance(updates, list):
+                            for update in updates:
+                                value = update.get("eval")
+                                if type(value) in (int, float):
+                                    values[metric] = float(value)
+                    with self.metrics_lock:
+                        self.latest_metrics.update(values)
+                        if checkpoint:
+                            self.check_metrics = self.latest_metrics.copy()
+                            self.completed_checks += 1
+                            self.metrics_lock.notify_all()
         except Exception as e:
-            print(f"[RTLola] Error reading stdout: {e}")
+            self.reader_error = e
+        finally:
+            with self.metrics_lock:
+                self.reader_closed = True
+                self.metrics_lock.notify_all()
+
+    def snapshot(self, sim_time: float) -> Dict[str, float]:
+        with self.metrics_lock:
+            expected = self.completed_checks + 1
+        self.send_event(sim_time, -1, -1, -1, -1, -1, "adaptation_check")
+        with self.metrics_lock:
+            received = self.metrics_lock.wait_for(
+                lambda: self.completed_checks == expected or self.reader_closed,
+                timeout=30.0,
+            )
+            if not received or self.completed_checks != expected:
+                raise RuntimeError(f"RTLola did not acknowledge the adaptation check at {sim_time}s") from self.reader_error
+            return self.check_metrics.copy()
     
     def send_event(self, simTime: float, robotId: int, itemId: int, 
-                   itemImportance: int, position: int, destination: int, event: str):
+                   itemImportance: int, position: int, destination: int, event: str,
+                   *, minimum_delivery_time: float = 0.0):
         """
         Send a simulation event to RTLola.
         
@@ -324,19 +344,18 @@ class RTLolaMonitor:
             destination: Destination (room ID)
             event: Event type (create, move, deliver, fail, etc.)
         """
-        if not self.running:
-            return
-        
-        # Format for spec2.rtlola: time,itemId,event,destination
-        line = f"{simTime},{itemId},{event},{destination}\n"
-        
+        if not self.running or self.reader_closed:
+            raise RuntimeError(f"RTLola is unavailable at {simTime}s") from self.reader_error
+
+        line = f"{simTime},{itemId},{event},{destination}"
+        if self.has_delivery_reference:
+            line += f",{minimum_delivery_time}"
         try:
-            self.proc.stdin.write(line)
+            self.proc.stdin.write(line + "\n")
             self.proc.stdin.flush()
             self.event_counter += 1
-                
-        except Exception as e:
-            print(f"[RTLola] Error sending event: {e}")
+        except OSError as e:
+            raise RuntimeError(f"Failed to send {event} to RTLola at {simTime}s") from e
     
     def get_metric(self, metric_name: str, timeout: float = 0.0) -> Optional[float]:
         """
@@ -393,6 +412,7 @@ class RTLolaMonitor:
             finally:
                 self.proc = None
                 self.running = False
+        self.spec_directory.cleanup()
     
     def __enter__(self):
         """Context manager entry."""
